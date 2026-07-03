@@ -7,23 +7,54 @@ The v1.0 release is intentionally stable and text-first. The items below are
 future-facing and should be implemented incrementally without breaking the
 existing Telegram, memory, RAG, search, cron, and Gateway workflows.
 
-## v1.1 Candidate: O6 Multimodal Skill With MNN Omni
+## v1.1 Candidate: Platform-Aware MultimodalAnalysisAgent
 
-Goal: add a local multimodal capability to Radxa Orion O6 while preserving the
-current ERNIE + llama.cpp text runtime.
+Goal: add a reusable multimodal analysis agent that can select the best local
+backend for each Arm Continuum deployment profile.
 
 Recommended architecture:
 
 ```text
-OpenClaw on O6
+MultimodalAnalysisAgent
   |
-  +-- text / RAG / search / cron -> ERNIE + llama.cpp
+  +-- DGX / GB10 backend -> vLLM + formal VLM
   |
-  +-- image / multimodal analysis -> MNN Omni worker
+  +-- Arm CPU backend -> MNN Omni
+  |
+  +-- Arm gateway backend -> remote local VLM
 ```
 
-The MNN Omni path should be implemented as a specialist skill, not as a
-replacement for the main O6 text model.
+MNN Omni should be treated as an Arm CPU-friendly multimodal backend, not as an
+O6-only feature and not as the primary DGX / GB10 multimodal path.
+
+Recommended backend strategy:
+
+- DGX / GB10: use `vllm-vlm` with a formal VLM such as Qwen2.5-VL, Qwen3-VL, or
+  a Llama Vision family model.
+- Arm CPU-only: use `mnn-omni` as a local CPU-friendly multimodal backend.
+- Arm gateway / edge host: use `remote-vlm` to route multimodal tasks to a
+  trusted local GB10 / DGX VLM endpoint on the private network.
+
+Example platform settings:
+
+```env
+# Common switch
+OPENCLAW_VISION_ENABLED=true
+OPENCLAW_MULTIMODAL_BACKEND=mnn-omni
+
+# Arm CPU-only, for example Orion O6
+OPENCLAW_MULTIMODAL_BACKEND=mnn-omni
+OPENCLAW_MNN_OMNI_BASE_URL=http://127.0.0.1:8790
+
+# DGX / GB10
+OPENCLAW_MULTIMODAL_BACKEND=vllm-vlm
+OPENCLAW_VLLM_BASE_URL=http://openclaw-vllm:8000/v1
+OPENCLAW_VLLM_MODEL=Qwen3-VL...
+
+# Arm gateway routing to local GB10 / DGX VLM
+OPENCLAW_MULTIMODAL_BACKEND=remote-vlm
+OPENCLAW_REMOTE_VLM_BASE_URL=http://gb10.local:8000/v1
+```
 
 ### Implementation Path
 
@@ -38,19 +69,20 @@ specialist skill -> registered agent -> TaskDispatcher integration
 Goal: prove the capability works reliably before making the orchestration layer
 more complex.
 
-In this stage, add a direct skill such as `mnn_omni_analyze`:
+In this stage, add explicit backend skills, starting with a direct skill such
+as `mnn_omni_analyze` for Arm CPU-only platforms:
 
 ```text
 Telegram image
   -> save image to workspace
-  -> call MNN Omni worker
+  -> call selected multimodal backend
   -> return image summary
 ```
 
 Validation:
 
-- The MNN Omni model can run on O6.
-- Images can be passed into the worker.
+- The selected backend can run on its target platform.
+- Images can be passed into the backend worker.
 - Timeouts and errors are handled clearly.
 - Telegram remains responsive.
 - Existing `/mem`, `/rag`, `/search`, and cron flows are not affected.
@@ -65,18 +97,33 @@ Proposed agent metadata:
 ```yaml
 agent_id: multimodal_analysis
 name: Multimodal Analysis Agent
-runtime: o6-mnn-omni
-backend: MNN
-model: Qwen2.5-Omni-7B-MNN
 capabilities:
   - image.describe
   - image.ocr
   - screenshot.explain
   - multimodal.summarize
-limits:
-  max_concurrency: 1
-  timeout_seconds: 300
-preferred_platform: o6
+backends:
+  - id: vllm-vlm
+    preferred_platforms:
+      - dgx-spark
+      - gb10
+    runtime: vllm
+    model_family: vlm
+  - id: mnn-omni
+    preferred_platforms:
+      - arm-cpu-only
+      - orion-o6
+    runtime: mnn
+    model: Qwen2.5-Omni-7B-MNN
+    limits:
+      max_concurrency: 1
+      timeout_seconds: 300
+  - id: remote-vlm
+    preferred_platforms:
+      - arm-gateway
+      - rpi5
+    runtime: openai-compatible
+    target: trusted-local-vlm
 ```
 
 Validation:
@@ -113,12 +160,17 @@ Validation:
 
 ### Proposed Components
 
-- Add `openclaw-mnn-omni` worker.
-- Wrap MNN Omni inference behind a small local HTTP API.
-- Add a new OpenClaw skill, for example `mnn_omni_analyze`.
-- Route Telegram image uploads to the MNN Omni skill when enabled.
-- Keep text chat, `/mem`, `/rag`, `/search`, and cron on the existing ERNIE
-  endpoint.
+- Add backend-specific multimodal workers where needed.
+- Add `openclaw-mnn-omni` worker for Arm CPU-only platforms.
+- Add `vllm-vlm` backend support for DGX / GB10 formal VLM deployments.
+- Add `remote-vlm` backend support for Arm gateway devices that route to a
+  trusted local VLM endpoint.
+- Wrap each backend behind a consistent local HTTP/API contract.
+- Add a new OpenClaw skill, for example `multimodal_analyze`, with
+  backend-specific adapters.
+- Route Telegram image uploads to `MultimodalAnalysisAgent` when enabled.
+- Keep text chat, `/mem`, `/rag`, `/search`, and cron on the existing text
+  runtime unless the task explicitly requires multimodal analysis.
 
 ### Proposed API
 
@@ -132,28 +184,37 @@ POST /analyze-multimodal
 ### Proposed Environment Variables
 
 ```env
+OPENCLAW_VISION_ENABLED=false
+OPENCLAW_MULTIMODAL_BACKEND=mnn-omni
+
 OPENCLAW_MNN_OMNI_ENABLED=false
 OPENCLAW_MNN_OMNI_BASE_URL=http://127.0.0.1:8790
 OPENCLAW_MNN_OMNI_MODEL_DIR=/home/radxa/models/Qwen2.5-Omni-7B-MNN
 OPENCLAW_MNN_OMNI_TIMEOUT=300
 OPENCLAW_MNN_OMNI_MAX_IMAGE_SIZE=1280
+
+OPENCLAW_REMOTE_VLM_BASE_URL=
+OPENCLAW_REMOTE_VLM_MODEL=
 ```
 
-`OPENCLAW_VISION_ENABLED=true` should only be enabled after the MNN Omni worker
-passes health checks and image smoke tests.
+`OPENCLAW_VISION_ENABLED=true` should only be enabled after the selected
+multimodal backend passes health checks and image smoke tests.
 
 ### MVP Scope
 
-- Image input only.
-- Keep Whisper tiny for speech-to-text.
-- Do not replace ERNIE as the O6 main text model.
+- Image input only for the first implementation.
+- Start with one backend, likely `mnn-omni` on Arm CPU-only or `vllm-vlm` on
+  GB10 depending on available hardware and model readiness.
+- Keep Whisper tiny for speech-to-text on CPU-only platforms until direct
+  multimodal audio is explicitly validated.
+- Do not replace the platform's main text model.
 - Use a single-flight queue or lock to avoid concurrent multimodal inference
-  overloading the CPU-only host.
+  overloading CPU-only hosts.
 - Return clear timeout/error messages without blocking the Telegram runtime.
 
 ### MVP Validation
 
-- `openclaw-mnn-omni /health` returns `200`.
+- The selected backend health endpoint returns `200`.
 - A Telegram image upload produces a useful local image summary.
 - The response includes:
   - main visual content
@@ -227,7 +288,8 @@ Candidate profiles:
 - Arm CPU-only profile.
 - Arm host + remote local vLLM profile.
 - O6 ERNIE + llama.cpp profile.
-- O6 ERNIE + MNN Omni profile.
+- Arm CPU-only + MNN Omni multimodal profile.
+- Arm gateway + remote VLM profile.
 
 Expected work:
 
