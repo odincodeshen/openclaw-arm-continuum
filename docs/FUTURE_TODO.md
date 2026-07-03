@@ -25,6 +25,92 @@ OpenClaw on O6
 The MNN Omni path should be implemented as a specialist skill, not as a
 replacement for the main O6 text model.
 
+### Implementation Path
+
+Implement this capability in three stages:
+
+```text
+specialist skill -> registered agent -> TaskDispatcher integration
+```
+
+#### Stage 1: Specialist Skill
+
+Goal: prove the capability works reliably before making the orchestration layer
+more complex.
+
+In this stage, add a direct skill such as `mnn_omni_analyze`:
+
+```text
+Telegram image
+  -> save image to workspace
+  -> call MNN Omni worker
+  -> return image summary
+```
+
+Validation:
+
+- The MNN Omni model can run on O6.
+- Images can be passed into the worker.
+- Timeouts and errors are handled clearly.
+- Telegram remains responsive.
+- Existing `/mem`, `/rag`, `/search`, and cron flows are not affected.
+
+#### Stage 2: Registered Agent
+
+Goal: turn the working skill into a first-class OpenClaw agent with explicit
+identity, capabilities, and limits.
+
+Proposed agent metadata:
+
+```yaml
+agent_id: multimodal_analysis
+name: Multimodal Analysis Agent
+runtime: o6-mnn-omni
+backend: MNN
+model: Qwen2.5-Omni-7B-MNN
+capabilities:
+  - image.describe
+  - image.ocr
+  - screenshot.explain
+  - multimodal.summarize
+limits:
+  max_concurrency: 1
+  timeout_seconds: 300
+preferred_platform: o6
+```
+
+Validation:
+
+- AgentRegistry can list the agent and its capabilities.
+- Health checks expose whether the agent is available.
+- Task history can identify which agent handled the image.
+- The system can keep deterministic command routes while still understanding
+  this agent as a reusable capability.
+
+#### Stage 3: TaskDispatcher Integration
+
+Goal: let OpenClaw automatically choose the multimodal agent when the task
+requires it.
+
+Example route:
+
+```text
+User uploads a screenshot and asks what is wrong
+  -> TaskDispatcher detects image input + troubleshooting intent
+  -> dispatch to MultimodalAnalysisAgent
+  -> optionally pass summary to RAG Agent
+  -> final response through Chat Agent
+```
+
+Validation:
+
+- Image, screenshot, and mixed text/image prompts route to the multimodal agent.
+- Text-only `/mem`, `/rag`, `/search`, `/doc`, and `/cron` commands remain
+  deterministic.
+- Dispatcher failures fall back to explicit skill routes instead of blocking
+  the Telegram runtime.
+- Logs show the selected agent, reason, status, and runtime duration.
+
 ### Proposed Components
 
 - Add `openclaw-mnn-omni` worker.
