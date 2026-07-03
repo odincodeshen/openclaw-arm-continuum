@@ -4,6 +4,8 @@ Version: `v1.0`
 
 License: Apache-2.0
 
+[繁體中文 README](README.zh-TW.md)
+
 Local-first personal AI runtime for Arm, from edge to server.
 
 OpenClaw Arm Continuum is built on a simple idea: personal AI should not be tied to one machine class. On Arm, the same local-first assistant runtime can live across a continuum, from low-power edge gateways, to CPU-only Arm servers, to DGX Spark-class AI workstations.
