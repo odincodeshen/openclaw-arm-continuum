@@ -210,6 +210,8 @@ docker compose --env-file .env -f compose.arm-cpu-only.yaml --profile gateway up
 ```
 
 The Gateway image must support `linux/arm64` for this optional profile to work.
+The profile enables the bundled `admin-http-rpc` plugin before starting Gateway
+so OpenClaw can sync Telegram cron jobs with the official dashboard.
 
 ## 8. Telegram Smoke Test
 

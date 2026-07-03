@@ -164,19 +164,16 @@ services:
     container_name: openclaw-gateway
     working_dir: /app
     command:
-      - node
-      - openclaw.mjs
-      - gateway
-      - run
-      - --allow-unconfigured
-      - --bind
-      - lan
-      - --auth
-      - token
-      - --token
-      - ${OPENCLAW_GATEWAY_TOKEN:?OPENCLAW_GATEWAY_TOKEN is required}
-      - --port
-      - "18789"
+      - sh
+      - -lc
+      - >
+        node openclaw.mjs plugins enable admin-http-rpc || true;
+        exec node openclaw.mjs gateway run
+        --allow-unconfigured
+        --bind lan
+        --auth token
+        --token "${OPENCLAW_GATEWAY_TOKEN:?OPENCLAW_GATEWAY_TOKEN is required}"
+        --port 18789
     env_file:
       - .env
     environment:

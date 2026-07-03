@@ -42,6 +42,11 @@ def rpc(settings: Settings, method: str, params: dict | None = None, timeout: in
         with urllib.request.urlopen(request, timeout=timeout) as response:
             data = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            raise GatewayCronError(
+                f"{method} failed: HTTP 404. Enable the bundled Gateway admin-http-rpc plugin "
+                "and restart openclaw-gateway."
+            ) from exc
         try:
             data = json.loads(exc.read().decode("utf-8"))
         except Exception as parse_exc:

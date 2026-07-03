@@ -122,19 +122,16 @@ services:
     network_mode: host
     profiles: ["gateway"]
     command:
-      - node
-      - openclaw.mjs
-      - gateway
-      - run
-      - --allow-unconfigured
-      - --bind
-      - lan
-      - --auth
-      - token
-      - --token
-      - ${OPENCLAW_GATEWAY_TOKEN:-}
-      - --port
-      - "18789"
+      - sh
+      - -lc
+      - >
+        node openclaw.mjs plugins enable admin-http-rpc || true;
+        exec node openclaw.mjs gateway run
+        --allow-unconfigured
+        --bind lan
+        --auth token
+        --token "${OPENCLAW_GATEWAY_TOKEN:-}"
+        --port 18789
     env_file:
       - path: .env
         required: false

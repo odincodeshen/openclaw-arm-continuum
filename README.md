@@ -131,22 +131,19 @@ Main commands:
 ```text
 /mem      capture personal memory
 /rag      retrieve memory or document context
-/review   inspect and manage personal memory
-/doc      review, map, and ingest uploaded files
+/doc      import public Google Docs
 /search   browse with local Playwright worker
 /cron     create and manage proactive push tasks
+/agents   list the active local agents
+/tasks    inspect recent task history
 ```
 
-Help pages:
+Currently implemented help commands:
 
 ```text
-/help mem
-/help rag
-/help review
-/help doc
-/help cron
-/help media
-/help system
+/help
+/doc
+/cron
 ```
 
 ## Memory And RAG
@@ -165,7 +162,6 @@ Examples:
 /rag memory: What OpenClaw settings did I ask you to remember?
 /rag knowledge: Summarize the uploaded architecture manual
 /rag doc:260702_01 What is this file about?
-/review todos
 ```
 
 ## Document Intake
@@ -176,20 +172,15 @@ Supported Telegram uploads:
 .pdf .md .txt .log .json .csv .tsv
 ```
 
-Default upload flow:
+Current upload flow:
 
-1. Telegram upload is staged in the review area.
-2. The local model generates a short intro card.
-3. You decide whether to ingest it into RAG.
+1. Telegram upload is saved into the local inbox.
+2. `openclaw-memory-watcher` indexes supported files into Qdrant.
+3. Query the indexed content with `/rag`.
 
 Commands:
 
 ```text
-/doc list
-/doc map
-/doc show 260702_01
-/doc ingest 260702_01
-/doc ingest 260702_01 tracker
 /doc url https://docs.google.com/document/d/.../edit
 /doc url https://docs.google.com/document/d/.../edit tracker
 ```
@@ -204,6 +195,10 @@ Caption shortcuts:
 /mem        ingest uploaded file directly into tracker memory
 /tracker    ingest uploaded file directly into tracker memory
 ```
+
+The review-first document workflow is planned, but not yet implemented in the
+Telegram gateway. Current file uploads are indexed directly after they are
+saved into the local inbox.
 
 ## Cron
 
@@ -241,6 +236,12 @@ http://127.0.0.1:18789/
 ```
 
 Use `OPENCLAW_GATEWAY_TOKEN` from your private `.env` when prompted.
+
+The compose profiles enable the bundled `admin-http-rpc` Gateway plugin before
+starting the Gateway. OpenClaw uses this private operator RPC surface for
+`cron.list`, `cron.add`, `cron.update`, `cron.remove`, and run-history sync.
+Keep the Gateway behind localhost, SSH tunneling, or a trusted private network;
+do not expose the admin RPC route directly to the public internet.
 
 ## Security Defaults
 

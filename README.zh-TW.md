@@ -152,22 +152,19 @@ curl -I http://127.0.0.1:18789/
 ```text
 /mem      寫入個人記憶
 /rag      查詢本地記憶或文件
-/review   回顧與管理記憶
-/doc      審核、查詢、匯入文件
+/doc      匯入公開 Google Doc
 /search   使用本地 browser worker 查網頁
 /cron     建立與管理主動推播任務
+/agents   列出目前本地 agents
+/tasks    查看最近任務紀錄
 ```
 
-分頁 help：
+目前已實作的 help：
 
 ```text
-/help mem
-/help rag
-/help review
-/help doc
-/help cron
-/help media
-/help system
+/help
+/doc
+/cron
 ```
 
 ## 記憶與 RAG
@@ -186,7 +183,6 @@ Qdrant 預設使用兩個 collection：
 /rag memory: 最近記住了哪些 OpenClaw 設定？
 /rag knowledge: 這份架構文件的重點是什麼？
 /rag doc:260702_01 這份文件在說什麼？
-/review todos
 ```
 
 ## 文件流程
@@ -197,21 +193,16 @@ Qdrant 預設使用兩個 collection：
 .pdf .md .txt .log .json .csv .tsv
 ```
 
-預設流程：
+目前流程：
 
 1. 使用者上傳文件到 Telegram。
-2. OpenClaw 先放入文件審核區。
-3. 本地模型產生簡介。
-4. 使用者決定是否正式匯入 RAG。
+2. OpenClaw 保存到本地 inbox。
+3. `openclaw-memory-watcher` 自動索引支援格式到 Qdrant。
+4. 使用 `/rag` 查詢已索引內容。
 
 常用指令：
 
 ```text
-/doc list
-/doc map
-/doc show 260702_01
-/doc ingest 260702_01
-/doc ingest 260702_01 tracker
 /doc url https://docs.google.com/document/d/.../edit
 /doc url https://docs.google.com/document/d/.../edit tracker
 ```
@@ -226,6 +217,10 @@ Caption 快捷方式：
 /mem        上傳文件直接進 tracker memory
 /tracker    上傳文件直接進 tracker memory
 ```
+
+「先審核再決定是否正式匯入」的文件流程是規劃項目，Telegram gateway
+尚未完整實作。目前上傳文件會先保存到本地 inbox，支援格式會直接由
+memory watcher 索引。
 
 ## Cron 主動推播
 
@@ -267,6 +262,11 @@ http://127.0.0.1:18789/
 ```text
 OPENCLAW_GATEWAY_TOKEN
 ```
+
+Compose profile 會在 Gateway 啟動前啟用官方 `admin-http-rpc` plugin。
+OpenClaw 透過這個私有 operator RPC surface 同步 `cron.list`、`cron.add`、
+`cron.update`、`cron.remove` 與 run history。請把 Gateway 保持在 localhost、
+SSH tunnel 或可信任私有網路後面，不要把 admin RPC route 直接暴露到公網。
 
 ## 安全預設
 
