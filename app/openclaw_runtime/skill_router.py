@@ -30,8 +30,6 @@ class SkillRouter:
             return json.load(handle)
 
     def _load_skills(self) -> list:
-        if not self.settings.web_enabled:
-            return []
         skills_config = self.config.get("skills", {})
         skills = []
 
@@ -49,12 +47,13 @@ class SkillRouter:
             except Exception as exc:
                 print(f"[skills] memory disabled: {exc}", flush=True)
 
-        weather_config = skills_config.get("weather", {})
-        if weather_config.get("enabled", True):
-            skills.append(WeatherSkill(self.settings, weather_config))
+        if self.settings.web_enabled:
+            weather_config = skills_config.get("weather", {})
+            if weather_config.get("enabled", True):
+                skills.append(WeatherSkill(self.settings, weather_config))
 
-        web_search_config = skills_config.get("web_search", {})
-        if web_search_config.get("enabled", True):
-            skills.append(WebSearchSkill(self.settings, web_search_config, self.llm))
+            web_search_config = skills_config.get("web_search", {})
+            if web_search_config.get("enabled", True):
+                skills.append(WebSearchSkill(self.settings, web_search_config, self.llm))
 
         return skills
