@@ -124,6 +124,10 @@ OPENCLAW_OLLAMA_BASE_URL=http://ollama:11434
 OPENCLAW_QDRANT_BASE_URL=http://qdrant:6333
 ```
 
+DGX compose 預設會透過 `http://openclaw-vllm:8000/v1` 連到同一個 compose
+stack 內的 vLLM。只有在推理端點是外部或遠端 OpenAI-compatible server 時，
+才需要設定 `OPENCLAW_VLLM_BASE_URL`。
+
 啟動：
 
 ```bash

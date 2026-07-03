@@ -100,6 +100,10 @@ OPENCLAW_OLLAMA_BASE_URL=http://ollama:11434
 OPENCLAW_QDRANT_BASE_URL=http://qdrant:6333
 ```
 
+The DGX compose stack talks to its bundled vLLM service through
+`http://openclaw-vllm:8000/v1` by default. Set `OPENCLAW_VLLM_BASE_URL` only
+when routing to an external or remote OpenAI-compatible endpoint.
+
 Start the stack:
 
 ```bash

@@ -47,7 +47,7 @@ services:
     env_file:
       - .env
     environment:
-      OPENCLAW_VLLM_BASE_URL: ${OPENCLAW_VLLM_BASE_URL:-http://host.docker.internal:8000/v1}
+      OPENCLAW_VLLM_BASE_URL: ${OPENCLAW_VLLM_BASE_URL:-http://openclaw-vllm:8000/v1}
       OPENCLAW_OLLAMA_BASE_URL: ${OPENCLAW_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OPENCLAW_QDRANT_BASE_URL: ${OPENCLAW_QDRANT_BASE_URL:-http://host.docker.internal:6333}
       OPENCLAW_WHISPER_BASE_URL: http://openclaw-whisper:8765
@@ -135,7 +135,7 @@ services:
     env_file:
       - .env
     environment:
-      OPENCLAW_VLLM_BASE_URL: ${OPENCLAW_VLLM_BASE_URL:-http://host.docker.internal:8000/v1}
+      OPENCLAW_VLLM_BASE_URL: ${OPENCLAW_VLLM_BASE_URL:-http://openclaw-vllm:8000/v1}
       OPENCLAW_OLLAMA_BASE_URL: ${OPENCLAW_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OPENCLAW_QDRANT_BASE_URL: ${OPENCLAW_QDRANT_BASE_URL:-http://host.docker.internal:6333}
       OPENCLAW_SCRAPER_BASE_URL: http://openclaw-browser-scraper:8787
@@ -178,7 +178,7 @@ services:
       - .env
     environment:
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:?OPENCLAW_GATEWAY_TOKEN is required}
-      OPENCLAW_VLLM_BASE_URL: ${OPENCLAW_VLLM_BASE_URL:-http://host.docker.internal:8000/v1}
+      OPENCLAW_VLLM_BASE_URL: ${OPENCLAW_VLLM_BASE_URL:-http://openclaw-vllm:8000/v1}
       OPENCLAW_VLLM_MODEL: ${OPENCLAW_VLLM_MODEL:-Qwen/Qwen3.6-27B-FP8}
     ports:
       - "127.0.0.1:18789:18789"
