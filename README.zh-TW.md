@@ -116,6 +116,14 @@ OPENCLAW_MAX_NUM_SEQS=
 HF_CACHE_DIR=
 ```
 
+如果 Ollama 或 Qdrant 是跑在同一個 Docker network 裡的容器，而不是 host loopback
+服務，可以在 `.env` 覆寫：
+
+```text
+OPENCLAW_OLLAMA_BASE_URL=http://ollama:11434
+OPENCLAW_QDRANT_BASE_URL=http://qdrant:6333
+```
+
 啟動：
 
 ```bash

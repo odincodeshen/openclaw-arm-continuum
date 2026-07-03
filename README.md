@@ -92,6 +92,14 @@ OPENCLAW_MAX_NUM_SEQS=
 HF_CACHE_DIR=
 ```
 
+If Ollama or Qdrant run as containers on the same Docker network instead of
+host-loopback services, set these in `.env` to match your topology:
+
+```text
+OPENCLAW_OLLAMA_BASE_URL=http://ollama:11434
+OPENCLAW_QDRANT_BASE_URL=http://qdrant:6333
+```
+
 Start the stack:
 
 ```bash
