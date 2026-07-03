@@ -190,7 +190,11 @@ Commands:
 /doc show 260702_01
 /doc ingest 260702_01
 /doc ingest 260702_01 tracker
+/doc url https://docs.google.com/document/d/.../edit
+/doc url https://docs.google.com/document/d/.../edit tracker
 ```
+
+Public Google Docs can be imported with `/doc url`. The default target is `knowledge`; append `tracker` for dynamic tracker memory.
 
 Caption shortcuts:
 

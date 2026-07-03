@@ -212,7 +212,11 @@ Qdrant 預設使用兩個 collection：
 /doc show 260702_01
 /doc ingest 260702_01
 /doc ingest 260702_01 tracker
+/doc url https://docs.google.com/document/d/.../edit
+/doc url https://docs.google.com/document/d/.../edit tracker
 ```
+
+公開 Google Doc 可用 `/doc url` 匯入。預設進 `knowledge`，最後加 `tracker` 則進動態追蹤記憶。
 
 Caption 快捷方式：
 

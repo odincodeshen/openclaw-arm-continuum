@@ -43,6 +43,7 @@ from openclaw_runtime.file_ingest import SUPPORTED_SUFFIXES
 from openclaw_runtime.http_client import request_json
 from openclaw_runtime.llm_client import LlmClient
 from openclaw_runtime.skill_router import SkillRouter
+from openclaw_runtime.source_ingest import save_google_doc
 from openclaw_runtime.task_history import TaskHistory
 from openclaw_runtime.transcription_client import TranscriptionClient
 
@@ -98,6 +99,11 @@ HELP_TEXT = f"""OpenClaw Arm Continuum 使用速查
 
 /tasks last
 查看最近 5 筆任務紀錄與執行狀態。
+
+/doc url <Google Doc URL>
+匯入公開 Google Doc，保存成 Markdown 並自動進 knowledge RAG。
+例：/doc url https://docs.google.com/document/d/.../edit
+例：/doc url https://docs.google.com/document/d/.../edit tracker
 
 自然語言
 可以直接問一般問題或天氣。
@@ -467,6 +473,96 @@ def tasks_text(limit: int = 5) -> str:
     return "\n".join(lines)
 
 
+def doc_help_text() -> str:
+    return """OpenClaw 文件來源
+
+/doc url <Google Doc URL>
+匯入公開 Google Doc，保存成 Markdown，並自動進 knowledge RAG。
+例：/doc url https://docs.google.com/document/d/.../edit
+
+/doc url <Google Doc URL> tracker
+匯入公開 Google Doc 到 tracker memory，適合追蹤資料、日誌、暫時上下文。
+例：/doc url https://docs.google.com/document/d/.../edit tracker
+
+注意：Google Doc 必須是公開可讀，或設定為「知道連結的人可以查看」。
+匯入後稍等 memory watcher 索引，即可用 /rag 查詢。
+"""
+
+
+def handle_doc_command(chat_id: int, text: str) -> bool:
+    if not text.startswith("/doc"):
+        return False
+
+    parts = text.split(maxsplit=3)
+    if len(parts) == 1 or parts[1] in {"help", "?"}:
+        send_message(chat_id, doc_help_text())
+        return True
+
+    action = parts[1].lower()
+    if action != "url":
+        send_message(chat_id, doc_help_text())
+        return True
+    if len(parts) < 3:
+        send_message(chat_id, "請提供 Google Doc URL。\n例：/doc url https://docs.google.com/document/d/.../edit")
+        return True
+
+    rest = parts[2] if len(parts) == 3 else f"{parts[2]} {parts[3]}"
+    url, collection_kind = parse_doc_url_args(rest)
+    send_message(chat_id, f"收到，正在匯入公開 Google Doc 到 {collection_kind}。")
+    worker = threading.Thread(target=process_doc_url, args=(chat_id, url, collection_kind), daemon=True)
+    worker.start()
+    return True
+
+
+def parse_doc_url_args(rest: str) -> tuple[str, str]:
+    tokens = rest.strip().split()
+    if not tokens:
+        raise ValueError("missing url")
+    url = tokens[0]
+    collection_kind = "knowledge"
+    if len(tokens) > 1 and tokens[-1].lower() in {"tracker", "memory", "mem"}:
+        collection_kind = "tracker"
+    return url, collection_kind
+
+
+def process_doc_url(chat_id: int, url: str, collection_kind: str) -> None:
+    try:
+        result = save_google_doc(settings, url, collection_kind)
+    except Exception as exc:
+        log(f"[doc-url] error chat_id={chat_id}: {exc}")
+        send_message(chat_id, f"Google Doc 匯入失敗：{exc}")
+        return
+
+    preview = ""
+    try:
+        text = result.path.read_text(encoding="utf-8", errors="replace")
+        prompt = (
+            "請針對以下 Google Doc 內容產生一段手機上好讀的繁體中文簡介。"
+            "請包含：主題、三個重點、是否值得正式用 /rag 深入查詢。"
+            "不要輸出推理過程。\n\n"
+            f"標題：{result.title}\n"
+            f"內容：{text[:6000]}"
+        )
+        preview = llm.chat(prompt, max_tokens=260)
+    except Exception as exc:
+        log(f"[doc-url] preview failed chat_id={chat_id} path={result.path}: {exc}")
+
+    collection_name = settings.tracker_collection if result.collection_kind == "tracker" else settings.knowledge_collection
+    message = (
+        "Google Doc 已匯入。\n"
+        f"標題：{result.title}\n"
+        f"檔案：{result.path.name}\n"
+        f"字數：約 {result.char_count} chars\n"
+        f"目標集合：{collection_name}\n"
+        "稍等 memory watcher 索引後可查：\n"
+        f"/rag {result.path.name} 這份 Google Doc 在說什麼？"
+    )
+    if preview:
+        message += f"\n\n簡介：\n{preview}"
+    send_message(chat_id, message)
+    log(f"[doc-url] imported chat_id={chat_id} path={result.path} chars={result.char_count}")
+
+
 def run_cron_job_once(chat_id: int, job_id: str) -> None:
     started = time.time()
     job = None
@@ -638,6 +734,7 @@ def setup_bot_commands() -> None:
         {"command": "help", "description": "顯示 OpenClaw 使用速查"},
         {"command": "mem", "description": "寫入本地記憶"},
         {"command": "rag", "description": "查本地記憶與知識庫"},
+        {"command": "doc", "description": "匯入公開 Google Doc 或文件來源"},
         {"command": "search", "description": "搜尋網路資料"},
         {"command": "cron", "description": "設定主動推播排程"},
         {"command": "agents", "description": "列出 OpenClaw agents"},
@@ -728,6 +825,9 @@ def handle_message(message: dict) -> None:
             except ValueError:
                 limit = 5
         send_message(chat_id, tasks_text(limit))
+        return
+
+    if handle_doc_command(chat_id, text):
         return
 
     if handle_cron_command(chat_id, text):
