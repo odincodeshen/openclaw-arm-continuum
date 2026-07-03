@@ -1,0 +1,163 @@
+services:
+  openclaw-telegram:
+    image: python:3.12-slim
+    container_name: openclaw-telegram
+    working_dir: /app
+    command: ["python", "-u", "openclaw_telegram_gateway.py"]
+    network_mode: host
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      OPENCLAW_VLLM_BASE_URL: ${OPENCLAW_VLLM_BASE_URL:-http://127.0.0.1:8080/v1}
+      OPENCLAW_OLLAMA_BASE_URL: ${OPENCLAW_OLLAMA_BASE_URL:-http://127.0.0.1:11434}
+      OPENCLAW_QDRANT_BASE_URL: ${OPENCLAW_QDRANT_BASE_URL:-http://127.0.0.1:6333}
+      OPENCLAW_WHISPER_BASE_URL: ${OPENCLAW_WHISPER_BASE_URL:-http://127.0.0.1:8765}
+      OPENCLAW_GATEWAY_RPC_URL: ${OPENCLAW_GATEWAY_RPC_URL:-http://127.0.0.1:18789/api/v1/admin/rpc}
+      OPENCLAW_GATEWAY_STATE_DB: /gateway-state/openclaw.sqlite
+      OPENCLAW_SCRAPER_BASE_URL: ${OPENCLAW_SCRAPER_BASE_URL:-http://127.0.0.1:8787}
+      OPENCLAW_TASK_HISTORY_PATH: /workspace/.openclaw/task_history.jsonl
+    volumes:
+      - ./app:/app:ro
+      - ./workspace:/workspace
+      - ./gateway-data/state:/gateway-state
+    restart: unless-stopped
+
+  openclaw-memory-watcher:
+    build:
+      context: ./runtime
+    container_name: openclaw-memory-watcher
+    working_dir: /app
+    command: ["python", "-u", "openclaw_memory_watcher.py"]
+    network_mode: host
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      OPENCLAW_OLLAMA_BASE_URL: ${OPENCLAW_OLLAMA_BASE_URL:-http://127.0.0.1:11434}
+      OPENCLAW_QDRANT_BASE_URL: ${OPENCLAW_QDRANT_BASE_URL:-http://127.0.0.1:6333}
+    volumes:
+      - ./app:/app:ro
+      - ./workspace:/workspace
+    restart: unless-stopped
+
+  openclaw-cron:
+    image: python:3.12-slim
+    container_name: openclaw-cron
+    working_dir: /app
+    command: ["python", "-u", "openclaw_cron_worker.py"]
+    network_mode: host
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      OPENCLAW_VLLM_BASE_URL: ${OPENCLAW_VLLM_BASE_URL:-http://127.0.0.1:8080/v1}
+      OPENCLAW_OLLAMA_BASE_URL: ${OPENCLAW_OLLAMA_BASE_URL:-http://127.0.0.1:11434}
+      OPENCLAW_QDRANT_BASE_URL: ${OPENCLAW_QDRANT_BASE_URL:-http://127.0.0.1:6333}
+      OPENCLAW_SCRAPER_BASE_URL: ${OPENCLAW_SCRAPER_BASE_URL:-http://127.0.0.1:8787}
+      OPENCLAW_CRON_TIMEZONE: ${OPENCLAW_CRON_TIMEZONE:-Europe/London}
+      OPENCLAW_CRON_DAILY_REPORT_TIME: ${OPENCLAW_CRON_DAILY_REPORT_TIME:-07:00}
+      OPENCLAW_CRON_TASKS_CONFIG: /app/cron_tasks.json
+      OPENCLAW_CRON_JOBS_PATH: /workspace/.openclaw/cron_jobs.json
+      OPENCLAW_CRON_STATE_PATH: /workspace/.openclaw/cron_state.json
+      OPENCLAW_GATEWAY_RPC_URL: ${OPENCLAW_GATEWAY_RPC_URL:-http://127.0.0.1:18789/api/v1/admin/rpc}
+      OPENCLAW_GATEWAY_STATE_DB: /gateway-state/openclaw.sqlite
+    volumes:
+      - ./app:/app:ro
+      - ./workspace:/workspace
+      - ./gateway-data/state:/gateway-state
+    restart: unless-stopped
+
+  openclaw-browser-scraper:
+    build:
+      context: ./scraper
+    container_name: openclaw-browser-scraper
+    working_dir: /app
+    command: ["python", "-u", "openclaw_browser_scraper.py"]
+    network_mode: host
+    profiles: ["web"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      OPENCLAW_SCRAPER_HOST: 127.0.0.1
+      OPENCLAW_SCRAPER_PORT: 8787
+      OPENCLAW_WORKSPACE_ROOT: /workspace
+      OPENCLAW_CHROMIUM_PATH: /usr/bin/chromium
+    volumes:
+      - ./app:/app:ro
+      - ./workspace:/workspace
+    restart: unless-stopped
+
+  openclaw-whisper:
+    build:
+      context: ./whisper
+    container_name: openclaw-whisper
+    working_dir: /app
+    command: ["python", "-u", "openclaw_whisper_service.py"]
+    network_mode: host
+    profiles: ["voice"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      OPENCLAW_WHISPER_HOST: 127.0.0.1
+      OPENCLAW_WHISPER_PORT: 8765
+      OPENCLAW_WHISPER_MODEL: ${OPENCLAW_WHISPER_MODEL:-tiny}
+      OPENCLAW_WHISPER_DEVICE: cpu
+      OPENCLAW_WHISPER_COMPUTE_TYPE: int8
+      OPENCLAW_WORKSPACE_ROOT: /workspace
+      NVIDIA_VISIBLE_DEVICES: void
+      CUDA_VISIBLE_DEVICES: ""
+    volumes:
+      - ./app:/app:ro
+      - ./workspace:/workspace
+      - ${HF_CACHE_DIR:-./.cache/huggingface}:/root/.cache/huggingface
+    restart: unless-stopped
+
+  openclaw-gateway:
+    image: openclaw/openclaw:latest
+    container_name: openclaw-gateway
+    working_dir: /app
+    network_mode: host
+    profiles: ["gateway"]
+    command:
+      - node
+      - openclaw.mjs
+      - gateway
+      - run
+      - --allow-unconfigured
+      - --bind
+      - lan
+      - --auth
+      - token
+      - --token
+      - ${OPENCLAW_GATEWAY_TOKEN:-}
+      - --port
+      - "18789"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
+      OPENCLAW_VLLM_BASE_URL: ${OPENCLAW_VLLM_BASE_URL:-http://127.0.0.1:8080/v1}
+      OPENCLAW_VLLM_MODEL: ${OPENCLAW_VLLM_MODEL:-ernie-o6}
+    volumes:
+      - ./gateway-data:/home/node/.openclaw
+      - ./workspace:/workspace
+    restart: unless-stopped
+
+  openclaw-cli:
+    image: openclaw/openclaw:latest
+    profiles: ["tools"]
+    working_dir: /app
+    network_mode: host
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
+    volumes:
+      - ./gateway-data:/home/node/.openclaw
+      - ./workspace:/workspace
+    entrypoint: ["node", "openclaw.mjs"]

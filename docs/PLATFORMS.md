@@ -7,7 +7,7 @@ OpenClaw is designed as one runtime with multiple deployment profiles. The Pytho
 | Profile | Status | LLM serving | Best fit | Privacy boundary |
 |---|---|---|---|---|
 | `dgx-spark` | Stable | Local vLLM on NVIDIA GPU | DGX Spark / GB10 class workstation | Single local host |
-| `arm-cpu-only` | Planned next / experimental | Local CPU LLM endpoint, preferably llama.cpp | Radxa Orion O6 or similar Armv9 board/server | Single local host |
+| `arm-cpu-only` | Experimental | Local CPU LLM endpoint, preferably llama.cpp | Radxa Orion O6 or similar Armv9 board/server | Single local host |
 | `arm-remote-llm` | Planned / beta | Remote private LAN vLLM endpoint | RPi5 or small Arm gateway plus local inference server | Trusted private LAN |
 
 ## Current Stable Profile: `dgx-spark`
@@ -24,9 +24,9 @@ Characteristics:
 
 This is the flagship path for full local privacy and large-model throughput.
 
-## Next Target: `arm-cpu-only`
+## Experimental Profile: `arm-cpu-only`
 
-The next planned hardware target is:
+The current experimental Arm CPU-only target is:
 
 ```text
 Radxa Orion O6 + llama.cpp + Baidu ERNIE 4.5
@@ -72,7 +72,7 @@ Expected constraints:
 - Whisper should default to `tiny` or `base`.
 - ERNIE model conversion, quantization, tokenizer compatibility, and llama.cpp server behavior must be verified before this profile can be marked stable.
 
-Likely `.env` direction:
+Initial `.env` direction:
 
 ```text
 OPENCLAW_VLLM_BASE_URL=http://host.docker.internal:<llama-cpp-port>/v1
@@ -91,6 +91,8 @@ compose.arm-cpu-only.yaml
 .env.arm-cpu-only.example
 docs/ERNIE_LLAMA_CPP.md
 ```
+
+The first implementation artifacts now exist. See `docs/ERNIE_LLAMA_CPP.md` for the Orion O6 + ERNIE 4.5 + llama.cpp bring-up flow.
 
 ## Future Profile: `arm-remote-llm`
 

@@ -28,10 +28,10 @@ Each tier offers a different balance of privacy, power efficiency, and inference
 | Profile | Status | Inference | Target hardware |
 |---|---|---|---|
 | `dgx-spark` | Stable | Local vLLM on NVIDIA GPU | DGX Spark / GB10 class workstation. |
-| `arm-cpu-only` | Planned next | Local CPU LLM through llama.cpp or another OpenAI-compatible local endpoint | Radxa Orion O6 or similar Armv9 server-class board. |
+| `arm-cpu-only` | Experimental | Local CPU LLM through llama.cpp or another OpenAI-compatible local endpoint | Radxa Orion O6 or similar Armv9 server-class board. |
 | `arm-remote-llm` | Planned | Runtime on local Arm host, inference on private LAN vLLM server | RPi5 / small Arm gateway plus local Arm/GPU inference server. |
 
-The immediate next hardware target after DGX Spark is `arm-cpu-only` on Radxa Orion O6, using Baidu ERNIE 4.5 models and llama.cpp for better CPU inference efficiency. See `docs/PLATFORMS.md`.
+The immediate next hardware target after DGX Spark is `arm-cpu-only` on Radxa Orion O6, using Baidu ERNIE 4.5 models and llama.cpp for better CPU inference efficiency. See `docs/PLATFORMS.md` and `docs/ERNIE_LLAMA_CPP.md`.
 
 ## Why Arm Continuum
 
@@ -97,6 +97,15 @@ Start the stack:
 ```bash
 docker compose --env-file .env -f compose.yaml up -d
 ```
+
+For the experimental Radxa Orion O6 CPU-only profile, use:
+
+```bash
+cp .env.arm-cpu-only.example .env
+docker compose --env-file .env -f compose.arm-cpu-only.yaml up -d
+```
+
+The O6 profile expects a local OpenAI-compatible llama.cpp server at `127.0.0.1:8080`. See `docs/ERNIE_LLAMA_CPP.md`.
 
 Check containers:
 

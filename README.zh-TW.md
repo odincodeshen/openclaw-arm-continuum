@@ -33,10 +33,10 @@ Same runtime, different capability tiers.
 | Profile | 狀態 | 推理方式 | 目標硬體 |
 |---|---|---|---|
 | `dgx-spark` | Stable | 本機 NVIDIA GPU + vLLM | DGX Spark / GB10 類工作站 |
-| `arm-cpu-only` | Planned next | 本機 CPU LLM，預計使用 llama.cpp 或其他 OpenAI-compatible endpoint | Radxa Orion O6 或類似 Armv9 CPU server |
+| `arm-cpu-only` | Experimental | 本機 CPU LLM，使用 llama.cpp 或其他 OpenAI-compatible endpoint | Radxa Orion O6 或類似 Armv9 CPU server |
 | `arm-remote-llm` | Planned | Arm host 執行 runtime，推理導向可信任內網 vLLM server | RPi5 / 小型 Arm gateway + 內網推理 server |
 
-目前已驗證並可作為 stable baseline 的是 `dgx-spark`。下一階段目標是 `arm-cpu-only`，預計使用 Radxa Orion O6、Baidu ERNIE 4.5 與 llama.cpp。詳細規劃請看 [docs/PLATFORMS.md](docs/PLATFORMS.md)。
+目前已驗證並可作為 stable baseline 的是 `dgx-spark`。`arm-cpu-only` 已開始以 Radxa Orion O6、Baidu ERNIE 4.5 與 llama.cpp 進行實驗性驗證。詳細規劃請看 [docs/PLATFORMS.md](docs/PLATFORMS.md)，部署步驟請看 [docs/ERNIE_LLAMA_CPP.md](docs/ERNIE_LLAMA_CPP.md)。
 
 ## 為什麼是 Arm Continuum
 
