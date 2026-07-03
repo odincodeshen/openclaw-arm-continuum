@@ -1,0 +1,19 @@
+{
+  "skills": [
+    {
+      "name": "weather",
+      "enabled": true,
+      "description": "Answer weather-style questions with local web/search tooling."
+    },
+    {
+      "name": "web_search",
+      "enabled": true,
+      "description": "Use the local Playwright scraper for current web information."
+    },
+    {
+      "name": "memory",
+      "enabled": true,
+      "description": "Write and retrieve local Qdrant-backed personal memory."
+    }
+  ]
+}

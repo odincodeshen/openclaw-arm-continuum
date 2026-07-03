@@ -1,0 +1,9 @@
+{
+  "daily_briefing": {
+    "enabled": false,
+    "title": "OpenClaw 每日早報",
+    "weather_questions": [],
+    "product_queries": [],
+    "english_queries": []
+  }
+}

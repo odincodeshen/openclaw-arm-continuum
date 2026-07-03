@@ -1,0 +1,22 @@
+{
+  "daily_briefing": {
+    "enabled": true,
+    "title": "OpenClaw Daily Briefing",
+    "weather_questions": [
+      "What is the weather tomorrow in London?",
+      "What is the weather tomorrow in Taipei?"
+    ],
+    "product_queries": [
+      {
+        "name": "Example GPU workstation",
+        "query": "latest price example GPU workstation"
+      }
+    ],
+    "english_queries": [
+      {
+        "name": "BBC Learning English",
+        "query": "BBC Learning English latest vocabulary lesson"
+      }
+    ]
+  }
+}

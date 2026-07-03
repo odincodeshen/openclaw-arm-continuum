@@ -1,0 +1,211 @@
+services:
+  openclaw-vllm:
+    image: nvcr.io/nvidia/vllm:26.03.post1-py3
+    container_name: openclaw-vllm
+    ipc: host
+    gpus: all
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ${HF_CACHE_DIR:-./.cache/huggingface}:/root/.cache/huggingface
+    environment:
+      HF_HOME: /root/.cache/huggingface
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - bash
+      - -lc
+      - >
+        vllm serve ${OPENCLAW_VLLM_MODEL:-Qwen/Qwen3.6-27B-FP8}
+        --host 0.0.0.0
+        --port 8000
+        --gpu-memory-utilization ${OPENCLAW_GPU_MEMORY_UTILIZATION:-0.70}
+        --tensor-parallel-size 1
+        --pipeline-parallel-size 1
+        --data-parallel-size 1
+        --trust-remote-code
+        --max-model-len ${OPENCLAW_MAX_MODEL_LEN:-262144}
+        --max-num-seqs ${OPENCLAW_MAX_NUM_SEQS:-4}
+        --reasoning-parser qwen3
+        --enable-auto-tool-choice
+        --tool-call-parser qwen3_coder
+        --enable-prefix-caching
+    restart: unless-stopped
+
+  openclaw-telegram:
+    image: python:3.12-slim
+    container_name: openclaw-telegram
+    working_dir: /app
+    command: ["python", "-u", "openclaw_telegram_gateway.py"]
+    env_file:
+      - .env
+    environment:
+      OPENCLAW_VLLM_BASE_URL: http://host.docker.internal:8000/v1
+      OPENCLAW_OLLAMA_BASE_URL: http://host.docker.internal:11434
+      OPENCLAW_QDRANT_BASE_URL: http://host.docker.internal:6333
+      OPENCLAW_WHISPER_BASE_URL: http://openclaw-whisper:8765
+      OPENCLAW_GATEWAY_RPC_URL: http://openclaw-gateway:18789/api/v1/admin/rpc
+      OPENCLAW_GATEWAY_STATE_DB: /gateway-state/openclaw.sqlite
+      OPENCLAW_SCRAPER_BASE_URL: http://openclaw-browser-scraper:8787
+      OPENCLAW_TASK_HISTORY_PATH: /workspace/.openclaw/task_history.jsonl
+    volumes:
+      - ./app:/app:ro
+      - ./workspace:/workspace
+      - ./gateway-data/state:/gateway-state
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - openclaw-vllm
+      - openclaw-whisper
+      - openclaw-gateway
+      - openclaw-browser-scraper
+    restart: unless-stopped
+
+  openclaw-browser-scraper:
+    build:
+      context: ./scraper
+    container_name: openclaw-browser-scraper
+    working_dir: /app
+    command: ["python", "-u", "openclaw_browser_scraper.py"]
+    env_file:
+      - .env
+    environment:
+      OPENCLAW_SCRAPER_HOST: 0.0.0.0
+      OPENCLAW_SCRAPER_PORT: 8787
+      OPENCLAW_WORKSPACE_ROOT: /workspace
+      OPENCLAW_CHROMIUM_PATH: /usr/bin/chromium
+    volumes:
+      - ./app:/app:ro
+      - ./workspace:/workspace
+    restart: unless-stopped
+
+  openclaw-whisper:
+    build:
+      context: ./whisper
+    container_name: openclaw-whisper
+    working_dir: /app
+    command: ["python", "-u", "openclaw_whisper_service.py"]
+    env_file:
+      - .env
+    environment:
+      OPENCLAW_WHISPER_HOST: 0.0.0.0
+      OPENCLAW_WHISPER_PORT: 8765
+      OPENCLAW_WHISPER_MODEL: ${OPENCLAW_WHISPER_MODEL:-base}
+      OPENCLAW_WHISPER_DEVICE: cpu
+      OPENCLAW_WHISPER_COMPUTE_TYPE: int8
+      OPENCLAW_WORKSPACE_ROOT: /workspace
+      NVIDIA_VISIBLE_DEVICES: void
+      CUDA_VISIBLE_DEVICES: ""
+    volumes:
+      - ./app:/app:ro
+      - ./workspace:/workspace
+      - ${HF_CACHE_DIR:-./.cache/huggingface}:/root/.cache/huggingface
+    restart: unless-stopped
+
+  openclaw-memory-watcher:
+    build:
+      context: ./runtime
+    container_name: openclaw-memory-watcher
+    working_dir: /app
+    command: ["python", "-u", "openclaw_memory_watcher.py"]
+    env_file:
+      - .env
+    environment:
+      OPENCLAW_OLLAMA_BASE_URL: http://host.docker.internal:11434
+      OPENCLAW_QDRANT_BASE_URL: http://host.docker.internal:6333
+    volumes:
+      - ./app:/app:ro
+      - ./workspace:/workspace
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  openclaw-cron:
+    image: python:3.12-slim
+    container_name: openclaw-cron
+    working_dir: /app
+    command: ["python", "-u", "openclaw_cron_worker.py"]
+    env_file:
+      - .env
+    environment:
+      OPENCLAW_VLLM_BASE_URL: http://host.docker.internal:8000/v1
+      OPENCLAW_OLLAMA_BASE_URL: http://host.docker.internal:11434
+      OPENCLAW_QDRANT_BASE_URL: http://host.docker.internal:6333
+      OPENCLAW_SCRAPER_BASE_URL: http://openclaw-browser-scraper:8787
+      OPENCLAW_CRON_TIMEZONE: ${OPENCLAW_CRON_TIMEZONE:-Europe/London}
+      OPENCLAW_CRON_DAILY_REPORT_TIME: ${OPENCLAW_CRON_DAILY_REPORT_TIME:-07:00}
+      OPENCLAW_CRON_TASKS_CONFIG: /app/cron_tasks.json
+      OPENCLAW_CRON_JOBS_PATH: /workspace/.openclaw/cron_jobs.json
+      OPENCLAW_CRON_STATE_PATH: /workspace/.openclaw/cron_state.json
+      OPENCLAW_GATEWAY_RPC_URL: http://openclaw-gateway:18789/api/v1/admin/rpc
+      OPENCLAW_GATEWAY_STATE_DB: /gateway-state/openclaw.sqlite
+    volumes:
+      - ./app:/app:ro
+      - ./workspace:/workspace
+      - ./gateway-data/state:/gateway-state
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - openclaw-vllm
+      - openclaw-memory-watcher
+      - openclaw-gateway
+      - openclaw-browser-scraper
+    restart: unless-stopped
+
+  openclaw-gateway:
+    image: openclaw/openclaw:latest
+    container_name: openclaw-gateway
+    working_dir: /app
+    command:
+      - node
+      - openclaw.mjs
+      - gateway
+      - run
+      - --allow-unconfigured
+      - --bind
+      - lan
+      - --auth
+      - token
+      - --token
+      - ${OPENCLAW_GATEWAY_TOKEN:?OPENCLAW_GATEWAY_TOKEN is required}
+      - --port
+      - "18789"
+    env_file:
+      - .env
+    environment:
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:?OPENCLAW_GATEWAY_TOKEN is required}
+      OPENCLAW_VLLM_BASE_URL: http://host.docker.internal:8000/v1
+      OPENCLAW_VLLM_MODEL: ${OPENCLAW_VLLM_MODEL:-Qwen/Qwen3.6-27B-FP8}
+    ports:
+      - "127.0.0.1:18789:18789"
+    volumes:
+      - ./gateway-data:/home/node/.openclaw
+      - ./workspace:/workspace
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - openclaw-vllm
+    restart: unless-stopped
+
+  openclaw-cli:
+    image: openclaw/openclaw:latest
+    profiles: ["tools"]
+    working_dir: /app
+    env_file:
+      - .env
+    environment:
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:?OPENCLAW_GATEWAY_TOKEN is required}
+    volumes:
+      - ./gateway-data:/home/node/.openclaw
+      - ./workspace:/workspace
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    network_mode: host
+    entrypoint: ["node", "openclaw.mjs"]

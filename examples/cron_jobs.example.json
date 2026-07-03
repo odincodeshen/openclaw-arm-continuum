@@ -1,0 +1,10 @@
+[
+  {
+    "id": "morning-brief-example",
+    "name": "Morning briefing",
+    "type": "daily",
+    "time": "07:30",
+    "prompt": "Prepare a concise morning briefing with weather, schedule reminders, and one learning item.",
+    "enabled": true
+  }
+]

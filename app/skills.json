@@ -1,0 +1,55 @@
+{
+  "skills": {
+    "memory_write": {
+      "enabled": true,
+      "network": false,
+      "provider": "ollama_qdrant",
+      "keywords": ["/mem", "/remember", "mem:", "remember:"]
+    },
+    "rag_retrieve": {
+      "enabled": true,
+      "network": false,
+      "provider": "ollama_qdrant",
+      "keywords": ["/rag", "rag:"]
+    },
+    "weather": {
+      "enabled": true,
+      "network": true,
+      "provider": "wttr.in",
+      "keywords": ["天氣", "氣溫", "下雨", "降雨", "weather"],
+      "locations": {
+        "英國": "London,United Kingdom",
+        "倫敦": "London,United Kingdom",
+        "台灣": "Taipei,Taiwan",
+        "臺灣": "Taipei,Taiwan",
+        "台湾": "Taipei,Taiwan",
+        "台北": "Taipei,Taiwan",
+        "臺北": "Taipei,Taiwan",
+        "新北": "New Taipei,Taiwan",
+        "桃園": "Taoyuan,Taiwan",
+        "新竹": "Hsinchu,Taiwan",
+        "台中": "Taichung,Taiwan",
+        "臺中": "Taichung,Taiwan",
+        "台南": "Tainan,Taiwan",
+        "臺南": "Tainan,Taiwan",
+        "高雄": "Kaohsiung,Taiwan",
+        "基隆": "Keelung,Taiwan",
+        "宜蘭": "Yilan,Taiwan",
+        "花蓮": "Hualien,Taiwan",
+        "台東": "Taitung,Taiwan",
+        "臺東": "Taitung,Taiwan",
+        "澎湖": "Penghu,Taiwan",
+        "東京": "Tokyo,Japan",
+        "紐約": "New York,USA",
+        "舊金山": "San Francisco,USA"
+      }
+    },
+    "web_search": {
+      "enabled": true,
+      "network": true,
+      "provider": "duckduckgo_html",
+      "limit": 5,
+      "keywords": ["搜尋", "查詢", "查一下", "最新", "新聞", "現在", "今天", "明天", "web:", "/search"]
+    }
+  }
+}
