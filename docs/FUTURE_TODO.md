@@ -278,6 +278,105 @@ Candidate work:
 - More precise `/rag` scope filters.
 - Memory aging, archival, and explicit user review.
 
+## Future: Runtime Lifecycle and Resource Control
+
+Goal: keep OpenClaw useful even when the main model engine is stopped for other
+projects, especially on shared GB10 / DGX GPU workstations and Arm CPU-only
+hosts.
+
+Core design principle:
+
+```text
+OpenClaw core != model engine
+```
+
+Recommended split:
+
+- Always-on core:
+  - Telegram gateway
+  - Gateway dashboard
+  - Cron worker
+  - Qdrant
+  - Ollama embedding service
+  - Browser scraper
+  - Memory watcher
+- Optional model engine:
+  - GB10 / DGX: vLLM
+  - Arm CPU-only: llama.cpp / ERNIE server
+  - Arm gateway: trusted remote local vLLM endpoint
+
+Expected behavior:
+
+- OpenClaw core can stay online while vLLM or llama.cpp is stopped.
+- Telegram should return a clear message when the model engine is paused.
+- Memory, dashboard, cron schedule management, document intake, and scraper
+  health checks should remain available when possible.
+- Restarting the model engine should not require recreating all OpenClaw
+  services.
+
+Proposed boot modes:
+
+```env
+OPENCLAW_BOOT_MODE=core
+OPENCLAW_BOOT_MODE=full
+OPENCLAW_BOOT_MODE=manual
+```
+
+Mode semantics:
+
+- `core`: start OpenClaw core services only.
+- `full`: start core services and the local model engine.
+- `manual`: do not auto-start OpenClaw services.
+
+Recommended platform defaults:
+
+- GB10 / DGX: default to `core` so GPU resources remain easy to reclaim for
+  other projects.
+- O6 / Arm CPU-only: default to `full` when used as a small always-on assistant,
+  or `core` when CPU/RAM must be shared with other workloads.
+- Arm gateway + remote local vLLM: default to `core`, because the gateway should
+  not own the remote model server lifecycle.
+
+Proposed CLI:
+
+```bash
+openclawctl status
+openclawctl start core
+openclawctl stop core
+openclawctl restart core
+
+openclawctl start model
+openclawctl stop model
+openclawctl restart model
+openclawctl status model
+
+openclawctl start full
+openclawctl stop full
+```
+
+Platform-specific model actions:
+
+- GB10 / DGX:
+  - `openclawctl stop model` stops `openclaw-vllm`.
+  - `openclawctl start model` starts `openclaw-vllm`.
+- O6 / Arm CPU-only:
+  - `openclawctl stop model` stops `openclaw-ernie-llama.service`.
+  - `openclawctl start model` starts `openclaw-ernie-llama.service`.
+- Arm gateway:
+  - `openclawctl status model` checks the remote local vLLM endpoint.
+  - start/stop may be disabled unless the gateway has explicit permission.
+
+Validation:
+
+- `openclawctl status` clearly distinguishes core status and model status.
+- Stopping the model releases GPU/CPU memory without stopping Telegram.
+- Telegram responds clearly when the model engine is paused.
+- `/help`, `/cron`, document intake, and dashboard access still work with core
+  services only.
+- Starting the model again restores normal chat, `/rag`, and `/search`
+  summarization without rebuilding the whole stack.
+- Reboot behavior follows `OPENCLAW_BOOT_MODE`.
+
 ## Future: Platform Presets
 
 Goal: make deployment easier across the Arm continuum.
