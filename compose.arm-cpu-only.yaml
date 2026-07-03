@@ -1,5 +1,11 @@
+x-openclaw-dns: &openclaw-dns
+  dns:
+    - ${OPENCLAW_DNS_SERVER_1:-192.168.0.1}
+    - ${OPENCLAW_DNS_SERVER_2:-1.1.1.1}
+
 services:
   openclaw-telegram:
+    <<: *openclaw-dns
     image: python:3.12-slim
     container_name: openclaw-telegram
     working_dir: /app
@@ -24,6 +30,7 @@ services:
     restart: unless-stopped
 
   openclaw-memory-watcher:
+    <<: *openclaw-dns
     build:
       context: ./runtime
     container_name: openclaw-memory-watcher
@@ -42,6 +49,7 @@ services:
     restart: unless-stopped
 
   openclaw-cron:
+    <<: *openclaw-dns
     image: python:3.12-slim
     container_name: openclaw-cron
     working_dir: /app
@@ -69,6 +77,7 @@ services:
     restart: unless-stopped
 
   openclaw-browser-scraper:
+    <<: *openclaw-dns
     build:
       context: ./scraper
     container_name: openclaw-browser-scraper
@@ -90,6 +99,7 @@ services:
     restart: unless-stopped
 
   openclaw-whisper:
+    <<: *openclaw-dns
     build:
       context: ./whisper
     container_name: openclaw-whisper
@@ -116,6 +126,7 @@ services:
     restart: unless-stopped
 
   openclaw-gateway:
+    <<: *openclaw-dns
     image: openclaw/openclaw:latest
     container_name: openclaw-gateway
     working_dir: /app
@@ -145,6 +156,7 @@ services:
     restart: unless-stopped
 
   openclaw-cli:
+    <<: *openclaw-dns
     image: openclaw/openclaw:latest
     profiles: ["tools"]
     working_dir: /app

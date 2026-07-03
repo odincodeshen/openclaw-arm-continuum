@@ -180,6 +180,17 @@ OPENCLAW_GATEWAY_TOKEN=<random-token-from-openssl>
 
 The `.env` file is ignored by git and must stay on the Orion O6.
 
+If `/search` reports that no usable web result was found while the host can
+access the internet, check the DNS settings used by Docker containers. On some
+Arm boards, Docker may generate an empty container `/etc/resolv.conf` after
+NetworkManager or reboot events. Set these values to your router or internal DNS
+server first, with a fallback resolver second:
+
+```text
+OPENCLAW_DNS_SERVER_1=192.168.0.1
+OPENCLAW_DNS_SERVER_2=1.1.1.1
+```
+
 ## 7. Start OpenClaw
 
 Start the default CPU-only services:
@@ -201,6 +212,17 @@ Optional web scraper:
 
 ```bash
 docker compose --env-file .env -f compose.arm-cpu-only.yaml --profile web up -d
+```
+
+Verify that the scraper container can resolve domains:
+
+```bash
+docker exec openclaw-browser-scraper cat /etc/resolv.conf
+docker exec openclaw-browser-scraper python - <<'PY'
+import socket
+for host in ("duckduckgo.com", "google.com"):
+    print(host, socket.gethostbyname(host))
+PY
 ```
 
 Optional Gateway dashboard:
