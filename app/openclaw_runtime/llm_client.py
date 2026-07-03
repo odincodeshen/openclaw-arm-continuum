@@ -1,6 +1,7 @@
 import base64
 import mimetypes
 from pathlib import Path
+import re
 import socket
 import urllib.error
 
@@ -9,8 +10,19 @@ from openclaw_runtime.http_client import request_json
 
 
 VLLM_NOT_READY_MESSAGE = (
-    "GB10 vLLM 還在啟動或重新載入模型，請稍等 1-3 分鐘後再試。"
+    "OpenClaw 本地推理端點還在啟動或重新載入模型，請稍等 1-3 分鐘後再試。"
 )
+
+
+def clean_model_content(content: str) -> str:
+    text = str(content or "").strip()
+    response_match = re.search(r"<response>\s*(.*?)\s*</response>", text, flags=re.DOTALL | re.IGNORECASE)
+    if response_match:
+        text = response_match.group(1).strip()
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
+    text = re.sub(r"^\s*</?response>\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*</response>\s*$", "", text, flags=re.IGNORECASE)
+    return text.strip()
 
 
 class LlmClient:
@@ -53,7 +65,7 @@ class LlmClient:
         content = message.get("content") or ""
         if not content and message.get("reasoning"):
             return "模型只回傳了 reasoning，沒有給最終答案。請再傳一次，我會要求它更短、更直接。"
-        return str(content).strip()
+        return clean_model_content(content)
 
     def chat_with_image(self, image_path: Path, prompt: str, *, max_tokens: int | None = None) -> str:
         mime_type = mimetypes.guess_type(str(image_path))[0] or "image/jpeg"
@@ -82,4 +94,4 @@ class LlmClient:
         content = message.get("content") or ""
         if not content and message.get("reasoning"):
             return "模型只回傳了 reasoning，沒有給圖片分析的最終答案。"
-        return str(content).strip()
+        return clean_model_content(content)
