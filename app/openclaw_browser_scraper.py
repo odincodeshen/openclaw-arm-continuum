@@ -159,7 +159,7 @@ def scrape(payload: dict) -> dict:
             ignore_https_errors=True,
             user_agent=(
                 "Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/126.0 Safari/537.36 OpenClaw-GB10"
+                "(KHTML, like Gecko) Chrome/126.0 Safari/537.36 OpenClaw-Arm-Continuum"
             ),
         )
         page.set_default_timeout(TIMEOUT_MS)

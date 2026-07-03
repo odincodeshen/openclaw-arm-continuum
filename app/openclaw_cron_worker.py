@@ -125,7 +125,7 @@ def build_daily_report(settings: Settings, tasks: dict, router: SkillRouter, llm
         f"# {title}",
         "",
         f"- 生成時間：{now.strftime('%Y-%m-%d %H:%M')} {settings.cron_timezone}",
-        f"- 執行主機：GB10 OpenClaw cron worker",
+        f"- 執行主機：{settings.runtime_label} cron worker",
         "",
     ]
 
@@ -292,7 +292,7 @@ def write_gateway_runback(settings: Settings, job: dict, now: datetime, result: 
             next_run_at_ms=state.get("nextRunAtMs"),
             delivered=bool(result.get("delivered")),
             model=settings.vllm_model,
-            provider="gb10-vllm",
+            provider="local-llm",
         )
     except Exception as exc:
         log(f"[cron] Gateway run history writeback failed id={job_id}: {exc}")

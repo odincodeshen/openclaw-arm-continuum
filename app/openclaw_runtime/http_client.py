@@ -2,7 +2,7 @@ import json
 import urllib.request
 
 
-USER_AGENT = "OpenClaw-GB10/0.1"
+USER_AGENT = "OpenClaw-Arm-Continuum/0.1"
 
 
 def request_json(method: str, url: str, payload: dict | None = None, timeout: int = 60) -> dict:
@@ -25,4 +25,3 @@ def get_text(url: str, timeout: int = 20) -> str:
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT}, method="GET")
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.read().decode("utf-8", errors="replace")
-

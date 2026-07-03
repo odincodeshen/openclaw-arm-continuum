@@ -60,7 +60,7 @@ ACTIVE_LOCK = threading.Lock()
 ACTIVE_REQUESTS = 0
 SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
 
-HELP_TEXT = """OpenClaw GB10 使用速查
+HELP_TEXT = f"""OpenClaw Arm Continuum 使用速查
 
 常用指令
 /mem <內容>
@@ -73,7 +73,7 @@ HELP_TEXT = """OpenClaw GB10 使用速查
 
 /search <關鍵字>
 用本地 Playwright browser 上網搜尋、抓頁、轉 Markdown，
-再交給 GB10 vLLM 摘要。
+再交給本地推理模型摘要。
 例：/search Arm Neoverse latest news
 例：/search 英國明天天氣如何
 
@@ -116,15 +116,15 @@ OpenClaw 會保存到 knowledge inbox 並自動進 RAG。
 可改存到動態追蹤記憶。
 
 圖片與語音
-直接上傳照片，OpenClaw 會保存到 GB10 inbox，
+直接上傳照片，OpenClaw 會保存到 {settings.runtime_label} inbox，
 並交給本地 vLLM/VLM 分析。
 
 照片 caption 可當作分析指令。
 例：請讀出圖片裡的文字，並整理成重點
 例：這張伺服器照片有什麼異常？
 
-上傳語音會保存到 GB10 inbox，先用本地 Whisper 轉文字，
-再交給 OpenClaw skills/GB10 vLLM 處理。
+上傳語音會保存到 {settings.runtime_label} inbox，先用本地 Whisper 轉文字，
+再交給 OpenClaw skills 與本地推理模型處理。
 
 語音可以直接講一般問題，也可以講命令內容。
 例：記住 OpenClaw 圖片分析要看 caption
@@ -263,7 +263,7 @@ def handle_document_message(chat_id: int, message: dict, caption: str) -> bool:
     else:
         send_message(
             chat_id,
-            "文件已保存到 GB10 inbox，但目前 watcher 尚未索引這種格式。\n"
+            f"文件已保存到 {settings.runtime_label} inbox，但目前 watcher 尚未索引這種格式。\n"
             f"檔案：{downloaded_path.name}\n"
             f"大小：{byte_count} bytes\n"
             "PDF/VLM 文件解析會在下一階段接上。",
@@ -290,7 +290,7 @@ def handle_photo_message(chat_id: int, message: dict) -> bool:
     downloaded_path, byte_count = download_telegram_file(file_id, target_path)
     send_message(
         chat_id,
-        "圖片已保存到 GB10 inbox，正在交給本地 vLLM/VLM 分析。\n"
+        f"圖片已保存到 {settings.runtime_label} inbox，正在交給本地 vLLM/VLM 分析。\n"
         f"檔案：{downloaded_path.name}\n"
         f"大小：{byte_count} bytes",
     )
@@ -322,7 +322,7 @@ def handle_voice_message(chat_id: int, message: dict) -> bool:
     downloaded_path, byte_count = download_telegram_file(file_id, target_path)
     send_message(
         chat_id,
-        "語音已保存到 GB10 inbox，正在用本地 Whisper 轉錄。\n"
+        f"語音已保存到 {settings.runtime_label} inbox，正在用本地 Whisper 轉錄。\n"
         f"檔案：{downloaded_path.name}\n"
         f"大小：{byte_count} bytes",
     )
@@ -536,7 +536,7 @@ def write_manual_runback(job: dict, status: str, summary: str, error: str | None
             next_run_at_ms=state.get("nextRunAtMs"),
             delivered=delivered,
             model=settings.vllm_model,
-            provider="gb10-vllm",
+            provider="local-llm",
         )
     except Exception as exc:
         log(f"[cron-run] Gateway run history writeback failed id={job_id}: {exc}")
@@ -656,10 +656,10 @@ def ack_message(text: str) -> str:
     if lowered.startswith(("/search ", "web:")) or any(
         keyword in text for keyword in ("搜尋", "查詢", "查一下", "最新", "新聞")
     ):
-        return "收到，正在搜尋網路資料並交給 GB10 摘要。"
+        return "收到，正在搜尋網路資料並交給本地推理模型摘要。"
     if any(keyword in text for keyword in ("天氣", "氣溫", "下雨", "降雨", "weather")):
         return "收到，正在查詢天氣資料。"
-    return "收到，正在交給 GB10 本地 vLLM 回答。"
+    return "收到，正在交給本地推理模型回答。"
 
 
 def handle_text_message(chat_id: int, text: str) -> None:

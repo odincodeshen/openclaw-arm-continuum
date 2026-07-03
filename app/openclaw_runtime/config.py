@@ -19,6 +19,8 @@ def env_int(name: str, default: int) -> int:
 
 @dataclass(frozen=True)
 class Settings:
+    runtime_label: str
+
     telegram_bot_token: str
     telegram_allowed_chat_ids: set[int]
     telegram_poll_timeout: int
@@ -82,6 +84,8 @@ def load_settings() -> Settings:
         if item.strip()
     }
     return Settings(
+        runtime_label=os.environ.get("OPENCLAW_RUNTIME_LABEL", "OpenClaw local runtime").strip()
+        or "OpenClaw local runtime",
         telegram_bot_token=os.environ.get("OPENCLAW_TELEGRAM_BOT_TOKEN", "").strip(),
         telegram_allowed_chat_ids=allowed_chat_ids,
         telegram_poll_timeout=env_int("OPENCLAW_POLL_TIMEOUT", 30),
@@ -90,7 +94,7 @@ def load_settings() -> Settings:
         vllm_model=os.environ.get("OPENCLAW_VLLM_MODEL", "Qwen/Qwen3.6-27B-FP8"),
         system_prompt=os.environ.get(
             "OPENCLAW_SYSTEM_PROMPT",
-            "你是 OpenClaw，運行在使用者 GB10/DGX Spark 上的地端個人 AI 助理。回答時使用繁體中文，保持精準、務實、可操作。直接給最終答案，不要輸出推理過程。",
+            "你是 OpenClaw，運行在使用者本地 Arm Continuum 環境中的地端個人 AI 助理。回答時使用繁體中文，保持精準、務實、可操作。直接給最終答案，不要輸出推理過程。",
         ),
         max_tokens=env_int("OPENCLAW_MAX_TOKENS", 160),
         request_timeout=env_int("OPENCLAW_REQUEST_TIMEOUT", 60),
