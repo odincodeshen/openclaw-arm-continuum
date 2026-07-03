@@ -191,6 +191,13 @@ OPENCLAW_DNS_SERVER_1=192.168.0.1
 OPENCLAW_DNS_SERVER_2=1.1.1.1
 ```
 
+For small CPU-only LLM context windows, keep web-search summarization compact:
+
+```text
+OPENCLAW_SCRAPER_LIMIT=2
+OPENCLAW_WEB_CONTEXT_CHARS=1800
+```
+
 ## 7. Start OpenClaw
 
 Start the default CPU-only services:

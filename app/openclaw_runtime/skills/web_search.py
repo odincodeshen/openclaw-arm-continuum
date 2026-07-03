@@ -62,10 +62,7 @@ class WebSearchSkill:
         pages = result.get("results") or []
         if not pages:
             return ""
-        context = "\n\n".join(
-            f"來源 {idx}: {item.get('title')}\nURL: {item.get('url')}\n\n{item.get('markdown', '')[:3500]}"
-            for idx, item in enumerate(pages, 1)
-        )
+        context = self._build_scraper_context(pages)
         prompt = (
             f"使用者問題：{query}\n\n"
             "以下內容由本地 Playwright headless browser 即時抓取並已落盤為 Markdown。"
@@ -73,8 +70,33 @@ class WebSearchSkill:
             f"Markdown 檔案：{result.get('saved_path')}\n\n"
             f"{context}"
         )
-        answer = self.llm.chat(prompt, max_tokens=420)
+        try:
+            answer = self.llm.chat(prompt, max_tokens=420)
+        except Exception as exc:
+            print(f"[web_search] llm summary failed: {exc}", flush=True)
+            sources = "\n".join(
+                f"{idx}. {item.get('title')}\n{item.get('url')}"
+                for idx, item in enumerate(pages, 1)
+            )
+            return (
+                "我已經完成網頁搜尋並保存結果，但本地模型暫時無法整理摘要。\n\n"
+                f"{sources}\n\n"
+                f"已保存網頁 Markdown：{result.get('saved_path')}"
+            )
         return f"{answer}\n\n已保存網頁 Markdown：{result.get('saved_path')}"
+
+    def _build_scraper_context(self, pages: list[dict]) -> str:
+        budget = max(900, int(self.settings.web_context_chars))
+        per_page = max(500, budget // max(len(pages), 1))
+        blocks = []
+        for idx, item in enumerate(pages, 1):
+            markdown = str(item.get("markdown") or "")
+            blocks.append(
+                f"來源 {idx}: {item.get('title')}\n"
+                f"URL: {item.get('url')}\n\n"
+                f"{markdown[:per_page]}"
+            )
+        return "\n\n".join(blocks)
 
     def _search(self, query: str) -> list[dict[str, str]]:
         cleaned = query.replace("/search", "", 1).replace("web:", "", 1).strip()

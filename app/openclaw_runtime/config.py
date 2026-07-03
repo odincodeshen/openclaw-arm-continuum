@@ -36,6 +36,7 @@ class Settings:
     web_timeout: int
     scraper_base_url: str
     scraper_limit: int
+    web_context_chars: int
     skills_config_path: Path
     vision_enabled: bool
     vision_max_tokens: int
@@ -102,6 +103,7 @@ def load_settings() -> Settings:
         web_timeout=env_int("OPENCLAW_WEB_TIMEOUT", 20),
         scraper_base_url=os.environ.get("OPENCLAW_SCRAPER_BASE_URL", "http://openclaw-browser-scraper:8787").rstrip("/"),
         scraper_limit=env_int("OPENCLAW_SCRAPER_LIMIT", 3),
+        web_context_chars=env_int("OPENCLAW_WEB_CONTEXT_CHARS", 6000),
         skills_config_path=Path(os.environ.get("OPENCLAW_SKILLS_CONFIG", "/app/skills.json")),
         vision_enabled=env_bool("OPENCLAW_VISION_ENABLED", True),
         vision_max_tokens=env_int("OPENCLAW_VISION_MAX_TOKENS", 500),
