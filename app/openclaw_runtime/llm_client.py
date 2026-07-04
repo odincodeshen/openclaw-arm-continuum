@@ -6,7 +6,7 @@ import socket
 import urllib.error
 
 from openclaw_runtime.config import Settings
-from openclaw_runtime.http_client import request_json
+from openclaw_runtime.http_client import is_reachable, request_json
 
 
 VLLM_NOT_READY_MESSAGE = (
@@ -28,6 +28,9 @@ def clean_model_content(content: str) -> str:
 class LlmClient:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+
+    def is_reachable(self) -> bool:
+        return is_reachable(f"{self.settings.vllm_base_url}/models", timeout=3)
 
     def _chat_completion(self, payload: dict) -> dict:
         try:

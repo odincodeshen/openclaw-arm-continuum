@@ -25,3 +25,11 @@ def get_text(url: str, timeout: int = 20) -> str:
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT}, method="GET")
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.read().decode("utf-8", errors="replace")
+
+
+def is_reachable(url: str, timeout: int = 3) -> bool:
+    try:
+        get_json(url, timeout=timeout)
+        return True
+    except Exception:
+        return False

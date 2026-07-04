@@ -20,8 +20,18 @@ class AgentRegistry:
             AgentStatus(
                 name=agent.name,
                 description=agent.description,
-                status="ready",
+                status=self._health_check(agent),
                 model_policy=getattr(agent, "model_policy", "local_default"),
             )
             for agent in self._agents
         ]
+
+    @staticmethod
+    def _health_check(agent) -> str:
+        check = getattr(agent, "health_check", None)
+        if not check:
+            return "ready"
+        try:
+            return check()
+        except Exception as exc:
+            return f"error: health check failed: {exc}"

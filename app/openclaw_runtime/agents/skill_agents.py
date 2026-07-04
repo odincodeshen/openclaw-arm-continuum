@@ -25,6 +25,10 @@ class SkillAgent:
     def can_handle(self, task: Task) -> bool:
         return self.skill.can_handle(task.text)
 
+    def health_check(self) -> str:
+        check = getattr(self.skill, "health_check", None)
+        return check() if check else "ready"
+
     def run(self, task: Task) -> SkillResult:
         result = self.skill.run(task.text)
         return SkillResult(self.name, result.answer)
@@ -40,6 +44,9 @@ class ChatAgent:
 
     def can_handle(self, task: Task) -> bool:
         return True
+
+    def health_check(self) -> str:
+        return "ready" if self.llm.is_reachable() else "error: vLLM unreachable"
 
     def run(self, task: Task) -> SkillResult:
         return SkillResult(self.name, self.llm.chat(task.text))

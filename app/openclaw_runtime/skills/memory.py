@@ -2,6 +2,7 @@ import re
 
 from openclaw_runtime.config import Settings
 from openclaw_runtime.embedding_client import EmbeddingClient
+from openclaw_runtime.http_client import is_reachable
 from openclaw_runtime.llm_client import LlmClient
 from openclaw_runtime.qdrant_client import QdrantClient
 from openclaw_runtime.skills.base import SkillResult
@@ -18,6 +19,11 @@ class MemoryWriteSkill:
 
     def can_handle(self, text: str) -> bool:
         return any(text.startswith(keyword) for keyword in self.keywords)
+
+    def health_check(self) -> str:
+        if is_reachable(f"{self.settings.qdrant_base_url}/collections"):
+            return "ready"
+        return "error: Qdrant unreachable"
 
     def run(self, text: str) -> SkillResult:
         content = self._strip_command(text)
@@ -62,6 +68,13 @@ class RagRetrieveSkill:
 
     def can_handle(self, text: str) -> bool:
         return any(keyword in text for keyword in self.keywords)
+
+    def health_check(self) -> str:
+        if not is_reachable(f"{self.settings.qdrant_base_url}/collections"):
+            return "error: Qdrant unreachable"
+        if not self.llm.is_reachable():
+            return "error: vLLM unreachable"
+        return "ready"
 
     def run(self, text: str) -> SkillResult:
         query = self._strip_command(text)

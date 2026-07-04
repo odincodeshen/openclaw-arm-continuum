@@ -3,7 +3,7 @@ import re
 import urllib.parse
 
 from openclaw_runtime.config import Settings
-from openclaw_runtime.http_client import get_text, request_json
+from openclaw_runtime.http_client import get_text, is_reachable, request_json
 from openclaw_runtime.llm_client import LlmClient
 from openclaw_runtime.skills.base import SkillResult
 
@@ -21,6 +21,11 @@ class WebSearchSkill:
 
     def can_handle(self, text: str) -> bool:
         return any(keyword in text for keyword in self.keywords)
+
+    def health_check(self) -> str:
+        if is_reachable(f"{self.settings.scraper_base_url}/health"):
+            return "ready"
+        return "degraded: browser scraper unreachable, falling back to DuckDuckGo HTML search"
 
     def run(self, text: str) -> SkillResult:
         scraper_answer = self._run_scraper(text)
