@@ -6,7 +6,7 @@ import time
 import traceback
 import urllib.parse
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
@@ -18,6 +18,33 @@ WORKSPACE_ROOT = Path(os.environ.get("OPENCLAW_WORKSPACE_ROOT", "/workspace")).r
 DEFAULT_LIMIT = int(os.environ.get("OPENCLAW_SCRAPER_LIMIT", "3"))
 TIMEOUT_MS = int(os.environ.get("OPENCLAW_SCRAPER_TIMEOUT_MS", "20000"))
 CHROMIUM_PATH = os.environ.get("OPENCLAW_CHROMIUM_PATH", "/usr/bin/chromium")
+
+_playwright = None
+_browser = None
+
+
+def get_browser():
+    """Reuse one Chromium process across requests instead of a cold launch per scrape.
+
+    HTTPServer (not ThreadingHTTPServer) handles requests one at a time on the
+    same thread, which is required by Playwright's sync API (not thread-safe).
+    """
+    global _playwright, _browser
+    if _browser is not None and _browser.is_connected():
+        return _browser
+    if _browser is not None:
+        try:
+            _browser.close()
+        except Exception:
+            pass
+    if _playwright is None:
+        _playwright = sync_playwright().start()
+    _browser = _playwright.chromium.launch(
+        executable_path=CHROMIUM_PATH,
+        headless=True,
+        args=["--no-sandbox", "--disable-dev-shm-usage"],
+    )
+    return _browser
 
 
 def log(message: str) -> None:
@@ -149,46 +176,42 @@ def scrape(payload: dict) -> dict:
         raise ValueError("query or url is required")
 
     started = time.time()
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch(
-            executable_path=CHROMIUM_PATH,
-            headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage"],
-        )
-        page = browser.new_page(
-            ignore_https_errors=True,
-            user_agent=(
-                "Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/126.0 Safari/537.36 OpenClaw-Arm-Continuum"
-            ),
-        )
+    browser = get_browser()
+    context = browser.new_context(
+        ignore_https_errors=True,
+        user_agent=(
+            "Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/126.0 Safari/537.36 OpenClaw-Arm-Continuum"
+        ),
+    )
+    pages = []
+    try:
+        page = context.new_page()
         page.set_default_timeout(TIMEOUT_MS)
-        pages = []
-        try:
-            if url:
-                target = normalize_url(url)
-                page.goto(target, wait_until="domcontentloaded", timeout=TIMEOUT_MS)
-                pages.append(page_to_markdown(page, target))
-            else:
-                page.goto(search_url(query), wait_until="domcontentloaded", timeout=TIMEOUT_MS)
-                results = extract_search_results(page, limit)
-                if not results:
-                    page.goto(bing_search_url(query), wait_until="domcontentloaded", timeout=TIMEOUT_MS)
-                    results = extract_bing_results(page, limit)
-                for result in results:
-                    try:
-                        page.goto(result["url"], wait_until="domcontentloaded", timeout=TIMEOUT_MS)
-                        pages.append(page_to_markdown(page, result["url"], result["title"]))
-                    except Exception as exc:
-                        pages.append(
-                            {
-                                "title": result["title"],
-                                "url": result["url"],
-                                "markdown": f"# {result['title']}\n\nURL: {result['url']}\n\nScrape failed: {exc}\n",
-                            }
-                        )
-        finally:
-            browser.close()
+        if url:
+            target = normalize_url(url)
+            page.goto(target, wait_until="domcontentloaded", timeout=TIMEOUT_MS)
+            pages.append(page_to_markdown(page, target))
+        else:
+            page.goto(search_url(query), wait_until="domcontentloaded", timeout=TIMEOUT_MS)
+            results = extract_search_results(page, limit)
+            if not results:
+                page.goto(bing_search_url(query), wait_until="domcontentloaded", timeout=TIMEOUT_MS)
+                results = extract_bing_results(page, limit)
+            for result in results:
+                try:
+                    page.goto(result["url"], wait_until="domcontentloaded", timeout=TIMEOUT_MS)
+                    pages.append(page_to_markdown(page, result["url"], result["title"]))
+                except Exception as exc:
+                    pages.append(
+                        {
+                            "title": result["title"],
+                            "url": result["url"],
+                            "markdown": f"# {result['title']}\n\nURL: {result['url']}\n\nScrape failed: {exc}\n",
+                        }
+                    )
+    finally:
+        context.close()
 
     combined = [
         f"# OpenClaw Web Scrape",
@@ -246,7 +269,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> int:
     log(f"[scraper] listening on {HOST}:{PORT} workspace={WORKSPACE_ROOT}")
-    ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
+    HTTPServer((HOST, PORT), Handler).serve_forever()
     return 0
 
 
