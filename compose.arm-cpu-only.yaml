@@ -139,15 +139,15 @@ services:
         node openclaw.mjs plugins enable admin-http-rpc || true;
         exec node openclaw.mjs gateway run
         --allow-unconfigured
-        --bind lan
+        --bind loopback
         --auth token
-        --token "${OPENCLAW_GATEWAY_TOKEN:-}"
+        --token "${OPENCLAW_GATEWAY_TOKEN:?OPENCLAW_GATEWAY_TOKEN is required}"
         --port 18789
     env_file:
       - path: .env
         required: false
     environment:
-      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:?OPENCLAW_GATEWAY_TOKEN is required}
       OPENCLAW_VLLM_BASE_URL: ${OPENCLAW_VLLM_BASE_URL:-http://127.0.0.1:8080/v1}
       OPENCLAW_VLLM_MODEL: ${OPENCLAW_VLLM_MODEL:-ernie-o6}
     volumes:
@@ -165,7 +165,7 @@ services:
       - path: .env
         required: false
     environment:
-      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:?OPENCLAW_GATEWAY_TOKEN is required}
     volumes:
       - ./gateway-data:/home/node/.openclaw
       - ./workspace:/workspace
