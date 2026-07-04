@@ -103,6 +103,10 @@ def should_run(now: datetime, settings: Settings, state: dict) -> bool:
     due_minute = int(minute_text)
     if (now.hour, now.minute) < (due_hour, due_minute):
         return False
+    now_minutes = now.hour * 60 + now.minute
+    due_minutes = due_hour * 60 + due_minute
+    if now_minutes - due_minutes > settings.cron_due_window_minutes:
+        return False
     return state.get("last_daily_report_date") != today_key(now)
 
 
@@ -342,7 +346,7 @@ def main() -> int:
         try:
             now = datetime.now(tz)
             for job in load_dynamic_jobs(settings):
-                if is_due(job, now, state):
+                if is_due(job, now, state, window_minutes=settings.cron_due_window_minutes):
                     result = run_dynamic_job(settings, router, now, job)
                     report_path = result["path"]
                     mark_ran(job, now, state, report_path)

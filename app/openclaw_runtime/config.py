@@ -62,6 +62,7 @@ class Settings:
     cron_timezone: str
     cron_daily_report_time: str
     cron_poll_seconds: int
+    cron_due_window_minutes: int
     cron_run_on_start: bool
     cron_chat_ids: set[int]
     cron_tasks_config_path: Path
@@ -127,6 +128,7 @@ def load_settings() -> Settings:
         cron_timezone=os.environ.get("OPENCLAW_CRON_TIMEZONE", "Europe/London"),
         cron_daily_report_time=os.environ.get("OPENCLAW_CRON_DAILY_REPORT_TIME", "07:00"),
         cron_poll_seconds=env_int("OPENCLAW_CRON_POLL_SECONDS", 30),
+        cron_due_window_minutes=env_int("OPENCLAW_CRON_DUE_WINDOW_MINUTES", 15),
         cron_run_on_start=env_bool("OPENCLAW_CRON_RUN_ON_START", False),
         cron_chat_ids=cron_chat_ids,
         cron_tasks_config_path=Path(os.environ.get("OPENCLAW_CRON_TASKS_CONFIG", "/app/cron_tasks.json")),

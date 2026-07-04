@@ -251,7 +251,20 @@ def describe_job(job: dict) -> str:
     return f"{job.get('id')} [{status}] {schedule_text} - {job.get('name', 'unnamed')}"
 
 
-def is_due(job: dict, now: datetime, state: dict) -> bool:
+DEFAULT_DUE_WINDOW_MINUTES = 15
+
+
+def _minutes_of_day(value: str) -> int:
+    hour_text, minute_text = value.split(":", 1)
+    return int(hour_text) * 60 + int(minute_text)
+
+
+def _within_due_window(now: datetime, due_time: str, window_minutes: int) -> bool:
+    now_minutes = now.hour * 60 + now.minute
+    return now_minutes - _minutes_of_day(due_time) <= window_minutes
+
+
+def is_due(job: dict, now: datetime, state: dict, window_minutes: int = DEFAULT_DUE_WINDOW_MINUTES) -> bool:
     if not job.get("enabled", True):
         return False
 
@@ -267,6 +280,8 @@ def is_due(job: dict, now: datetime, state: dict) -> bool:
         due_time = validate_time(str(schedule.get("time", "00:00")))
         if now.strftime("%H:%M") < due_time:
             return False
+        if not _within_due_window(now, due_time, window_minutes):
+            return False
         created_at = int(job.get("created_at", 0))
         if created_at and not last_run:
             created = datetime.fromtimestamp(created_at, tz=now.tzinfo)
@@ -280,6 +295,8 @@ def is_due(job: dict, now: datetime, state: dict) -> bool:
             return False
         due_time = validate_time(str(schedule.get("time", "00:00")))
         if now.strftime("%H:%M") < due_time:
+            return False
+        if not _within_due_window(now, due_time, window_minutes):
             return False
         created_at = int(job.get("created_at", 0))
         if created_at and not last_run:
@@ -297,6 +314,8 @@ def is_due(job: dict, now: datetime, state: dict) -> bool:
             return False
         due_time = validate_time(str(schedule.get("time", "00:00")))
         if now.strftime("%H:%M") < due_time:
+            return False
+        if not _within_due_window(now, due_time, window_minutes):
             return False
         created_at = int(job.get("created_at", 0))
         if created_at and not last_run:
