@@ -246,21 +246,21 @@ def parse_metadata(job: dict) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def schedule_to_gateway(schedule: dict) -> dict:
+def schedule_to_gateway(schedule: dict, timezone: str) -> dict:
     schedule_type = schedule.get("type")
     if schedule_type == "daily":
         hour, minute = validate_time(str(schedule.get("time"))).split(":")
-        return {"kind": "cron", "expr": f"{int(minute)} {int(hour)} * * *", "tz": "Europe/London", "staggerMs": 0}
+        return {"kind": "cron", "expr": f"{int(minute)} {int(hour)} * * *", "tz": timezone, "staggerMs": 0}
     if schedule_type == "weekly":
         hour, minute = validate_time(str(schedule.get("time"))).split(":")
         weekday = int(schedule.get("weekday", validate_weekday(str(schedule.get("day", "mon")))))
         cron_weekday = 0 if weekday == 6 else weekday + 1
-        return {"kind": "cron", "expr": f"{int(minute)} {int(hour)} * * {cron_weekday}", "tz": "Europe/London", "staggerMs": 0}
+        return {"kind": "cron", "expr": f"{int(minute)} {int(hour)} * * {cron_weekday}", "tz": timezone, "staggerMs": 0}
     if schedule_type == "monthly":
         hour, minute = validate_time(str(schedule.get("time"))).split(":")
         day = validate_month_day(str(schedule.get("day", "1")))
         cron_day = "28-31" if day == "last" else str(day)
-        return {"kind": "cron", "expr": f"{int(minute)} {int(hour)} {cron_day} * *", "tz": "Europe/London", "staggerMs": 0}
+        return {"kind": "cron", "expr": f"{int(minute)} {int(hour)} {cron_day} * *", "tz": timezone, "staggerMs": 0}
     if schedule_type == "interval":
         seconds = int(schedule.get("seconds") or parse_interval_seconds(str(schedule.get("every", "1h"))))
         return {"kind": "every", "everyMs": seconds * 1000, "anchorMs": int(datetime.now().timestamp() * 1000)}
@@ -272,7 +272,7 @@ def add_gateway_job(settings: Settings, chat_id: int, name: str, prompt: str, sc
         "name": name,
         "description": metadata(chat_id, schedule),
         "enabled": True,
-        "schedule": schedule_to_gateway(schedule),
+        "schedule": schedule_to_gateway(schedule, settings.cron_timezone),
         "payload": {"kind": "agentTurn", "message": prompt},
         "sessionTarget": "isolated",
         "wakeMode": "now",
