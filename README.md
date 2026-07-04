@@ -17,7 +17,6 @@ Each tier offers a different balance of privacy, power efficiency, and inference
 - Local vLLM inference through an OpenAI-compatible endpoint.
 - Telegram long polling gateway with allowlist support.
 - Local memory and document RAG through Ollama embeddings and Qdrant.
-- Review-first document intake for Telegram uploads.
 - Playwright/Chromium scraper worker for `/search` and cron web tasks.
 - Local Whisper service for Telegram voice transcription.
 - Dynamic cron tasks with Telegram push delivery and Gateway dashboard integration.
@@ -264,6 +263,28 @@ do not expose the admin RPC route directly to the public internet.
 - Use SSH tunnels for dashboard access.
 
 See `docs/SECURITY.md` for the publication checklist.
+
+## Roadmap
+
+The current stable baseline is:
+
+```text
+dgx-spark / GB10 + local vLLM
+```
+
+Next stage:
+
+```text
+Radxa Orion O6 + Baidu ERNIE 4.5 + llama.cpp
+```
+
+Future profile:
+
+```text
+RPi5 / Arm gateway + private LAN vLLM
+```
+
+Formal photo/PDF/diagram parsing should move to an explicit VLM in the future, such as Qwen2.5-VL or Qwen3-VL.
 
 ## License
 

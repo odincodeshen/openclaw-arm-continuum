@@ -22,7 +22,6 @@ Same runtime, different capability tiers.
 - Arm continuum：同一套助理 runtime 可以橫跨 edge、CPU-only Arm server、DGX Spark / GB10。
 - Telegram-first：用 Telegram 作為手機入口，支援文字、文件、圖片、語音與 cron 管理。
 - 本地 RAG：使用 Ollama embedding 與 Qdrant 建立個人記憶與文件知識庫。
-- 文件審核流程：Telegram 上傳文件後先由本地模型產生簡介，再決定是否正式進 RAG。
 - 網頁查詢：透過 Playwright / Chromium worker 執行本地瀏覽器搜尋與頁面擷取。
 - 語音輸入：透過本地 Whisper service 轉錄 Telegram voice message。
 - 主動推播：支援 cron 任務與 Telegram 推播。
