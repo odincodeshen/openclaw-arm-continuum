@@ -118,7 +118,7 @@ OpenClaw 會保存到 knowledge inbox 並自動進 RAG。
 例：/rag debugger_armv8v9.pdf 這份文件在說什麼
 例：/rag debugger_armv8v9.pdf 摘要重點
 
-文件 caption 寫 /tracker
+文件 caption 寫 /mem 或 /tracker
 可改存到動態追蹤記憶。
 
 圖片與語音
@@ -208,7 +208,7 @@ def timestamp() -> str:
 
 def document_directory(caption: str) -> Path:
     lowered = caption.strip().lower()
-    if lowered.startswith("/tracker"):
+    if lowered.startswith("/tracker") or lowered.startswith("/mem"):
         return settings.inbox_path / "tracker" / "telegram"
     return settings.inbox_path / "knowledge" / "telegram"
 
