@@ -1,6 +1,6 @@
 # OpenClaw Arm Continuum
 
-Version: `v1.0`
+Version: `v1.1`
 
 License: Apache-2.0
 
@@ -294,4 +294,4 @@ This project is licensed under the Apache License, Version 2.0. See `LICENSE`.
 
 The current default model is `Qwen/Qwen3.6-27B-FP8`. Photo analysis can be wired through the same local vLLM API, but a production VLM such as Qwen2.5-VL or Qwen3-VL is recommended for formal image/PDF/diagram understanding.
 
-Fuller multi-agent decomposition is intentionally left for later. v1.0 uses a thin dispatcher so the runtime remains easy to inspect, clone, and operate.
+Fuller multi-agent decomposition is intentionally left for later. v1.1 uses a thin dispatcher so the runtime remains easy to inspect, clone, and operate.
