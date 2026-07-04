@@ -42,6 +42,7 @@ class InboxIngestor:
                     fingerprint = self._safe_fingerprint(path)
                     self.state[str(path)] = {
                         "fingerprint": fingerprint,
+                        "stat_signature": self._safe_stat_signature(path),
                         "error": f"{type(exc).__name__}: {exc}",
                         "traceback": traceback.format_exc(limit=8),
                         "updated_at": int(time.time()),
@@ -63,14 +64,25 @@ class InboxIngestor:
         if path.suffix.lower() not in SUPPORTED_SUFFIXES:
             return IngestResult(path, "", 0, skipped=True, reason="unsupported_suffix")
 
-        fingerprint = self._fingerprint(path)
         state_key = str(path)
-        if self.state.get(state_key, {}).get("fingerprint") == fingerprint:
+        stat_signature = self._stat_signature(path)
+        cached = self.state.get(state_key, {})
+        if cached.get("fingerprint") and cached.get("stat_signature") == stat_signature:
+            return IngestResult(path, self._collection_for(path), 0, skipped=True, reason="unchanged")
+
+        fingerprint = self._fingerprint(path)
+        if cached.get("fingerprint") == fingerprint:
+            self.state[state_key] = {**cached, "stat_signature": stat_signature, "updated_at": int(time.time())}
             return IngestResult(path, self._collection_for(path), 0, skipped=True, reason="unchanged")
 
         text = self._read_text(path).strip()
         if not text:
-            self.state[state_key] = {"fingerprint": fingerprint, "chunks": 0, "updated_at": int(time.time())}
+            self.state[state_key] = {
+                "fingerprint": fingerprint,
+                "stat_signature": stat_signature,
+                "chunks": 0,
+                "updated_at": int(time.time()),
+            }
             return IngestResult(path, self._collection_for(path), 0, skipped=True, reason="empty")
 
         collection = self._collection_for(path)
@@ -94,6 +106,7 @@ class InboxIngestor:
 
         self.state[state_key] = {
             "fingerprint": fingerprint,
+            "stat_signature": stat_signature,
             "collection": collection,
             "chunks": len(chunks),
             "updated_at": int(time.time()),
@@ -142,6 +155,10 @@ class InboxIngestor:
             lines.append("")
         return "\n".join(lines)
 
+    def _stat_signature(self, path: Path) -> list[int]:
+        stat = path.stat()
+        return [stat.st_mtime_ns, stat.st_size]
+
     def _fingerprint(self, path: Path) -> str:
         digest = hashlib.sha256()
         with path.open("rb") as handle:
@@ -154,6 +171,12 @@ class InboxIngestor:
             return self._fingerprint(path)
         except Exception:
             return ""
+
+    def _safe_stat_signature(self, path: Path) -> list[int] | None:
+        try:
+            return self._stat_signature(path)
+        except Exception:
+            return None
 
     def _load_state(self) -> dict:
         if not self.settings.watcher_state_path.exists():
