@@ -11,6 +11,10 @@ class AgentRegistry:
 
     def find(self, task) -> Agent:
         for agent in self._agents:
+            matcher = getattr(agent, "matches_explicit_command", None)
+            if matcher and matcher(task):
+                return agent
+        for agent in self._agents:
             if agent.can_handle(task):
                 return agent
         raise LookupError("no agent can handle this task")

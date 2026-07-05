@@ -1,6 +1,6 @@
 from openclaw_runtime.agents.base import Task
 from openclaw_runtime.llm_client import LlmClient
-from openclaw_runtime.skills.base import SkillResult
+from openclaw_runtime.skills.base import SkillResult, has_explicit_command_prefix
 
 
 SKILL_AGENT_NAMES = {
@@ -24,6 +24,9 @@ class SkillAgent:
 
     def can_handle(self, task: Task) -> bool:
         return self.skill.can_handle(task.text)
+
+    def matches_explicit_command(self, task: Task) -> bool:
+        return has_explicit_command_prefix(getattr(self.skill, "keywords", ()), task.text)
 
     def health_check(self) -> str:
         check = getattr(self.skill, "health_check", None)
