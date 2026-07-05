@@ -84,6 +84,25 @@ class ParseDocUrlArgsTest(unittest.TestCase):
 
 
 class AckMessageTest(unittest.TestCase):
+    def setUp(self) -> None:
+        # ack_message() reads the module-level agent_registry directly to
+        # stay in sync with real routing. Swap in a deterministic registry
+        # built from the real app/skills.json (no network calls needed for
+        # routing decisions) so this test doesn't depend on whether
+        # Qdrant/vLLM happen to be reachable in this environment -- when
+        # they are not, SkillRouter silently drops memory_write/rag_retrieve
+        # entirely, which would otherwise make these tests flaky.
+        from tests.test_routing_integration import REPO_SKILLS_JSON, build_real_agent_registry
+        from tests.support import build_settings
+
+        self._original_registry = gateway.agent_registry
+        settings = build_settings(skills_config_path=REPO_SKILLS_JSON)
+        gateway.agent_registry = build_real_agent_registry(settings)
+        self.addCleanup(self._restore_registry)
+
+    def _restore_registry(self) -> None:
+        gateway.agent_registry = self._original_registry
+
     def test_mem_command_acknowledges_memory_write(self) -> None:
         self.assertIn("記憶", gateway.ack_message("/mem buy milk"))
 
@@ -101,6 +120,14 @@ class AckMessageTest(unittest.TestCase):
 
     def test_unmatched_text_gets_generic_acknowledgement(self) -> None:
         self.assertIn("本地推理模型", gateway.ack_message("跟我聊聊你最近好嗎"))
+
+    def test_ambiguous_keyword_overlap_matches_real_routing(self) -> None:
+        # Regression guard: ack_message() used to hand-roll its own
+        # keyword-priority list (search keywords checked before weather
+        # keywords), which disagreed with the real skill order (weather is
+        # checked before web_search), so this exact text acknowledged "web
+        # search" while actually being routed to the weather agent.
+        self.assertIn("天氣", gateway.ack_message("查詢一下今天天氣如何"))
 
 
 if __name__ == "__main__":

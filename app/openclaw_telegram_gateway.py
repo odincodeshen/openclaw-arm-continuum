@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 
 from openclaw_runtime.config import load_settings
 from openclaw_runtime.agents import AgentRegistry, TaskDispatcher
+from openclaw_runtime.agents.base import Task
 from openclaw_runtime.agents.skill_agents import ChatAgent, SkillAgent
 from openclaw_runtime.cron_jobs import (
     add_daily_job,
@@ -747,19 +748,25 @@ def setup_bot_commands() -> None:
     telegram("setMyCommands", {"commands": commands}, timeout=20)
 
 
+ACK_MESSAGES = {
+    "memory_agent": "收到，正在寫入本地記憶。",
+    "rag_agent": "收到，正在查詢本地記憶與文件知識庫。",
+    "browser_search_agent": "收到，正在搜尋網路資料並交給本地推理模型摘要。",
+    "weather_agent": "收到，正在查詢天氣資料。",
+}
+DEFAULT_ACK_MESSAGE = "收到，正在交給本地推理模型回答。"
+
+
 def ack_message(text: str) -> str:
-    lowered = text.lower()
-    if lowered.startswith(("/mem ", "/remember ", "mem:", "remember:")):
-        return "收到，正在寫入本地記憶。"
-    if lowered.startswith(("/rag ", "rag:")):
-        return "收到，正在查詢本地記憶與文件知識庫。"
-    if lowered.startswith(("/search ", "web:")) or any(
-        keyword in text for keyword in ("搜尋", "查詢", "查一下", "最新", "新聞")
-    ):
-        return "收到，正在搜尋網路資料並交給本地推理模型摘要。"
-    if any(keyword in text for keyword in ("天氣", "氣溫", "下雨", "降雨", "weather")):
-        return "收到，正在查詢天氣資料。"
-    return "收到，正在交給本地推理模型回答。"
+    # Ask the same agent_registry that will actually handle the message,
+    # instead of a second hand-rolled keyword-priority list that can silently
+    # drift out of sync with the real routing order (as it did before).
+    task = Task(task_id="ack-preview", source="ack_preview", text=text)
+    try:
+        agent = agent_registry.find(task)
+    except LookupError:
+        return DEFAULT_ACK_MESSAGE
+    return ACK_MESSAGES.get(agent.name, DEFAULT_ACK_MESSAGE)
 
 
 def handle_text_message(chat_id: int, text: str) -> None:
