@@ -18,10 +18,22 @@ class SkillRouter:
         self.skills = self._load_skills()
 
     def route(self, text: str) -> SkillResult:
+        stripped = text.strip().lower()
+        for skill in self.skills:
+            if self._matches_explicit_command(skill, stripped):
+                return skill.run(text)
         for skill in self.skills:
             if skill.can_handle(text):
                 return skill.run(text)
         return SkillResult("llm", self.llm.chat(text))
+
+    @staticmethod
+    def _matches_explicit_command(skill, stripped_text: str) -> bool:
+        # An explicit slash command (e.g. "/search ...") must always win over
+        # a keyword-based skill like weather, even if the query text also
+        # contains that skill's keyword (e.g. "/search today's weather").
+        keywords = getattr(skill, "keywords", ())
+        return any(stripped_text.startswith(keyword) for keyword in keywords if keyword.startswith("/"))
 
     def _load_config(self) -> dict:
         if not self.settings.skills_config_path.exists():
