@@ -76,7 +76,10 @@ HELP_TEXT = f"""OpenClaw Arm Continuum 使用速查
 用本地 Playwright browser 上網搜尋、抓頁、轉 Markdown，
 再交給本地推理模型摘要。
 例：/search Arm Neoverse latest news
-例：/search 英國明天天氣如何
+例：/search 今天有哪些科技新聞
+
+單純問天氣不要加 /search，直接用自然語言問（見下方「自然語言」），
+/search 會強制走一般網頁搜尋，繞過專門處理天氣的查詢邏輯。
 
 搜尋結果會落盤到：
 /workspace/inbox/tracker/web/*.md
