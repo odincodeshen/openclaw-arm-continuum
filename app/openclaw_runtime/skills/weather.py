@@ -91,7 +91,7 @@ class WeatherSkill:
         for keyword, location in self.location_map.items():
             if keyword in text:
                 return location
-        match = re.search(r"(.+?)(?:明天|今天|後天)?(?:天氣|氣溫|會下雨)", text)
+        match = re.search(r"(.+?)(?:明天|今天|後天|本日|今日|現在|目前)?(?:天氣|氣溫|會下雨)", text)
         if match:
             cleaned = self._clean_location(match.group(1))
             if cleaned:
