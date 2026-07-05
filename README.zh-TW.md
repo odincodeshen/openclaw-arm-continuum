@@ -178,6 +178,11 @@ curl -I http://127.0.0.1:18789/
 /cron
 ```
 
+天氣查詢不是 slash command，直接用自然語言問就會自動路由到天氣 skill，
+例如「劍橋今天天氣如何」。**不要**在天氣問句前面加 `/search`：明確的
+`/search` 指令永遠有最高路由優先權，`/search 劍橋今天天氣如何` 會變成
+一般網頁搜尋，而不是走專門處理天氣的查詢邏輯。
+
 ## 記憶與 RAG
 
 Qdrant 預設使用兩個 collection：
@@ -235,16 +240,19 @@ memory watcher 索引。
 
 ## Cron 主動推播
 
-建立動態排程：
+建立動態排程，`名稱 :: 任務內容`中間的 `::` 是必要的分隔符：
 
 ```text
-/cron add daily 07:30 Morning briefing
-/cron add weekly mon 08:00 Summarize this week's AI hardware news
-/cron add monthly 1 09:00 Review monthly personal goals
+/cron add daily 07:30 早報 :: 劍橋今天天氣如何
+/cron add weekly mon 08:00 週報 :: 整理本週 AI 硬體新聞
+/cron add monthly 1 09:00 月報 :: 回顧本月個人目標
 /cron list
 /cron run <job_id>
 /cron delete <job_id>
 ```
+
+`::` 後面的任務內容，路由方式跟一般聊天訊息完全一樣：單純的天氣問句（不要加
+`/search`）會走天氣 skill，`/search <查詢>` 則會強制走一般網頁搜尋。
 
 `daily`、`weekly`、`monthly` 固定時間任務只會在指定時間窗口內執行，避免 container 晚上重啟後補跑早上的任務。
 

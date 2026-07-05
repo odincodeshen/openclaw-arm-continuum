@@ -157,6 +157,12 @@ Currently implemented help commands:
 /cron
 ```
 
+Weather is not a slash command. Ask in plain language and it is routed to
+the local weather skill automatically, for example `Cambridge weather today`.
+Do not prefix a weather question with `/search`: an explicit `/search`
+always wins the routing priority, so `/search Cambridge weather today` runs
+a general web search instead of the purpose-built weather lookup.
+
 ## Memory And RAG
 
 Qdrant uses two primary collections:
@@ -213,16 +219,21 @@ saved into the local inbox.
 
 ## Cron
 
-Create dynamic Telegram cron tasks:
+Create dynamic Telegram cron tasks with `name :: prompt` (the `::` separator
+is required):
 
 ```text
-/cron add daily 07:30 Morning briefing
-/cron add weekly mon 08:00 Summarize this week's AI hardware news
-/cron add monthly 1 09:00 Review monthly personal goals
+/cron add daily 07:30 Morning weather :: Cambridge weather today
+/cron add weekly mon 08:00 AI roundup :: Summarize this week's AI hardware news
+/cron add monthly 1 09:00 Monthly review :: Review monthly personal goals
 /cron list
 /cron run <job_id>
 /cron delete <job_id>
 ```
+
+The prompt after `::` is routed exactly like a normal chat message: a plain
+weather question (no `/search` prefix) goes to the weather skill, and
+`/search <query>` forces a general web search instead.
 
 Daily, weekly, and monthly fixed-time jobs run only inside their configured execution window, so restarting a container later in the day will not backfill a missed morning job.
 
