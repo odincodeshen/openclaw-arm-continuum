@@ -8,6 +8,7 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - ${HF_CACHE_DIR:-./.cache/huggingface}:/root/.cache/huggingface
+      - ${VLLM_CACHE_DIR:-./.cache/vllm}:/root/.cache/vllm
     environment:
       HF_HOME: /root/.cache/huggingface
       NVIDIA_VISIBLE_DEVICES: all
