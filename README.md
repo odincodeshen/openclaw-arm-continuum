@@ -12,6 +12,8 @@ OpenClaw Arm Continuum is built on a simple idea: personal AI should not be tied
 
 Each tier offers a different balance of privacy, power efficiency, and inference capability, while keeping the user's data inside a local host or trusted private LAN.
 
+New users can start with practical scenarios in [`docs/USE_CASES.md`](docs/USE_CASES.md).
+
 ## What This Release Includes
 
 - Local vLLM inference through an OpenAI-compatible endpoint.
