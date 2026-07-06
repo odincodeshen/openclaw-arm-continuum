@@ -27,6 +27,12 @@ MultimodalAnalysisAgent
 MNN Omni should be treated as an Arm CPU-friendly multimodal backend, not as an
 O6-only feature and not as the primary DGX / GB10 multimodal path.
 
+MNN Omni should also be treated as a specialist multimodal backend, not as a
+replacement for the platform's main text reasoning model. For example, on an
+Arm CPU-only Orion O6 profile, ERNIE MoE + llama.cpp can remain the text
+reasoning engine while MNN Omni handles image/audio understanding when those
+inputs require a multimodal model.
+
 Recommended backend strategy:
 
 - DGX / GB10: use `vllm-vlm` with a formal VLM such as Qwen2.5-VL, Qwen3-VL, or
@@ -34,6 +40,26 @@ Recommended backend strategy:
 - Arm CPU-only: use `mnn-omni` as a local CPU-friendly multimodal backend.
 - Arm gateway / edge host: use `remote-vlm` to route multimodal tasks to a
   trusted local GB10 / DGX VLM endpoint on the private network.
+
+Recommended model-role split:
+
+```text
+Text chat / RAG / cron summaries
+  -> platform text model
+     - DGX / GB10: vLLM text or VLM text path
+     - Arm CPU-only: ERNIE MoE + llama.cpp
+     - Arm gateway: trusted local remote LLM
+
+Image / screenshot / mixed media analysis
+  -> MultimodalAnalysisAgent
+     - DGX / GB10: vLLM VLM backend
+     - Arm CPU-only: MNN Omni backend
+     - Arm gateway: trusted local remote VLM backend
+
+Voice
+  -> default: Whisper / ASR -> text model
+  -> future optional path: MNN Omni audio backend after explicit validation
+```
 
 Example platform settings:
 
@@ -189,7 +215,7 @@ OPENCLAW_MULTIMODAL_BACKEND=mnn-omni
 
 OPENCLAW_MNN_OMNI_ENABLED=false
 OPENCLAW_MNN_OMNI_BASE_URL=http://127.0.0.1:8790
-OPENCLAW_MNN_OMNI_MODEL_DIR=/home/radxa/models/Qwen2.5-Omni-7B-MNN
+OPENCLAW_MNN_OMNI_MODEL_DIR=/path/to/Qwen2.5-Omni-7B-MNN
 OPENCLAW_MNN_OMNI_TIMEOUT=300
 OPENCLAW_MNN_OMNI_MAX_IMAGE_SIZE=1280
 
@@ -207,10 +233,45 @@ multimodal backend passes health checks and image smoke tests.
   GB10 depending on available hardware and model readiness.
 - Keep Whisper tiny for speech-to-text on CPU-only platforms until direct
   multimodal audio is explicitly validated.
+- Keep ERNIE MoE / llama.cpp as the Arm CPU-only text reasoning engine; use MNN
+  Omni only when the input requires image, screenshot, or future audio
+  understanding.
 - Do not replace the platform's main text model.
 - Use a single-flight queue or lock to avoid concurrent multimodal inference
   overloading CPU-only hosts.
 - Return clear timeout/error messages without blocking the Telegram runtime.
+
+### MNN Omni Integration Notes
+
+The MNN Omni path should be added as a future Arm-friendly multimodal backend
+with a narrow first target: Telegram image analysis on CPU-only platforms. The
+implementation should avoid coupling the feature to Orion O6 specifically, even
+if O6 is the first validation platform.
+
+Recommended first implementation:
+
+```text
+Telegram image upload
+  -> save image to media inbox
+  -> call multimodal_analyze skill
+  -> multimodal_analyze selects mnn-omni backend
+  -> MNN Omni returns structured image summary
+  -> Chat Agent formats a concise user-facing response
+  -> optional user command can promote the result into RAG/memory
+```
+
+Recommended later implementation:
+
+```text
+Telegram voice/audio upload
+  -> keep Whisper as the default reliable ASR path
+  -> add optional MNN Omni audio experiment behind an explicit flag
+  -> compare direct audio understanding against Whisper transcription quality
+  -> enable only after accuracy and latency are acceptable on target hardware
+```
+
+Validation should confirm that MNN Omni improves image/audio capability without
+making text-only OpenClaw flows slower or less reliable.
 
 ### MVP Validation
 
