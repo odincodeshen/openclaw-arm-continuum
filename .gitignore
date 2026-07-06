@@ -16,6 +16,12 @@ workspace/*
 gateway-data/*
 !gateway-data/.gitkeep
 
+profiles/*/.env
+!profiles/*/.env.example
+profiles/*/workspace/*
+profiles/*/gateway-data/*
+profiles/*/backups/*
+
 backups/
 backup/
 *.tar

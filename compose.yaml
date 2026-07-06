@@ -45,7 +45,8 @@ services:
     working_dir: /app
     command: ["python", "-u", "openclaw_telegram_gateway.py"]
     env_file:
-      - .env
+      - path: ${OPENCLAW_ENV_FILE:-.env}
+        required: false
     environment:
       OPENCLAW_VLLM_BASE_URL: ${OPENCLAW_VLLM_BASE_URL:-http://openclaw-vllm:8000/v1}
       OPENCLAW_OLLAMA_BASE_URL: ${OPENCLAW_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
@@ -57,8 +58,8 @@ services:
       OPENCLAW_TASK_HISTORY_PATH: /workspace/.openclaw/task_history.jsonl
     volumes:
       - ./app:/app:ro
-      - ./workspace:/workspace
-      - ./gateway-data/state:/gateway-state
+      - ${OPENCLAW_HOST_WORKSPACE:-./workspace}:/workspace
+      - ${OPENCLAW_HOST_GATEWAY_DATA:-./gateway-data}/state:/gateway-state
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -75,7 +76,8 @@ services:
     working_dir: /app
     command: ["python", "-u", "openclaw_browser_scraper.py"]
     env_file:
-      - .env
+      - path: ${OPENCLAW_ENV_FILE:-.env}
+        required: false
     environment:
       OPENCLAW_SCRAPER_HOST: 0.0.0.0
       OPENCLAW_SCRAPER_PORT: 8787
@@ -83,7 +85,7 @@ services:
       OPENCLAW_CHROMIUM_PATH: /usr/bin/chromium
     volumes:
       - ./app:/app:ro
-      - ./workspace:/workspace
+      - ${OPENCLAW_HOST_WORKSPACE:-./workspace}:/workspace
     restart: unless-stopped
 
   openclaw-whisper:
@@ -93,7 +95,8 @@ services:
     working_dir: /app
     command: ["python", "-u", "openclaw_whisper_service.py"]
     env_file:
-      - .env
+      - path: ${OPENCLAW_ENV_FILE:-.env}
+        required: false
     environment:
       OPENCLAW_WHISPER_HOST: 0.0.0.0
       OPENCLAW_WHISPER_PORT: 8765
@@ -105,7 +108,7 @@ services:
       CUDA_VISIBLE_DEVICES: ""
     volumes:
       - ./app:/app:ro
-      - ./workspace:/workspace
+      - ${OPENCLAW_HOST_WORKSPACE:-./workspace}:/workspace
       - ${HF_CACHE_DIR:-./.cache/huggingface}:/root/.cache/huggingface
     restart: unless-stopped
 
@@ -116,13 +119,14 @@ services:
     working_dir: /app
     command: ["python", "-u", "openclaw_memory_watcher.py"]
     env_file:
-      - .env
+      - path: ${OPENCLAW_ENV_FILE:-.env}
+        required: false
     environment:
       OPENCLAW_OLLAMA_BASE_URL: ${OPENCLAW_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OPENCLAW_QDRANT_BASE_URL: ${OPENCLAW_QDRANT_BASE_URL:-http://host.docker.internal:6333}
     volumes:
       - ./app:/app:ro
-      - ./workspace:/workspace
+      - ${OPENCLAW_HOST_WORKSPACE:-./workspace}:/workspace
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
@@ -133,7 +137,8 @@ services:
     working_dir: /app
     command: ["python", "-u", "openclaw_cron_worker.py"]
     env_file:
-      - .env
+      - path: ${OPENCLAW_ENV_FILE:-.env}
+        required: false
     environment:
       OPENCLAW_VLLM_BASE_URL: ${OPENCLAW_VLLM_BASE_URL:-http://openclaw-vllm:8000/v1}
       OPENCLAW_OLLAMA_BASE_URL: ${OPENCLAW_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
@@ -148,8 +153,8 @@ services:
       OPENCLAW_GATEWAY_STATE_DB: /gateway-state/openclaw.sqlite
     volumes:
       - ./app:/app:ro
-      - ./workspace:/workspace
-      - ./gateway-data/state:/gateway-state
+      - ${OPENCLAW_HOST_WORKSPACE:-./workspace}:/workspace
+      - ${OPENCLAW_HOST_GATEWAY_DATA:-./gateway-data}/state:/gateway-state
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -175,7 +180,8 @@ services:
         --token "${OPENCLAW_GATEWAY_TOKEN:?OPENCLAW_GATEWAY_TOKEN is required}"
         --port 18789
     env_file:
-      - .env
+      - path: ${OPENCLAW_ENV_FILE:-.env}
+        required: false
     environment:
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:?OPENCLAW_GATEWAY_TOKEN is required}
       OPENCLAW_VLLM_BASE_URL: ${OPENCLAW_VLLM_BASE_URL:-http://openclaw-vllm:8000/v1}
@@ -183,8 +189,8 @@ services:
     ports:
       - "127.0.0.1:18789:18789"
     volumes:
-      - ./gateway-data:/home/node/.openclaw
-      - ./workspace:/workspace
+      - ${OPENCLAW_HOST_GATEWAY_DATA:-./gateway-data}:/home/node/.openclaw
+      - ${OPENCLAW_HOST_WORKSPACE:-./workspace}:/workspace
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -196,12 +202,13 @@ services:
     profiles: ["tools"]
     working_dir: /app
     env_file:
-      - .env
+      - path: ${OPENCLAW_ENV_FILE:-.env}
+        required: false
     environment:
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:?OPENCLAW_GATEWAY_TOKEN is required}
     volumes:
-      - ./gateway-data:/home/node/.openclaw
-      - ./workspace:/workspace
+      - ${OPENCLAW_HOST_GATEWAY_DATA:-./gateway-data}:/home/node/.openclaw
+      - ${OPENCLAW_HOST_WORKSPACE:-./workspace}:/workspace
     extra_hosts:
       - "host.docker.internal:host-gateway"
     network_mode: host

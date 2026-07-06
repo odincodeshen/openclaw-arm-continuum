@@ -12,7 +12,7 @@ services:
     command: ["python", "-u", "openclaw_telegram_gateway.py"]
     network_mode: host
     env_file:
-      - path: .env
+      - path: ${OPENCLAW_ENV_FILE:-.env}
         required: false
     environment:
       OPENCLAW_VLLM_BASE_URL: ${OPENCLAW_VLLM_BASE_URL:-http://127.0.0.1:8080/v1}
@@ -25,8 +25,8 @@ services:
       OPENCLAW_TASK_HISTORY_PATH: /workspace/.openclaw/task_history.jsonl
     volumes:
       - ./app:/app:ro
-      - ./workspace:/workspace
-      - ./gateway-data/state:/gateway-state
+      - ${OPENCLAW_HOST_WORKSPACE:-./workspace}:/workspace
+      - ${OPENCLAW_HOST_GATEWAY_DATA:-./gateway-data}/state:/gateway-state
     restart: unless-stopped
 
   openclaw-memory-watcher:
@@ -38,14 +38,14 @@ services:
     command: ["python", "-u", "openclaw_memory_watcher.py"]
     network_mode: host
     env_file:
-      - path: .env
+      - path: ${OPENCLAW_ENV_FILE:-.env}
         required: false
     environment:
       OPENCLAW_OLLAMA_BASE_URL: ${OPENCLAW_OLLAMA_BASE_URL:-http://127.0.0.1:11434}
       OPENCLAW_QDRANT_BASE_URL: ${OPENCLAW_QDRANT_BASE_URL:-http://127.0.0.1:6333}
     volumes:
       - ./app:/app:ro
-      - ./workspace:/workspace
+      - ${OPENCLAW_HOST_WORKSPACE:-./workspace}:/workspace
     restart: unless-stopped
 
   openclaw-cron:
@@ -56,7 +56,7 @@ services:
     command: ["python", "-u", "openclaw_cron_worker.py"]
     network_mode: host
     env_file:
-      - path: .env
+      - path: ${OPENCLAW_ENV_FILE:-.env}
         required: false
     environment:
       OPENCLAW_VLLM_BASE_URL: ${OPENCLAW_VLLM_BASE_URL:-http://127.0.0.1:8080/v1}
@@ -72,8 +72,8 @@ services:
       OPENCLAW_GATEWAY_STATE_DB: /gateway-state/openclaw.sqlite
     volumes:
       - ./app:/app:ro
-      - ./workspace:/workspace
-      - ./gateway-data/state:/gateway-state
+      - ${OPENCLAW_HOST_WORKSPACE:-./workspace}:/workspace
+      - ${OPENCLAW_HOST_GATEWAY_DATA:-./gateway-data}/state:/gateway-state
     restart: unless-stopped
 
   openclaw-browser-scraper:
@@ -86,7 +86,7 @@ services:
     network_mode: host
     profiles: ["web"]
     env_file:
-      - path: .env
+      - path: ${OPENCLAW_ENV_FILE:-.env}
         required: false
     environment:
       OPENCLAW_SCRAPER_HOST: 127.0.0.1
@@ -95,7 +95,7 @@ services:
       OPENCLAW_CHROMIUM_PATH: /usr/bin/chromium
     volumes:
       - ./app:/app:ro
-      - ./workspace:/workspace
+      - ${OPENCLAW_HOST_WORKSPACE:-./workspace}:/workspace
     restart: unless-stopped
 
   openclaw-whisper:
@@ -108,7 +108,7 @@ services:
     network_mode: host
     profiles: ["voice"]
     env_file:
-      - path: .env
+      - path: ${OPENCLAW_ENV_FILE:-.env}
         required: false
     environment:
       OPENCLAW_WHISPER_HOST: 127.0.0.1
@@ -121,7 +121,7 @@ services:
       CUDA_VISIBLE_DEVICES: ""
     volumes:
       - ./app:/app:ro
-      - ./workspace:/workspace
+      - ${OPENCLAW_HOST_WORKSPACE:-./workspace}:/workspace
       - ${HF_CACHE_DIR:-./.cache/huggingface}:/root/.cache/huggingface
     restart: unless-stopped
 
@@ -144,15 +144,15 @@ services:
         --token "${OPENCLAW_GATEWAY_TOKEN:?OPENCLAW_GATEWAY_TOKEN is required}"
         --port 18789
     env_file:
-      - path: .env
+      - path: ${OPENCLAW_ENV_FILE:-.env}
         required: false
     environment:
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:?OPENCLAW_GATEWAY_TOKEN is required}
       OPENCLAW_VLLM_BASE_URL: ${OPENCLAW_VLLM_BASE_URL:-http://127.0.0.1:8080/v1}
       OPENCLAW_VLLM_MODEL: ${OPENCLAW_VLLM_MODEL:-ernie-o6}
     volumes:
-      - ./gateway-data:/home/node/.openclaw
-      - ./workspace:/workspace
+      - ${OPENCLAW_HOST_GATEWAY_DATA:-./gateway-data}:/home/node/.openclaw
+      - ${OPENCLAW_HOST_WORKSPACE:-./workspace}:/workspace
     restart: unless-stopped
 
   openclaw-cli:
@@ -162,11 +162,11 @@ services:
     working_dir: /app
     network_mode: host
     env_file:
-      - path: .env
+      - path: ${OPENCLAW_ENV_FILE:-.env}
         required: false
     environment:
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:?OPENCLAW_GATEWAY_TOKEN is required}
     volumes:
-      - ./gateway-data:/home/node/.openclaw
-      - ./workspace:/workspace
+      - ${OPENCLAW_HOST_GATEWAY_DATA:-./gateway-data}:/home/node/.openclaw
+      - ${OPENCLAW_HOST_WORKSPACE:-./workspace}:/workspace
     entrypoint: ["node", "openclaw.mjs"]

@@ -32,6 +32,10 @@ Each tier offers a different balance of privacy, power efficiency, and inference
 
 The immediate next hardware target after DGX Spark is `arm-cpu-only` on Radxa Orion O6, using Baidu ERNIE 4.5 models and llama.cpp for better CPU inference efficiency. See `docs/PLATFORMS.md` and `docs/ERNIE_LLAMA_CPP.md`.
 
+For separating private personal data from public demo data on the same host,
+use runtime profiles with separate `.env`, workspace, Gateway state, Telegram
+bot/chat IDs, and Qdrant collections. See `docs/PROFILES.md`.
+
 ## Why Arm Continuum
 
 Arm gives OpenClaw a flexible deployment continuum:
