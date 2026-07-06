@@ -1,0 +1,5 @@
+/help
+/mem #demo This memory belongs only to the demo profile.
+/rag memory: What memory belongs to the demo profile?
+/cron add daily 08:00 Demo morning check :: Cambridge weather today
+/cron list

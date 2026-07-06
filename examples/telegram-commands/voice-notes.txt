@@ -1,0 +1,2 @@
+/mem Demo profile should use a separate Telegram bot.
+/rag memory: What should the demo profile use?

@@ -1,0 +1,5 @@
+/mem #preference I prefer short technical answers with concrete commands.
+/rag memory: How do I prefer technical answers?
+
+/mem #todo due:2026-07-10 Review the OpenClaw demo profile settings.
+/rag memory: What OpenClaw todo items are waiting for review?

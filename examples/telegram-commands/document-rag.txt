@@ -1,0 +1,2 @@
+/doc url https://docs.google.com/document/d/REPLACE_WITH_PUBLIC_DOC_ID/edit
+/rag knowledge: Summarize the imported document in five bullets.

@@ -13,6 +13,7 @@ OpenClaw Arm Continuum is built on a simple idea: personal AI should not be tied
 Each tier offers a different balance of privacy, power efficiency, and inference capability, while keeping the user's data inside a local host or trusted private LAN.
 
 New users can start with practical scenarios in [`docs/USE_CASES.md`](docs/USE_CASES.md).
+Copy-paste ready Telegram examples are in [`examples/`](examples/).
 
 ## What This Release Includes
 
