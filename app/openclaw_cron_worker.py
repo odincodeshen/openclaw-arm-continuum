@@ -74,10 +74,10 @@ def default_tasks() -> dict:
     return {
         "daily_briefing": {
             "enabled": True,
-            "title": "OpenClaw 每日早報",
+            "title": "OpenClaw Daily Briefing",
             "weather_questions": [
-                "英國今天天氣如何",
-                "英國明天天氣如何",
+                "What's the weather like in the UK today?",
+                "What's the weather like in the UK tomorrow?",
             ],
             "product_queries": [],
             "english_queries": [
@@ -114,8 +114,8 @@ def route_question(router: SkillRouter, text: str) -> str:
     try:
         result = router.route(text)
     except Exception as exc:
-        return f"查詢失敗：{exc}"
-    return result.answer or "沒有取得回覆。"
+        return f"Query failed: {exc}"
+    return result.answer or "No reply was returned."
 
 
 def section(title: str, body: str) -> str:
@@ -124,12 +124,12 @@ def section(title: str, body: str) -> str:
 
 def build_daily_report(settings: Settings, tasks: dict, router: SkillRouter, llm: LlmClient, now: datetime) -> str:
     daily = tasks.get("daily_briefing", {})
-    title = daily.get("title", "OpenClaw 每日早報")
+    title = daily.get("title", "OpenClaw Daily Briefing")
     lines = [
         f"# {title}",
         "",
-        f"- 生成時間：{now.strftime('%Y-%m-%d %H:%M')} {settings.cron_timezone}",
-        f"- 執行主機：{settings.runtime_label} cron worker",
+        f"- Generated at: {now.strftime('%Y-%m-%d %H:%M')} {settings.cron_timezone}",
+        f"- Runtime host: {settings.runtime_label} cron worker",
         "",
     ]
 
@@ -137,48 +137,48 @@ def build_daily_report(settings: Settings, tasks: dict, router: SkillRouter, llm
     if weather_questions:
         weather_blocks = []
         for question in weather_questions:
-            weather_blocks.append(f"- {question}：{route_question(router, question)}")
-        lines.append(section("天氣", "\n".join(weather_blocks)))
+            weather_blocks.append(f"- {question}: {route_question(router, question)}")
+        lines.append(section("Weather", "\n".join(weather_blocks)))
 
     product_queries = daily.get("product_queries", [])
     if product_queries:
         product_blocks = []
         for item in product_queries:
-            name = item.get("name", item.get("query", "商品"))
+            name = item.get("name", item.get("query", "Product"))
             query = item.get("query", name)
             answer = route_question(router, "/search " + query)
             product_blocks.append(f"### {name}\n{answer}")
-        lines.append(section("商品價格追蹤", "\n\n".join(product_blocks)))
+        lines.append(section("Price Tracking", "\n\n".join(product_blocks)))
     else:
-        lines.append(section("商品價格追蹤", "尚未設定追蹤品項。請在 `/app/cron_tasks.json` 的 `product_queries` 加入商品名稱與搜尋語句。"))
+        lines.append(section("Price Tracking", "No tracked items configured yet. Add product names and search queries to `product_queries` in `/app/cron_tasks.json`."))
 
     english_queries = daily.get("english_queries", [])
     if english_queries:
         english_blocks = []
         for item in english_queries:
-            name = item.get("name", item.get("query", "英文教材"))
+            name = item.get("name", item.get("query", "English lesson"))
             query = item.get("query", name)
             search_answer = route_question(router, "/search " + query)
             lesson_prompt = (
-                "請根據以下資料，產出一份 5 分鐘英文學習教材。"
-                "包含：三個實用單字或片語、兩個例句、一個跟讀練習、一個中文重點提醒。"
-                "使用繁體中文說明，英文例句保留英文。\n\n"
-                f"主題：{name}\n資料：{search_answer}"
+                "Based on the following material, produce a 5-minute English study lesson. "
+                "Include: three practical words or phrases, two example sentences, one read-aloud "
+                "practice line, and one key takeaway.\n\n"
+                f"Topic: {name}\nMaterial: {search_answer}"
             )
             try:
                 lesson = llm.chat(lesson_prompt, max_tokens=360)
             except Exception as exc:
                 lesson = (
-                    f"英文教材整理暫時失敗：{exc}\n\n"
-                    "以下保留原始搜尋摘要，避免整份早報中斷：\n"
+                    f"Failed to prepare the English lesson: {exc}\n\n"
+                    "Keeping the raw search summary below so the whole briefing isn't interrupted:\n"
                     f"{search_answer}"
                 )
             english_blocks.append(f"### {name}\n{lesson}")
-        lines.append(section("英文教材", "\n\n".join(english_blocks)))
+        lines.append(section("English Lesson", "\n\n".join(english_blocks)))
     else:
-        lines.append(section("英文教材", "尚未設定英文教材來源。"))
+        lines.append(section("English Lesson", "No English lesson source configured yet."))
 
-    lines.append("## 記憶狀態\n本報告會保存到 tracker inbox，memory watcher 會自動索引到 `personal_tracker_memory`。")
+    lines.append("## Memory Status\nThis report is saved to the tracker inbox; the memory watcher will index it into `personal_tracker_memory` automatically.")
     return "\n".join(lines).strip() + "\n"
 
 
@@ -218,22 +218,22 @@ def run_dynamic_job(settings: Settings, router: SkillRouter, now: datetime, job:
     error = None
     try:
         result = router.route(prompt)
-        answer = result.answer or "OpenClaw runtime 回傳了空回覆。"
+        answer = result.answer or "The OpenClaw runtime returned an empty reply."
         skill_name = result.skill_name
     except Exception as exc:
         status = "error"
         error = str(exc)
-        answer = f"任務執行失敗：{exc}"
+        answer = f"Task failed: {exc}"
         skill_name = "error"
 
     report = (
         f"# {title}\n\n"
-        f"- Job ID：{job.get('id')}\n"
-        f"- 生成時間：{now.strftime('%Y-%m-%d %H:%M')} {settings.cron_timezone}\n"
-        f"- Skill：{skill_name}\n\n"
-        "## 任務\n"
+        f"- Job ID: {job.get('id')}\n"
+        f"- Generated at: {now.strftime('%Y-%m-%d %H:%M')} {settings.cron_timezone}\n"
+        f"- Skill: {skill_name}\n\n"
+        "## Task\n"
         f"{prompt}\n\n"
-        "## 結果\n"
+        "## Result\n"
         f"{answer.strip()}\n"
     )
     path = save_job_report(settings, now, job, report)

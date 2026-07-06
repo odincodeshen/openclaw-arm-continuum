@@ -34,7 +34,7 @@ def google_doc_export_url(url: str) -> str:
 
     match = GOOGLE_DOC_ID_RE.search(url)
     if not match:
-        raise ValueError("這不是支援的 Google Docs document URL")
+        raise ValueError("This is not a supported Google Docs document URL")
     doc_id = match.group(1)
     return f"https://docs.google.com/document/d/{doc_id}/export?format=txt"
 
@@ -47,9 +47,9 @@ def fetch_public_text(url: str, timeout: int) -> str:
         data = response.read()
     text = data.decode(charset, errors="replace").strip()
     if _looks_like_google_access_error(text):
-        raise RuntimeError("Google Doc 可能不是公開可讀，或需要登入 Google 帳號")
+        raise RuntimeError("The Google Doc may not be publicly readable, or requires a Google account login")
     if not text:
-        raise RuntimeError("Google Doc export 沒有回傳文字內容")
+        raise RuntimeError("The Google Doc export did not return any text content")
     return text
 
 
@@ -58,7 +58,7 @@ def save_google_doc(settings: Settings, url: str, collection_kind: str = "knowle
     if normalized_kind not in {"knowledge", "tracker"}:
         raise ValueError("collection_kind must be knowledge or tracker")
     if not is_google_doc_url(url):
-        raise ValueError("目前 /doc url 第一版只支援 Google Docs document 連結")
+        raise ValueError("The current /doc url implementation only supports Google Docs document links")
 
     export_url = google_doc_export_url(url)
     text = fetch_public_text(export_url, timeout=max(settings.request_timeout, 60))

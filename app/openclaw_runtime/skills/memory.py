@@ -28,7 +28,7 @@ class MemoryWriteSkill:
     def run(self, text: str) -> SkillResult:
         content = self._strip_command(text)
         if not content:
-            return SkillResult(self.name, "請在 /mem 後面加上要保存的內容。")
+            return SkillResult(self.name, "Add the content to save after /mem.")
         vector = self.embeddings.embed(content)
         point_id = self.qdrant.upsert_text(
             self.settings.tracker_collection,
@@ -37,7 +37,7 @@ class MemoryWriteSkill:
             {"source": "telegram", "kind": "tracker_memory"},
         )
         short_id = point_id.split("-")[0]
-        return SkillResult(self.name, f"已寫入 personal_tracker_memory。記憶 ID：{short_id}")
+        return SkillResult(self.name, f"Saved to {self.settings.tracker_collection}. Memory ID: {short_id}")
 
     @staticmethod
     def _strip_command(text: str) -> str:
@@ -79,7 +79,7 @@ class RagRetrieveSkill:
     def run(self, text: str) -> SkillResult:
         query = self._strip_command(text)
         if not query:
-            return SkillResult(self.name, "請在 /rag 後面加上要查詢的問題。")
+            return SkillResult(self.name, "Add the question to look up after /rag.")
 
         file_hits = self._file_hits(query)
         vector = self.embeddings.embed(query)
@@ -87,12 +87,12 @@ class RagRetrieveSkill:
         knowledge_hits = self.qdrant.search(self.settings.knowledge_collection, vector)
         context = self._format_context(file_hits, tracker_hits, knowledge_hits)
         if not context:
-            return SkillResult(self.name, "目前兩個 Qdrant collection 都沒有找到相關記憶。")
+            return SkillResult(self.name, "No relevant memory was found in either Qdrant collection.")
 
         prompt = (
-            "你正在使用 OpenClaw 本地 RAG。請只根據下方 Context 回答；"
-            "如果 Context 不足，請明確說不足。\n\n"
-            f"問題：{query}\n\n"
+            "You are OpenClaw's local RAG assistant. Answer using only the Context below; "
+            "if the Context is insufficient, say so explicitly.\n\n"
+            f"Question: {query}\n\n"
             f"Context:\n{context}"
         )
         return SkillResult(self.name, self.llm.chat(prompt, max_tokens=360))

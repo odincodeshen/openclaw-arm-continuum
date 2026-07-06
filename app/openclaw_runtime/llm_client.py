@@ -10,7 +10,7 @@ from openclaw_runtime.http_client import is_reachable, request_json
 
 
 VLLM_NOT_READY_MESSAGE = (
-    "OpenClaw 本地推理端點還在啟動或重新載入模型，請稍等 1-3 分鐘後再試。"
+    "The OpenClaw local inference endpoint is still starting up or reloading the model. Please wait 1-3 minutes and try again."
 )
 
 
@@ -52,7 +52,7 @@ class LlmClient:
             raise
 
     def chat(self, user_text: str, *, max_tokens: int | None = None) -> str:
-        final_answer_prompt = f"{user_text}\n\n請直接回答，不要輸出推理過程。"
+        final_answer_prompt = f"{user_text}\n\nAnswer directly and do not output your reasoning process."
         payload = {
             "model": self.settings.vllm_model,
             "messages": [
@@ -67,7 +67,7 @@ class LlmClient:
         message = response["choices"][0]["message"]
         content = message.get("content") or ""
         if not content and message.get("reasoning"):
-            return "模型只回傳了 reasoning，沒有給最終答案。請再傳一次，我會要求它更短、更直接。"
+            return "The model only returned its reasoning, not a final answer. Send it again and I'll ask for something shorter and more direct."
         return clean_model_content(content)
 
     def chat_with_image(self, image_path: Path, prompt: str, *, max_tokens: int | None = None) -> str:
@@ -80,7 +80,7 @@ class LlmClient:
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": f"{prompt}\n\n請直接回答，不要輸出推理過程。"},
+                        {"type": "text", "text": f"{prompt}\n\nAnswer directly and do not output your reasoning process."},
                         {
                             "type": "image_url",
                             "image_url": {"url": f"data:{mime_type};base64,{image_b64}"},
@@ -96,5 +96,5 @@ class LlmClient:
         message = response["choices"][0]["message"]
         content = message.get("content") or ""
         if not content and message.get("reasoning"):
-            return "模型只回傳了 reasoning，沒有給圖片分析的最終答案。"
+            return "The model only returned its reasoning, not a final answer for the image analysis."
         return clean_model_content(content)

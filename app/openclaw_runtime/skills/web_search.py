@@ -34,15 +34,15 @@ class WebSearchSkill:
 
         results = self._search(text)
         if not results:
-            return SkillResult(self.name, "我有嘗試上網搜尋，但沒有取得可用的搜尋結果。")
+            return SkillResult(self.name, "I tried searching the web, but no usable results came back.")
         context = "\n".join(
-            f"{idx}. {item['title']}\nURL: {item['url']}\n摘要: {item['snippet']}"
+            f"{idx}. {item['title']}\nURL: {item['url']}\nSnippet: {item['snippet']}"
             for idx, item in enumerate(results, 1)
         )
         prompt = (
-            f"使用者問題：{text}\n\n"
-            "以下是即時網路搜尋結果，請用繁體中文整合回答，必要時提到資料來源標題。"
-            f"不要編造搜尋結果以外的資訊。\n\n{context}"
+            f"User question: {text}\n\n"
+            "Here are live web search results. Synthesize an answer from them, citing source titles "
+            f"where relevant. Do not invent information beyond what's in the results.\n\n{context}"
         )
         return SkillResult(self.name, self.llm.chat(prompt, max_tokens=320))
 
@@ -69,10 +69,11 @@ class WebSearchSkill:
             return ""
         context = self._build_scraper_context(pages)
         prompt = (
-            f"使用者問題：{query}\n\n"
-            "以下內容由本地 Playwright headless browser 即時抓取並已落盤為 Markdown。"
-            "請用繁體中文回答，明確整合來源，避免編造未出現在抓取內容中的資訊。\n\n"
-            f"Markdown 檔案：{result.get('saved_path')}\n\n"
+            f"User question: {query}\n\n"
+            "The following content was scraped live by the local Playwright headless browser and "
+            "saved as Markdown. Synthesize an answer that clearly cites its sources, and avoid "
+            "inventing information not present in the scraped content.\n\n"
+            f"Markdown file: {result.get('saved_path')}\n\n"
             f"{context}"
         )
         try:
@@ -84,11 +85,11 @@ class WebSearchSkill:
                 for idx, item in enumerate(pages, 1)
             )
             return (
-                "我已經完成網頁搜尋並保存結果，但本地模型暫時無法整理摘要。\n\n"
+                "Web search completed and results saved, but the local model could not summarize them right now.\n\n"
                 f"{sources}\n\n"
-                f"已保存網頁 Markdown：{result.get('saved_path')}"
+                f"Saved web Markdown: {result.get('saved_path')}"
             )
-        return f"{answer}\n\n已保存網頁 Markdown：{result.get('saved_path')}"
+        return f"{answer}\n\nSaved web Markdown: {result.get('saved_path')}"
 
     def _build_scraper_context(self, pages: list[dict]) -> str:
         budget = max(900, int(self.settings.web_context_chars))
@@ -97,7 +98,7 @@ class WebSearchSkill:
         for idx, item in enumerate(pages, 1):
             markdown = str(item.get("markdown") or "")
             blocks.append(
-                f"來源 {idx}: {item.get('title')}\n"
+                f"Source {idx}: {item.get('title')}\n"
                 f"URL: {item.get('url')}\n\n"
                 f"{markdown[:per_page]}"
             )

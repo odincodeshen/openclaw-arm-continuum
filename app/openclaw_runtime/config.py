@@ -96,7 +96,7 @@ def load_settings() -> Settings:
         vllm_model=os.environ.get("OPENCLAW_VLLM_MODEL", "Qwen/Qwen3.6-27B-FP8"),
         system_prompt=os.environ.get(
             "OPENCLAW_SYSTEM_PROMPT",
-            "你是 OpenClaw，運行在使用者本地 Arm Continuum 環境中的地端個人 AI 助理。回答時使用繁體中文，保持精準、務實、可操作。直接給最終答案，不要輸出推理過程。",
+            "You are OpenClaw, a local-first personal AI assistant running on the user's Arm Continuum runtime. Answer clearly, practically, and stay actionable. Give the final answer directly and do not output your reasoning process.",
         ),
         max_tokens=env_int("OPENCLAW_MAX_TOKENS", 160),
         request_timeout=env_int("OPENCLAW_REQUEST_TIMEOUT", 60),

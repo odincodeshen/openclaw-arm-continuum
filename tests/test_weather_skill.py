@@ -39,6 +39,48 @@ class ExtractLocationTest(unittest.TestCase):
         skill = build_weather_skill()
         self.assertEqual(skill._extract_location("天氣如何"), "London,United Kingdom")
 
+    def test_recognizes_english_weather_in_phrasing(self) -> None:
+        skill = build_weather_skill()
+        self.assertEqual(skill._extract_location("what is the weather in Cambridge today"), "Cambridge")
+
+    def test_recognizes_english_forecast_for_phrasing(self) -> None:
+        # "Tokyo" is a known alias, so this resolves to the wttr.in-ready
+        # string rather than the raw regex-extracted city name.
+        skill = build_weather_skill()
+        self.assertEqual(skill._extract_location("forecast for Tokyo"), "Tokyo,Japan")
+
+    def test_recognizes_english_location_before_weather_phrasing(self) -> None:
+        skill = build_weather_skill()
+        self.assertEqual(skill._extract_location("Cambridge weather"), "Cambridge")
+
+    def test_recognizes_multi_word_english_location(self) -> None:
+        # "New York" is a known alias, so this resolves to the wttr.in-ready
+        # string rather than the raw regex-extracted city name.
+        skill = build_weather_skill()
+        self.assertEqual(skill._extract_location("what is the weather like in New York?"), "New York,USA")
+
+    def test_known_english_city_alias_uses_location_map(self) -> None:
+        skill = build_weather_skill()
+        self.assertEqual(skill._extract_location("Taiwan weather tomorrow"), "Taipei,Taiwan")
+
+
+class DayIndexTest(unittest.TestCase):
+    def test_english_today_defaults_to_zero(self) -> None:
+        skill = build_weather_skill()
+        self.assertEqual(skill._day_index("weather in Cambridge today"), 0)
+
+    def test_english_tomorrow(self) -> None:
+        skill = build_weather_skill()
+        self.assertEqual(skill._day_index("weather in Cambridge tomorrow"), 1)
+
+    def test_english_day_after_tomorrow(self) -> None:
+        skill = build_weather_skill()
+        self.assertEqual(skill._day_index("weather in Cambridge the day after tomorrow"), 2)
+
+    def test_chinese_day_after_tomorrow(self) -> None:
+        skill = build_weather_skill()
+        self.assertEqual(skill._day_index("劍橋後天天氣如何"), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

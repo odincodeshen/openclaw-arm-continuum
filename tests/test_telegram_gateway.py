@@ -104,22 +104,22 @@ class AckMessageTest(unittest.TestCase):
         gateway.agent_registry = self._original_registry
 
     def test_mem_command_acknowledges_memory_write(self) -> None:
-        self.assertIn("記憶", gateway.ack_message("/mem buy milk"))
+        self.assertIn("memory", gateway.ack_message("/mem buy milk"))
 
     def test_remember_colon_form_acknowledges_memory_write(self) -> None:
-        self.assertIn("記憶", gateway.ack_message("remember: buy milk"))
+        self.assertIn("memory", gateway.ack_message("remember: buy milk"))
 
     def test_rag_command_acknowledges_rag_lookup(self) -> None:
-        self.assertIn("查詢本地記憶與文件知識庫", gateway.ack_message("/rag what did I save"))
+        self.assertIn("knowledge base", gateway.ack_message("/rag what did I save"))
 
     def test_search_command_acknowledges_web_search(self) -> None:
-        self.assertIn("搜尋網路資料", gateway.ack_message("/search latest Arm news"))
+        self.assertIn("searching the web", gateway.ack_message("/search latest Arm news"))
 
     def test_natural_language_weather_query_acknowledges_weather(self) -> None:
-        self.assertIn("天氣", gateway.ack_message("英國明天天氣如何"))
+        self.assertIn("weather", gateway.ack_message("英國明天天氣如何"))
 
     def test_unmatched_text_gets_generic_acknowledgement(self) -> None:
-        self.assertIn("本地推理模型", gateway.ack_message("跟我聊聊你最近好嗎"))
+        self.assertIn("local reasoning model", gateway.ack_message("跟我聊聊你最近好嗎"))
 
     def test_ambiguous_keyword_overlap_matches_real_routing(self) -> None:
         # Regression guard: ack_message() used to hand-roll its own
@@ -127,7 +127,7 @@ class AckMessageTest(unittest.TestCase):
         # keywords), which disagreed with the real skill order (weather is
         # checked before web_search), so this exact text acknowledged "web
         # search" while actually being routed to the weather agent.
-        self.assertIn("天氣", gateway.ack_message("查詢一下今天天氣如何"))
+        self.assertIn("weather", gateway.ack_message("查詢一下今天天氣如何"))
 
 
 if __name__ == "__main__":

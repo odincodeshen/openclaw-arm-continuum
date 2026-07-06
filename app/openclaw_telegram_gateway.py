@@ -62,83 +62,87 @@ ACTIVE_LOCK = threading.Lock()
 ACTIVE_REQUESTS = 0
 SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
 
-HELP_TEXT = f"""OpenClaw Arm Continuum 使用速查
+HELP_TEXT = f"""OpenClaw Arm Continuum quick reference
 
-常用指令
-/mem <內容>
-保存一段個人記憶或工作狀態。
-例：/mem OpenClaw 偏好：記憶寫入使用 /mem。
+Common commands
+/mem <content>
+Save a piece of personal memory or working context.
+Example: /mem OpenClaw preference: use /mem for memory writes.
 
-/rag <問題>
-查本地記憶與文件知識庫。
-例：/rag OpenClaw 接上了哪些模組？
+/rag <question>
+Query local memory and document knowledge base.
+Example: /rag Which modules is OpenClaw connected to?
 
-/search <關鍵字>
-用本地 Playwright browser 上網搜尋、抓頁、轉 Markdown，
-再交給本地推理模型摘要。
-例：/search Arm Neoverse latest news
-例：/search 今天有哪些科技新聞
+/search <keywords>
+Browse and scrape the web with the local Playwright worker, convert to
+Markdown, then hand it to the local reasoning model for a summary.
+Example: /search Arm Neoverse latest news
+Example: /search What tech news happened today
 
-單純問天氣不要加 /search，直接用自然語言問（見下方「自然語言」），
-/search 會強制走一般網頁搜尋，繞過專門處理天氣的查詢邏輯。
+For plain weather questions, do not add /search -- ask in natural
+language instead (see "Natural language" below). /search always forces
+a general web search, bypassing the dedicated weather lookup.
 
-搜尋結果會落盤到：
+Search results are saved to:
 /workspace/inbox/tracker/web/*.md
 
 /cron
-動態設定主動推播排程。
-例：/cron add daily 07:30 早報 :: 英國明天天氣如何，並整理今天需要注意的事
-例：/cron add weekly mon 08:00 週報 :: /search latest Arm AI chip news
-例：/cron add monthly last 18:00 月底回顧 ：： 回顧本月工作摘要
-例：/cron add every 6h 晶片新聞 :: /search latest NVIDIA Arm AI chip news
-例：/cron list
-例：/cron run <job_id>
-例：/cron delete <job_id>
+Configure dynamic proactive push schedules.
+Example: /cron add daily 07:30 Morning briefing :: UK weather tomorrow, and summarize today's priorities
+Example: /cron add weekly mon 08:00 Weekly roundup :: /search latest Arm AI chip news
+Example: /cron add monthly last 18:00 Month-end review :: Summarize this month's work
+Example: /cron add every 6h Chip news :: /search latest NVIDIA Arm AI chip news
+Example: /cron list
+Example: /cron run <job_id>
+Example: /cron delete <job_id>
 
 /help
-顯示這張速查卡。
+Show this quick reference card.
 
 /agents
-列出目前 OpenClaw agents 與模型政策。
+List current OpenClaw agents and their model policy.
 
 /tasks last
-查看最近 5 筆任務紀錄與執行狀態。
+View the 5 most recent task history entries and their status.
 
 /doc url <Google Doc URL>
-匯入公開 Google Doc，保存成 Markdown 並自動進 knowledge RAG。
-例：/doc url https://docs.google.com/document/d/.../edit
-例：/doc url https://docs.google.com/document/d/.../edit tracker
+Import a public Google Doc, save it as Markdown, and index it into
+knowledge RAG automatically.
+Example: /doc url https://docs.google.com/document/d/.../edit
+Example: /doc url https://docs.google.com/document/d/.../edit tracker
 
-自然語言
-可以直接問一般問題或天氣。
-例：台灣明天天氣如何
+Natural language
+You can ask general questions or about the weather directly.
+Example: What's the weather like in Taiwan tomorrow?
 
-文件 RAG
-直接上傳 .pdf / .md / .txt / .log / .json / .csv / .tsv 到 Telegram，
-或放到 /workspace/inbox/knowledge，
-OpenClaw 會保存到 knowledge inbox 並自動進 RAG。
+Document RAG
+Upload .pdf / .md / .txt / .log / .json / .csv / .tsv directly to
+Telegram, or drop them into /workspace/inbox/knowledge. OpenClaw saves
+them to the knowledge inbox and indexes them into RAG automatically.
 
-查指定文件時，把檔名放進 /rag。
-例：/rag debugger_armv8v9.pdf 這份文件在說什麼
-例：/rag debugger_armv8v9.pdf 摘要重點
+To ask about a specific file, put the filename in /rag.
+Example: /rag debugger_armv8v9.pdf What is this document about?
+Example: /rag debugger_armv8v9.pdf Summarize the key points
 
-文件 caption 寫 /mem 或 /tracker
-可改存到動態追蹤記憶。
+Caption a document with /mem or /tracker to save it to dynamic
+tracker memory instead.
 
-圖片與語音
-直接上傳照片，OpenClaw 會保存到 {settings.runtime_label} inbox，
-並交給本地 vLLM/VLM 分析。
+Photos and voice
+Upload a photo directly and OpenClaw will save it to the
+{settings.runtime_label} inbox and hand it to the local vLLM/VLM for
+analysis.
 
-照片 caption 可當作分析指令。
-例：請讀出圖片裡的文字，並整理成重點
-例：這張伺服器照片有什麼異常？
+A photo caption can double as an analysis instruction.
+Example: Read out the text in this image and summarize the key points
+Example: Does anything look wrong in this server photo?
 
-上傳語音會保存到 {settings.runtime_label} inbox，先用本地 Whisper 轉文字，
-再交給 OpenClaw skills 與本地推理模型處理。
+Uploaded voice messages are saved to the {settings.runtime_label}
+inbox, transcribed locally with Whisper, then handed to OpenClaw
+skills and the local reasoning model.
 
-語音可以直接講一般問題，也可以講命令內容。
-例：記住 OpenClaw 圖片分析要看 caption
-例：英國明天天氣如何
+Voice can ask a general question or speak a command directly.
+Example: Remember that OpenClaw image analysis should read the caption
+Example: What's the weather like in the UK tomorrow?
 """
 
 
@@ -224,7 +228,7 @@ def handle_document_message(chat_id: int, message: dict, caption: str) -> bool:
 
     file_id = document.get("file_id")
     if not file_id:
-        send_message(chat_id, "這份文件沒有 Telegram file_id，OpenClaw 無法下載。")
+        send_message(chat_id, "This document has no Telegram file_id, so OpenClaw cannot download it.")
         return True
 
     original_name = document.get("file_name") or f"telegram-document-{timestamp()}"
@@ -244,9 +248,9 @@ def handle_document_message(chat_id: int, message: dict, caption: str) -> bool:
     if mime_type.startswith("image/"):
         send_message(
             chat_id,
-            "圖片文件已保存，正在交給本地 vLLM/VLM 分析。\n"
-            f"檔案：{downloaded_path.name}\n"
-            f"大小：{byte_count} bytes",
+            "Image document saved, handing it to the local vLLM/VLM for analysis.\n"
+            f"File: {downloaded_path.name}\n"
+            f"Size: {byte_count} bytes",
         )
         worker = threading.Thread(
             target=process_image_message,
@@ -265,18 +269,18 @@ def handle_document_message(chat_id: int, message: dict, caption: str) -> bool:
         )
         send_message(
             chat_id,
-            "文件已保存，memory watcher 會自動索引。\n"
-            f"檔案：{downloaded_path.name}\n"
-            f"目標集合：{collection}\n"
-            "稍等幾秒後可用 /rag 查詢內容。",
+            "File saved, the memory watcher will index it automatically.\n"
+            f"File: {downloaded_path.name}\n"
+            f"Target collection: {collection}\n"
+            "Wait a few seconds, then query it with /rag.",
         )
     else:
         send_message(
             chat_id,
-            f"文件已保存到 {settings.runtime_label} inbox，但目前 watcher 尚未索引這種格式。\n"
-            f"檔案：{downloaded_path.name}\n"
-            f"大小：{byte_count} bytes\n"
-            "PDF/VLM 文件解析會在下一階段接上。",
+            f"File saved to the {settings.runtime_label} inbox, but the watcher does not yet index this format.\n"
+            f"File: {downloaded_path.name}\n"
+            f"Size: {byte_count} bytes\n"
+            "PDF/VLM document parsing will be added in a later stage.",
         )
     log(f"[telegram] saved document chat_id={chat_id} path={downloaded_path} bytes={byte_count}")
     return True
@@ -290,7 +294,7 @@ def handle_photo_message(chat_id: int, message: dict) -> bool:
     photo = photos[-1]
     file_id = photo.get("file_id")
     if not file_id:
-        send_message(chat_id, "這張圖片沒有 Telegram file_id，OpenClaw 無法下載。")
+        send_message(chat_id, "This photo has no Telegram file_id, so OpenClaw cannot download it.")
         return True
 
     file_info = telegram_file_info(file_id)
@@ -300,9 +304,9 @@ def handle_photo_message(chat_id: int, message: dict) -> bool:
     downloaded_path, byte_count = download_telegram_file(file_id, target_path)
     send_message(
         chat_id,
-        f"圖片已保存到 {settings.runtime_label} inbox，正在交給本地 vLLM/VLM 分析。\n"
-        f"檔案：{downloaded_path.name}\n"
-        f"大小：{byte_count} bytes",
+        f"Photo saved to the {settings.runtime_label} inbox, handing it to the local vLLM/VLM for analysis.\n"
+        f"File: {downloaded_path.name}\n"
+        f"Size: {byte_count} bytes",
     )
     caption = (message.get("caption") or "").strip()
     worker = threading.Thread(
@@ -322,7 +326,7 @@ def handle_voice_message(chat_id: int, message: dict) -> bool:
 
     file_id = voice.get("file_id")
     if not file_id:
-        send_message(chat_id, "這段語音沒有 Telegram file_id，OpenClaw 無法下載。")
+        send_message(chat_id, "This voice message has no Telegram file_id, so OpenClaw cannot download it.")
         return True
 
     file_info = telegram_file_info(file_id)
@@ -332,9 +336,9 @@ def handle_voice_message(chat_id: int, message: dict) -> bool:
     downloaded_path, byte_count = download_telegram_file(file_id, target_path)
     send_message(
         chat_id,
-        f"語音已保存到 {settings.runtime_label} inbox，正在用本地 Whisper 轉錄。\n"
-        f"檔案：{downloaded_path.name}\n"
-        f"大小：{byte_count} bytes",
+        f"Voice message saved to the {settings.runtime_label} inbox, transcribing with local Whisper.\n"
+        f"File: {downloaded_path.name}\n"
+        f"Size: {byte_count} bytes",
     )
     caption = (message.get("caption") or "").strip()
     worker = threading.Thread(
@@ -349,44 +353,44 @@ def handle_voice_message(chat_id: int, message: dict) -> bool:
 
 def process_image_message(chat_id: int, image_path: Path, caption: str) -> None:
     if not settings.vision_enabled:
-        send_message(chat_id, "圖片已保存，但 OPENCLAW_VISION_ENABLED=false，目前不做 VLM 分析。")
+        send_message(chat_id, "Image saved, but OPENCLAW_VISION_ENABLED=false, so no VLM analysis was run.")
         return
 
-    prompt = caption.strip() or "請分析這張圖片，描述重點、可見文字、可能的問題，以及下一步建議。"
+    prompt = caption.strip() or "Analyze this image: describe the key points, any visible text, possible issues, and suggested next steps."
     try:
         answer = llm.chat_with_image(image_path, prompt)
     except Exception as exc:
         log(f"[vision] error chat_id={chat_id} path={image_path}: {exc}")
         send_message(
             chat_id,
-            "圖片已保存，但目前 vLLM 沒有成功處理 image input。\n"
-            f"原因：{exc}\n\n"
-            "若目前模型是文字模型，請把 OPENCLAW_VLLM_MODEL 換成 VLM，例如 Qwen2.5-VL 或 Llama Vision，再重啟 vLLM。",
+            "Image saved, but vLLM failed to process the image input.\n"
+            f"Reason: {exc}\n\n"
+            "If the current model is text-only, switch OPENCLAW_VLLM_MODEL to a VLM such as Qwen2.5-VL or Llama Vision, then restart vLLM.",
         )
         return
 
-    send_message(chat_id, answer or "VLM 沒有回傳圖片分析內容。")
+    send_message(chat_id, answer or "The VLM did not return any image analysis content.")
     log(f"[vision] done chat_id={chat_id} path={image_path} answer_chars={len(answer or '')}")
 
 
 def process_voice_message(chat_id: int, audio_path: Path, caption: str) -> None:
     if not settings.whisper_enabled:
-        send_message(chat_id, "語音已保存，但 OPENCLAW_WHISPER_ENABLED=false，目前不做轉錄。")
+        send_message(chat_id, "Voice message saved, but OPENCLAW_WHISPER_ENABLED=false, so no transcription was run.")
         return
 
     try:
         transcript = transcriber.transcribe(audio_path)
     except Exception as exc:
         log(f"[whisper] error chat_id={chat_id} path={audio_path}: {exc}")
-        send_message(chat_id, f"語音已保存，但 Whisper 轉錄失敗：{exc}")
+        send_message(chat_id, f"Voice message saved, but Whisper transcription failed: {exc}")
         return
 
     if not transcript:
-        send_message(chat_id, "Whisper 沒有從這段語音轉出文字。")
+        send_message(chat_id, "Whisper did not produce any text from this voice message.")
         return
 
-    send_message(chat_id, f"Whisper 轉錄：\n{transcript}")
-    routed_text = transcript if not caption else f"{caption}\n\n語音轉錄：{transcript}"
+    send_message(chat_id, f"Whisper transcript:\n{transcript}")
+    routed_text = transcript if not caption else f"{caption}\n\nVoice transcript: {transcript}"
     try:
         dispatch = task_dispatcher.dispatch(
             routed_text,
@@ -396,10 +400,10 @@ def process_voice_message(chat_id: int, audio_path: Path, caption: str) -> None:
         )
     except Exception as exc:
         log(f"[voice-runtime] error chat_id={chat_id}: {exc}")
-        send_message(chat_id, f"語音已轉錄，但 OpenClaw runtime 無法回應：{exc}")
+        send_message(chat_id, f"Voice message transcribed, but the OpenClaw runtime failed to respond: {exc}")
         return
 
-    send_message(chat_id, dispatch.answer or "OpenClaw runtime 回傳了空回覆。")
+    send_message(chat_id, dispatch.answer or "The OpenClaw runtime returned an empty reply.")
     log(
         f"[voice-runtime] done chat_id={chat_id} task_id={dispatch.task_id} agent={dispatch.agent_name} "
         f"transcript_chars={len(transcript)} answer_chars={len(dispatch.answer or '')}"
@@ -418,36 +422,36 @@ def send_message(chat_id: int, text: str) -> None:
 
 
 def cron_help_text() -> str:
-    return """OpenClaw Cron 動態排程
+    return """OpenClaw dynamic cron schedules
 
 /cron list
-列出目前排程。
+List current schedules.
 
-/cron add daily HH:MM 名稱 :: 任務內容
-每天指定時間執行。
-例：/cron add daily 07:30 早報 :: 英國明天天氣如何，並整理今天需要注意的事
-也接受中文輸入法的 ：：
-例：/cron add daily 07:30 早報 ：： 英國明天天氣如何
+/cron add daily HH:MM name :: task content
+Run at a fixed time every day.
+Example: /cron add daily 07:30 Morning briefing :: UK weather tomorrow, and summarize today's priorities
+Also accepts the full-width "：：" from Chinese input methods.
+Example: /cron add daily 07:30 Morning briefing ：： UK weather tomorrow
 
-/cron add weekly mon|tue|wed|thu|fri|sat|sun HH:MM 名稱 :: 任務內容
-每週指定星期與時間執行。
-例：/cron add weekly mon 08:00 週報 :: /search latest Arm AI chip news
+/cron add weekly mon|tue|wed|thu|fri|sat|sun HH:MM name :: task content
+Run on a fixed weekday and time every week.
+Example: /cron add weekly mon 08:00 Weekly roundup :: /search latest Arm AI chip news
 
-/cron add monthly 1-31|last HH:MM 名稱 :: 任務內容
-每月指定日期與時間執行。
-例：/cron add monthly 1 09:00 月報 :: 整理本月 personal_tracker_memory 重點
-例：/cron add monthly last 18:00 月底回顧 ：： 回顧本月工作摘要
+/cron add monthly 1-31|last HH:MM name :: task content
+Run on a fixed day of the month.
+Example: /cron add monthly 1 09:00 Monthly report :: Summarize this month's personal_tracker_memory highlights
+Example: /cron add monthly last 18:00 Month-end review ：： Review this month's work summary
 
-/cron add every 30m|2h|1d 名稱 :: 任務內容
-每隔一段時間執行。
-例：/cron add every 6h 晶片新聞 :: /search latest NVIDIA Arm AI chip news
-新增後會先等待完整間隔，不會立刻執行。
+/cron add every 30m|2h|1d name :: task content
+Run on a recurring interval.
+Example: /cron add every 6h Chip news :: /search latest NVIDIA Arm AI chip news
+The first run waits a full interval after creation; it does not fire immediately.
 
 /cron run <job_id>
-立即執行一次。
+Run a schedule immediately.
 
 /cron delete <job_id>
-刪除排程。
+Delete a schedule.
 """
 
 
@@ -462,8 +466,8 @@ def agents_text() -> str:
 def tasks_text(limit: int = 5) -> str:
     entries = task_history.recent(limit)
     if not entries:
-        return "目前沒有 task history。"
-    lines = [f"最近 {len(entries)} 筆 OpenClaw tasks"]
+        return "No task history yet."
+    lines = [f"{len(entries)} most recent OpenClaw tasks"]
     for entry in entries:
         task_id = str(entry.get("task_id", ""))[-18:] or "(no-id)"
         agent = entry.get("agent", "(unknown-agent)")
@@ -478,18 +482,21 @@ def tasks_text(limit: int = 5) -> str:
 
 
 def doc_help_text() -> str:
-    return """OpenClaw 文件來源
+    return """OpenClaw document sources
 
 /doc url <Google Doc URL>
-匯入公開 Google Doc，保存成 Markdown，並自動進 knowledge RAG。
-例：/doc url https://docs.google.com/document/d/.../edit
+Import a public Google Doc, save it as Markdown, and index it into
+knowledge RAG automatically.
+Example: /doc url https://docs.google.com/document/d/.../edit
 
 /doc url <Google Doc URL> tracker
-匯入公開 Google Doc 到 tracker memory，適合追蹤資料、日誌、暫時上下文。
-例：/doc url https://docs.google.com/document/d/.../edit tracker
+Import a public Google Doc into tracker memory, suited for tracking
+data, logs, or temporary context.
+Example: /doc url https://docs.google.com/document/d/.../edit tracker
 
-注意：Google Doc 必須是公開可讀，或設定為「知道連結的人可以查看」。
-匯入後稍等 memory watcher 索引，即可用 /rag 查詢。
+Note: the Google Doc must be publicly readable, or shared as "anyone
+with the link can view". After importing, wait for the memory watcher
+to index it, then query with /rag.
 """
 
 
@@ -507,12 +514,12 @@ def handle_doc_command(chat_id: int, text: str) -> bool:
         send_message(chat_id, doc_help_text())
         return True
     if len(parts) < 3:
-        send_message(chat_id, "請提供 Google Doc URL。\n例：/doc url https://docs.google.com/document/d/.../edit")
+        send_message(chat_id, "Please provide a Google Doc URL.\nExample: /doc url https://docs.google.com/document/d/.../edit")
         return True
 
     rest = parts[2] if len(parts) == 3 else f"{parts[2]} {parts[3]}"
     url, collection_kind = parse_doc_url_args(rest)
-    send_message(chat_id, f"收到，正在匯入公開 Google Doc 到 {collection_kind}。")
+    send_message(chat_id, f"Got it, importing the public Google Doc into {collection_kind}.")
     worker = threading.Thread(target=process_doc_url, args=(chat_id, url, collection_kind), daemon=True)
     worker.start()
     return True
@@ -534,18 +541,18 @@ def process_doc_url(chat_id: int, url: str, collection_kind: str) -> None:
         result = save_google_doc(settings, url, collection_kind)
     except Exception as exc:
         log(f"[doc-url] error chat_id={chat_id}: {exc}")
-        send_message(chat_id, f"Google Doc 匯入失敗：{exc}")
+        send_message(chat_id, f"Google Doc import failed: {exc}")
         return
 
     preview = ""
     try:
         text = result.path.read_text(encoding="utf-8", errors="replace")
         prompt = (
-            "請針對以下 Google Doc 內容產生一段手機上好讀的繁體中文簡介。"
-            "請包含：主題、三個重點、是否值得正式用 /rag 深入查詢。"
-            "不要輸出推理過程。\n\n"
-            f"標題：{result.title}\n"
-            f"內容：{text[:6000]}"
+            "Write a short, mobile-friendly summary of the following Google Doc content. "
+            "Include: the topic, three key points, and whether it's worth a deeper /rag query. "
+            "Do not output your reasoning process.\n\n"
+            f"Title: {result.title}\n"
+            f"Content: {text[:6000]}"
         )
         preview = llm.chat(prompt, max_tokens=260)
     except Exception as exc:
@@ -553,16 +560,16 @@ def process_doc_url(chat_id: int, url: str, collection_kind: str) -> None:
 
     collection_name = settings.tracker_collection if result.collection_kind == "tracker" else settings.knowledge_collection
     message = (
-        "Google Doc 已匯入。\n"
-        f"標題：{result.title}\n"
-        f"檔案：{result.path.name}\n"
-        f"字數：約 {result.char_count} chars\n"
-        f"目標集合：{collection_name}\n"
-        "稍等 memory watcher 索引後可查：\n"
-        f"/rag {result.path.name} 這份 Google Doc 在說什麼？"
+        "Google Doc imported.\n"
+        f"Title: {result.title}\n"
+        f"File: {result.path.name}\n"
+        f"Length: ~{result.char_count} chars\n"
+        f"Target collection: {collection_name}\n"
+        "Once the memory watcher indexes it, you can query it with:\n"
+        f"/rag {result.path.name} What is this Google Doc about?"
     )
     if preview:
-        message += f"\n\n簡介：\n{preview}"
+        message += f"\n\nSummary:\n{preview}"
     send_message(chat_id, message)
     log(f"[doc-url] imported chat_id={chat_id} path={result.path} chars={result.char_count}")
 
@@ -579,9 +586,9 @@ def run_cron_job_once(chat_id: int, job_id: str) -> None:
     if not job:
         job = get_job(settings.cron_jobs_path, job_id)
     if not job:
-        send_message(chat_id, f"找不到 cron job：{job_id}")
+        send_message(chat_id, f"Cron job not found: {job_id}")
         return
-    send_message(chat_id, f"收到，正在立即執行 cron job：{job.get('name', job_id)}")
+    send_message(chat_id, f"Got it, running cron job now: {job.get('name', job_id)}")
     try:
         dispatch = task_dispatcher.dispatch(
             str(job.get("prompt", "")),
@@ -590,10 +597,10 @@ def run_cron_job_once(chat_id: int, job_id: str) -> None:
             metadata={"job_id": job_id, "job_name": job.get("name")},
         )
     except Exception as exc:
-        send_message(chat_id, f"cron job 執行失敗：{exc}")
+        send_message(chat_id, f"Cron job failed: {exc}")
         write_manual_runback(job, "error", str(exc), str(exc), int(started * 1000), int((time.time() - started) * 1000), False)
         return
-    answer = dispatch.answer or "OpenClaw runtime 回傳了空回覆。"
+    answer = dispatch.answer or "The OpenClaw runtime returned an empty reply."
     delivered = False
     try:
         send_message(chat_id, answer)
@@ -662,25 +669,25 @@ def handle_cron_command(chat_id: int, text: str) -> bool:
         except Exception:
             jobs = load_jobs(settings.cron_jobs_path).get("jobs", [])
         if not jobs:
-            send_message(chat_id, "目前沒有動態 cron job。")
+            send_message(chat_id, "No dynamic cron jobs yet.")
             return True
-        send_message(chat_id, "目前 cron job（Gateway dashboard 同步）：\n" + "\n".join(describe_job(job) for job in jobs))
+        send_message(chat_id, "Current cron jobs (synced with the Gateway dashboard):\n" + "\n".join(describe_job(job) for job in jobs))
         return True
 
     if action == "delete":
         if len(parts) < 3:
-            send_message(chat_id, "請提供 job_id。\n例：/cron delete morning-brief-1780000000")
+            send_message(chat_id, "Please provide a job_id.\nExample: /cron delete morning-brief-1780000000")
             return True
         try:
             removed = remove_gateway_job(settings, parts[2])
         except GatewayCronError:
             removed = delete_job(settings.cron_jobs_path, parts[2])
-        send_message(chat_id, "已刪除。" if removed else f"找不到 cron job：{parts[2]}")
+        send_message(chat_id, "Deleted." if removed else f"Cron job not found: {parts[2]}")
         return True
 
     if action == "run":
         if len(parts) < 3:
-            send_message(chat_id, "請提供 job_id。\n例：/cron run morning-brief-1780000000")
+            send_message(chat_id, "Please provide a job_id.\nExample: /cron run morning-brief-1780000000")
             return True
         worker = threading.Thread(target=run_cron_job_once, args=(chat_id, parts[2]), daemon=True)
         worker.start()
@@ -721,12 +728,12 @@ def handle_cron_command(chat_id: int, text: str) -> bool:
                 except GatewayCronError:
                     job = add_monthly_job(settings.cron_jobs_path, chat_id, parts[3], parts[4], parts[5])
             else:
-                send_message(chat_id, "排程類型支援 daily、weekly、monthly 或 every。")
+                send_message(chat_id, "Supported schedule types: daily, weekly, monthly, or every.")
                 return True
         except Exception as exc:
-            send_message(chat_id, f"新增 cron job 失敗：{exc}\n\n{cron_help_text()}")
+            send_message(chat_id, f"Failed to add cron job: {exc}\n\n{cron_help_text()}")
             return True
-        send_message(chat_id, "已新增 cron job（可在 Gateway dashboard 管理）：\n" + describe_job(job))
+        send_message(chat_id, "Cron job added (manageable from the Gateway dashboard):\n" + describe_job(job))
         return True
 
     send_message(chat_id, cron_help_text())
@@ -735,26 +742,26 @@ def handle_cron_command(chat_id: int, text: str) -> bool:
 
 def setup_bot_commands() -> None:
     commands = [
-        {"command": "help", "description": "顯示 OpenClaw 使用速查"},
-        {"command": "mem", "description": "寫入本地記憶"},
-        {"command": "rag", "description": "查本地記憶與知識庫"},
-        {"command": "doc", "description": "匯入公開 Google Doc 或文件來源"},
-        {"command": "search", "description": "搜尋網路資料"},
-        {"command": "cron", "description": "設定主動推播排程"},
-        {"command": "agents", "description": "列出 OpenClaw agents"},
-        {"command": "tasks", "description": "查看最近任務紀錄"},
-        {"command": "start", "description": "顯示狀態與用法"},
+        {"command": "help", "description": "Show the OpenClaw quick reference"},
+        {"command": "mem", "description": "Write to local memory"},
+        {"command": "rag", "description": "Query local memory and knowledge base"},
+        {"command": "doc", "description": "Import a public Google Doc or document source"},
+        {"command": "search", "description": "Search the web"},
+        {"command": "cron", "description": "Configure proactive push schedules"},
+        {"command": "agents", "description": "List OpenClaw agents"},
+        {"command": "tasks", "description": "View recent task history"},
+        {"command": "start", "description": "Show status and usage"},
     ]
     telegram("setMyCommands", {"commands": commands}, timeout=20)
 
 
 ACK_MESSAGES = {
-    "memory_agent": "收到，正在寫入本地記憶。",
-    "rag_agent": "收到，正在查詢本地記憶與文件知識庫。",
-    "browser_search_agent": "收到，正在搜尋網路資料並交給本地推理模型摘要。",
-    "weather_agent": "收到，正在查詢天氣資料。",
+    "memory_agent": "Got it, writing to local memory.",
+    "rag_agent": "Got it, querying local memory and the document knowledge base.",
+    "browser_search_agent": "Got it, searching the web and summarizing with the local reasoning model.",
+    "weather_agent": "Got it, checking the weather.",
 }
-DEFAULT_ACK_MESSAGE = "收到，正在交給本地推理模型回答。"
+DEFAULT_ACK_MESSAGE = "Got it, handing this to the local reasoning model."
 
 
 def ack_message(text: str) -> str:
@@ -781,9 +788,9 @@ def handle_text_message(chat_id: int, text: str) -> None:
             dispatch = task_dispatcher.dispatch(text, source="telegram_text", chat_id=chat_id)
         except Exception as exc:
             log(f"[runtime] error chat_id={chat_id}: {exc}")
-            send_message(chat_id, f"OpenClaw runtime 目前無法回應：{exc}")
+            send_message(chat_id, f"The OpenClaw runtime could not respond right now: {exc}")
             return
-        send_message(chat_id, dispatch.answer or "OpenClaw runtime 回傳了空回覆。")
+        send_message(chat_id, dispatch.answer or "The OpenClaw runtime returned an empty reply.")
         log(
             f"[runtime] done chat_id={chat_id} task_id={dispatch.task_id} agent={dispatch.agent_name} "
             f"duration_ms={dispatch.duration_ms} answer_chars={len(dispatch.answer or '')}"
@@ -811,11 +818,11 @@ def handle_message(message: dict) -> None:
             return
     except Exception as exc:
         log(f"[telegram] file handling error chat_id={chat_id}: {exc}")
-        send_message(chat_id, f"OpenClaw 無法保存這個 Telegram 檔案：{exc}")
+        send_message(chat_id, f"OpenClaw could not save this Telegram file: {exc}")
         return
 
     if not text:
-        send_message(chat_id, "目前 OpenClaw clean runtime 支援文字、文件、圖片與語音落盤。請傳文字或上傳檔案。")
+        send_message(chat_id, "The OpenClaw runtime currently accepts text, documents, photos, and voice messages. Please send text or upload a file.")
         return
 
     if text in {"/start", "/help"}:

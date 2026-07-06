@@ -9,11 +9,15 @@ from openclaw_runtime.skills.base import SkillResult
 DEFAULT_LOCATION_MAP = {
     "英國": "London,United Kingdom",
     "倫敦": "London,United Kingdom",
+    "united kingdom": "London,United Kingdom",
+    "london": "London,United Kingdom",
     "台灣": "Taipei,Taiwan",
     "臺灣": "Taipei,Taiwan",
     "台湾": "Taipei,Taiwan",
+    "taiwan": "Taipei,Taiwan",
     "台北": "Taipei,Taiwan",
     "臺北": "Taipei,Taiwan",
+    "taipei": "Taipei,Taiwan",
     "新北": "New Taipei,Taiwan",
     "桃園": "Taoyuan,Taiwan",
     "新竹": "Hsinchu,Taiwan",
@@ -29,24 +33,27 @@ DEFAULT_LOCATION_MAP = {
     "臺東": "Taitung,Taiwan",
     "澎湖": "Penghu,Taiwan",
     "東京": "Tokyo,Japan",
+    "tokyo": "Tokyo,Japan",
     "紐約": "New York,USA",
+    "new york": "New York,USA",
     "舊金山": "San Francisco,USA",
+    "san francisco": "San Francisco,USA",
 }
 
 LOCATION_LABELS = {
-    "London,United Kingdom": "英國（以倫敦為代表）",
-    "Taipei,Taiwan": "台灣（以台北為代表）",
-    "New Taipei,Taiwan": "新北",
-    "Taoyuan,Taiwan": "桃園",
-    "Hsinchu,Taiwan": "新竹",
-    "Taichung,Taiwan": "台中",
-    "Tainan,Taiwan": "台南",
-    "Kaohsiung,Taiwan": "高雄",
-    "Keelung,Taiwan": "基隆",
-    "Yilan,Taiwan": "宜蘭",
-    "Hualien,Taiwan": "花蓮",
-    "Taitung,Taiwan": "台東",
-    "Penghu,Taiwan": "澎湖",
+    "London,United Kingdom": "the UK (London)",
+    "Taipei,Taiwan": "Taiwan (Taipei)",
+    "New Taipei,Taiwan": "New Taipei",
+    "Taoyuan,Taiwan": "Taoyuan",
+    "Hsinchu,Taiwan": "Hsinchu",
+    "Taichung,Taiwan": "Taichung",
+    "Tainan,Taiwan": "Tainan",
+    "Kaohsiung,Taiwan": "Kaohsiung",
+    "Keelung,Taiwan": "Keelung",
+    "Yilan,Taiwan": "Yilan",
+    "Hualien,Taiwan": "Hualien",
+    "Taitung,Taiwan": "Taitung",
+    "Penghu,Taiwan": "Penghu",
 }
 
 
@@ -69,7 +76,7 @@ class WeatherSkill:
         data = get_json(url, timeout=self.settings.web_timeout)
         days = data.get("weather", [])
         if not days:
-            return SkillResult(self.name, "我查到了天氣服務，但沒有取得可用的預報資料。")
+            return SkillResult(self.name, "I reached the weather service, but no usable forecast data came back.")
 
         day = days[min(index, len(days) - 1)]
         hourly = day.get("hourly", [])
@@ -77,20 +84,40 @@ class WeatherSkill:
         desc = ""
         if noon.get("weatherDesc"):
             desc = noon["weatherDesc"][0].get("value", "")
-        chance_rain = noon.get("chanceofrain", "未知")
-        label = "後天" if index == 2 else "明天" if index == 1 else "今天"
+        chance_rain = noon.get("chanceofrain", "unknown")
+        label = "the day after tomorrow" if index == 2 else "tomorrow" if index == 1 else "today"
         place = LOCATION_LABELS.get(location, location)
         answer = (
-            f"{place}{label}天氣：{desc or '天氣狀況未明'}，"
-            f"最高約 {day.get('maxtempC', '?')}°C、最低約 {day.get('mintempC', '?')}°C，"
-            f"中午體感約 {noon.get('FeelsLikeC', '?')}°C，降雨機率約 {chance_rain}%。"
+            f"Weather in {place} {label}: {desc or 'conditions unclear'}, "
+            f"high around {day.get('maxtempC', '?')}°C, low around {day.get('mintempC', '?')}°C, "
+            f"midday feels-like around {noon.get('FeelsLikeC', '?')}°C, chance of rain about {chance_rain}%."
         )
         return SkillResult(self.name, answer)
 
     def _extract_location(self, text: str) -> str:
+        lowered_text = text.lower()
         for keyword, location in self.location_map.items():
-            if keyword in text:
+            if keyword.lower() in lowered_text:
                 return location
+        # English: "weather in X", "forecast for X", optionally followed by
+        # today/tomorrow/now/a trailing question mark, etc.
+        match = re.search(
+            r"(?:weather|forecast|temperature).{0,15}?\b(?:in|for|at)\s+"
+            r"([A-Za-z][A-Za-z .'-]*?)(?=\s+(?:today|tomorrow|now|please|thanks)\b|[?.!,]|$)",
+            text,
+            re.IGNORECASE,
+        )
+        if match:
+            cleaned = self._clean_location(match.group(1))
+            if cleaned:
+                return cleaned
+        # English: "X weather" (location named before the word "weather")
+        match = re.search(r"^([A-Za-z][A-Za-z .'-]*?)\s+weather\b", text.strip(), re.IGNORECASE)
+        if match:
+            cleaned = self._clean_location(match.group(1))
+            if cleaned:
+                return cleaned
+        # Chinese natural-language fallback, e.g. "劍橋今天天氣如何"
         match = re.search(r"(.+?)(?:明天|今天|後天|本日|今日|現在|目前)?(?:天氣|氣溫|會下雨)", text)
         if match:
             cleaned = self._clean_location(match.group(1))
@@ -107,8 +134,9 @@ class WeatherSkill:
 
     @staticmethod
     def _day_index(text: str) -> int:
-        if "後天" in text:
+        lowered = text.lower()
+        if "後天" in text or "day after tomorrow" in lowered:
             return 2
-        if "明天" in text or "tomorrow" in text.lower():
+        if "明天" in text or "tomorrow" in lowered:
             return 1
         return 0

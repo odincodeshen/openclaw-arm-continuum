@@ -41,24 +41,24 @@ def make_job_id(name: str) -> str:
 def parse_interval_seconds(value: str) -> int:
     match = re.fullmatch(r"(\d+)([mhd])", value.strip().lower())
     if not match:
-        raise ValueError("間隔格式需為 30m、2h 或 1d。")
+        raise ValueError("Interval format must be like 30m, 2h, or 1d.")
     amount = int(match.group(1))
     unit = match.group(2)
     multiplier = {"m": 60, "h": 3600, "d": 86400}[unit]
     seconds = amount * multiplier
     if seconds < 60:
-        raise ValueError("最短間隔是 1m。")
+        raise ValueError("The minimum interval is 1m.")
     return seconds
 
 
 def validate_time(value: str) -> str:
     if not re.fullmatch(r"\d{2}:\d{2}", value.strip()):
-        raise ValueError("每日時間格式需為 HH:MM，例如 07:30。")
+        raise ValueError("Time format must be HH:MM, for example 07:30.")
     hour_text, minute_text = value.split(":", 1)
     hour = int(hour_text)
     minute = int(minute_text)
     if hour > 23 or minute > 59:
-        raise ValueError("每日時間超出範圍，請使用 00:00 到 23:59。")
+        raise ValueError("Time out of range; use 00:00 through 23:59.")
     return f"{hour:02d}:{minute:02d}"
 
 
@@ -108,7 +108,7 @@ def validate_weekday(value: str) -> int:
         return aliases[normalized]
     if re.fullmatch(r"[1-7]", normalized):
         return int(normalized) - 1
-    raise ValueError("每週排程的星期需為 mon/tue/.../sun，或 1-7。")
+    raise ValueError("Weekly schedule day must be mon/tue/.../sun, or 1-7.")
 
 
 def weekday_name(index: int) -> str:
@@ -120,10 +120,10 @@ def validate_month_day(value: str) -> int | str:
     if normalized in {"last", "月底", "最後一天"}:
         return "last"
     if not re.fullmatch(r"\d{1,2}", normalized):
-        raise ValueError("每月排程日期需為 1-31 或 last。")
+        raise ValueError("Monthly schedule day must be 1-31 or last.")
     day = int(normalized)
     if day < 1 or day > 31:
-        raise ValueError("每月排程日期需為 1-31 或 last。")
+        raise ValueError("Monthly schedule day must be 1-31 or last.")
     return day
 
 
@@ -137,12 +137,12 @@ def month_has_day(now: datetime, day: int | str) -> bool:
 def split_name_prompt(raw: str) -> tuple[str, str]:
     normalized = raw.replace("：", ":")
     if "::" not in normalized:
-        raise ValueError("請用 `名稱 :: 任務內容` 或 `名稱 ：： 任務內容` 分隔名稱與任務。")
+        raise ValueError("Use `name :: task content` (or the full-width `：：`) to separate the name and task.")
     name, prompt = normalized.split("::", 1)
     name = name.strip()
     prompt = prompt.strip()
     if not name or not prompt:
-        raise ValueError("名稱與任務內容都不能空白。")
+        raise ValueError("Neither the name nor the task content can be blank.")
     return name, prompt
 
 
