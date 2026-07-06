@@ -1,6 +1,8 @@
 # Deployment
 
-OpenClaw currently ships with the stable `dgx-spark` deployment path. The next planned profile is `arm-cpu-only` on Radxa Orion O6 with Baidu ERNIE 4.5 served through llama.cpp. See `docs/PLATFORMS.md` for the platform roadmap.
+OpenClaw currently ships with the stable `dgx-spark` deployment path and an
+experimental `arm-cpu-only` path verified on Radxa Orion O6 with Baidu ERNIE 4.5
+served through llama.cpp. See `docs/PLATFORMS.md` for the platform roadmap.
 
 ## 1. Install Host Software
 

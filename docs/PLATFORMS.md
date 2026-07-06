@@ -7,7 +7,7 @@ OpenClaw is designed as one runtime with multiple deployment profiles. The Pytho
 | Profile | Status | LLM serving | Best fit | Privacy boundary |
 |---|---|---|---|---|
 | `dgx-spark` | Stable | Local vLLM on NVIDIA GPU | DGX Spark / GB10 class workstation | Single local host |
-| `arm-cpu-only` | Experimental | Local CPU LLM endpoint, preferably llama.cpp | Radxa Orion O6 or similar Armv9 board/server | Single local host |
+| `arm-cpu-only` | Experimental, verified on Orion O6 | Local CPU LLM endpoint, preferably llama.cpp | Radxa Orion O6 or similar Armv9 board/server | Single local host |
 | `arm-remote-llm` | Planned / beta | Remote private LAN vLLM endpoint | RPi5 or small Arm gateway plus local inference server | Trusted private LAN |
 
 ## Current Stable Profile: `dgx-spark`
@@ -24,7 +24,7 @@ Characteristics:
 
 This is the flagship path for full local privacy and large-model throughput.
 
-## Experimental Profile: `arm-cpu-only`
+## Experimental Verified Profile: `arm-cpu-only`
 
 The current experimental Arm CPU-only target is:
 
@@ -45,7 +45,7 @@ Why this is feasible:
 - The Arm learning path for ERNIE 4.5 focuses on deploying Mixture-of-Experts models on Armv9 with llama.cpp.
 - MoE-style ERNIE 4.5 models can expose large total parameter counts while activating a smaller fraction per token, which makes them worth testing on resource-constrained Arm hosts.
 
-Planned target stack:
+Verified target stack:
 
 ```text
 Hardware: Radxa Orion O6
@@ -64,7 +64,7 @@ baidu/ERNIE-4.5-21B-A3B-PT
 baidu/ERNIE-4.5-21B-A3B-Thinking
 ```
 
-Expected constraints:
+Current constraints:
 
 - CPU-only inference will be slower than DGX Spark.
 - Context length, retrieval count, and generation length should be reduced.
@@ -84,7 +84,7 @@ OPENCLAW_VISION_ENABLED=false
 OPENCLAW_WHISPER_MODEL=tiny
 ```
 
-Planned implementation artifacts:
+Implementation artifacts:
 
 ```text
 compose.arm-cpu-only.yaml
@@ -92,7 +92,10 @@ compose.arm-cpu-only.yaml
 docs/ERNIE_LLAMA_CPP.md
 ```
 
-The first implementation artifacts now exist. See `docs/ERNIE_LLAMA_CPP.md` for the Orion O6 + ERNIE 4.5 + llama.cpp bring-up flow.
+The first implementation artifacts and smoke-test flow now exist. See
+`docs/ERNIE_LLAMA_CPP.md` for the Orion O6 + ERNIE 4.5 + llama.cpp bring-up
+flow. The profile remains experimental because CPU-only performance, model
+selection, and optional service resource usage vary by host.
 
 ## Future Profile: `arm-remote-llm`
 
@@ -134,6 +137,7 @@ To keep all profiles healthy:
 ## Roadmap Order
 
 1. Keep `dgx-spark` stable.
-2. Bring up `arm-cpu-only` on Radxa Orion O6 with ERNIE 4.5 and llama.cpp.
-3. Add repeatable smoke tests for CPU-only chat, `/mem`, `/rag`, `/search`, and `/cron`.
+2. Keep `arm-cpu-only` repeatable on Radxa Orion O6 with ERNIE 4.5 and llama.cpp.
+3. Improve CPU-only presets, resource controls, and smoke tests for chat,
+   `/mem`, `/rag`, `/search`, `/cron`, Gateway, and voice.
 4. Add `arm-remote-llm` after the local CPU-only profile has clean deployment docs.

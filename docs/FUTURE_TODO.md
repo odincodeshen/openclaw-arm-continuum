@@ -1,9 +1,9 @@
 # Future TODO List
 
-This document tracks post-v1.1 ideas and candidate work items for
+This document tracks post-v1.2 ideas and candidate work items for
 `openclaw-arm-continuum`.
 
-The v1.1 release is intentionally stable and text-first. The items below are
+The v1.2 release is intentionally stable and text-first. The items below are
 future-facing and should be implemented incrementally without breaking the
 existing Telegram, memory, RAG, search, cron, and Gateway workflows.
 
@@ -307,7 +307,7 @@ Expected work:
 ## Future: Richer Multi-Agent Runtime
 
 Goal: evolve the current thin AgentRegistry / TaskDispatcher into a richer
-multi-agent runtime while keeping the v1.1 skill architecture stable.
+multi-agent runtime while keeping the v1.2 skill architecture stable.
 
 Candidate agents:
 

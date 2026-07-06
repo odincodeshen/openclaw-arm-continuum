@@ -1,6 +1,6 @@
 # OpenClaw Arm Continuum
 
-Version: `v1.1`
+Version: `v1.2`
 
 License: Apache-2.0
 
@@ -24,16 +24,18 @@ Copy-paste ready Telegram examples are in [`examples/`](examples/).
 - Local Whisper service for Telegram voice transcription.
 - Dynamic cron tasks with Telegram push delivery and Gateway dashboard integration.
 - Thin `AgentRegistry` and `TaskDispatcher` for skill-based routing.
+- Runtime profile isolation for personal/demo deployments.
+- English use-case guide and copy-paste ready Telegram examples.
 
 ## Deployment Profiles
 
 | Profile | Status | Inference | Target hardware |
 |---|---|---|---|
 | `dgx-spark` | Stable | Local vLLM on NVIDIA GPU | DGX Spark / GB10 class workstation. |
-| `arm-cpu-only` | Experimental | Local CPU LLM through llama.cpp or another OpenAI-compatible local endpoint | Radxa Orion O6 or similar Armv9 server-class board. |
+| `arm-cpu-only` | Experimental, verified on Orion O6 | Local CPU LLM through llama.cpp or another OpenAI-compatible local endpoint | Radxa Orion O6 or similar Armv9 server-class board. |
 | `arm-remote-llm` | Planned | Runtime on local Arm host, inference on private LAN vLLM server | RPi5 / small Arm gateway plus local Arm/GPU inference server. |
 
-The immediate next hardware target after DGX Spark is `arm-cpu-only` on Radxa Orion O6, using Baidu ERNIE 4.5 models and llama.cpp for better CPU inference efficiency. See `docs/PLATFORMS.md` and `docs/ERNIE_LLAMA_CPP.md`.
+The `arm-cpu-only` profile has been verified on Radxa Orion O6 using Baidu ERNIE 4.5 models and llama.cpp for CPU inference. It remains experimental because CPU-only performance, model presets, and optional services vary by host. See `docs/PLATFORMS.md` and `docs/ERNIE_LLAMA_CPP.md`.
 
 For separating private personal data from public demo data on the same host,
 use runtime profiles with separate `.env`, workspace, Gateway state, Telegram
@@ -120,10 +122,18 @@ For the experimental Radxa Orion O6 CPU-only profile, use:
 
 ```bash
 cp .env.arm-cpu-only.example .env
-docker compose --env-file .env -f compose.arm-cpu-only.yaml up -d
+docker compose --env-file .env -f compose.arm-cpu-only.yaml --profile web --profile gateway --profile voice up -d
 ```
 
 The O6 profile expects a local OpenAI-compatible llama.cpp server at `127.0.0.1:8080`. See `docs/ERNIE_LLAMA_CPP.md`.
+
+For a lighter CPU-only start without scraper, Gateway, or voice services, omit
+the compose profiles and start only the core runtime. If you do this, also set
+`OPENCLAW_WEB_ENABLED=false` and `OPENCLAW_WHISPER_ENABLED=false` in `.env`:
+
+```bash
+docker compose --env-file .env -f compose.arm-cpu-only.yaml up -d
+```
 
 Check containers:
 
@@ -172,12 +182,14 @@ a general web search instead of the purpose-built weather lookup.
 
 ## Memory And RAG
 
-Qdrant uses two primary collections:
+Qdrant uses two primary collections by default. Profile-specific `.env` files
+can override these names, for example demo deployments may use
+`demo_tracker_memory` and `demo_knowledge_base`.
 
 | Collection | Telegram scope | Purpose |
 |---|---|---|
-| `personal_tracker_memory` | `memory:` | Dynamic personal memory, todos, tracker files, scraped pages, short-term context. |
-| `personal_knowledge_base` | `knowledge:` | Long-term documents, manuals, white papers, formally ingested files. |
+| `OPENCLAW_TRACKER_COLLECTION` default: `personal_tracker_memory` | `memory:` | Dynamic personal memory, todos, tracker files, scraped pages, short-term context. |
+| `OPENCLAW_KNOWLEDGE_COLLECTION` default: `personal_knowledge_base` | `knowledge:` | Long-term documents, manuals, white papers, formally ingested files. |
 
 Examples:
 
@@ -290,7 +302,7 @@ The current stable baseline is:
 dgx-spark / GB10 + local vLLM
 ```
 
-Next stage:
+The verified experimental Arm CPU-only path is:
 
 ```text
 Radxa Orion O6 + Baidu ERNIE 4.5 + llama.cpp
@@ -302,7 +314,9 @@ Future profile:
 RPi5 / Arm gateway + private LAN vLLM
 ```
 
-Formal photo/PDF/diagram parsing should move to an explicit VLM in the future, such as Qwen2.5-VL or Qwen3-VL.
+Future multimodal work should use explicit specialist backends: formal VLM
+models through vLLM on DGX / GB10, and MNN Omni-style multimodal workers for
+Arm CPU-only image/screenshot analysis after validation.
 
 ## License
 
@@ -310,6 +324,10 @@ This project is licensed under the Apache License, Version 2.0. See `LICENSE`.
 
 ## Production Notes
 
-The current default model is `Qwen/Qwen3.6-27B-FP8`. Photo analysis can be wired through the same local vLLM API, but a production VLM such as Qwen2.5-VL or Qwen3-VL is recommended for formal image/PDF/diagram understanding.
+The DGX default model is `Qwen/Qwen3.6-27B-FP8`, which should be treated as a
+text-first reasoning model in this release. Production-grade image, PDF, and
+diagram understanding should move to a formal VLM such as Qwen2.5-VL or Qwen3-VL
+on DGX / GB10, or to a specialist backend such as MNN Omni for Arm CPU-only
+profiles after validation.
 
-Fuller multi-agent decomposition is intentionally left for later. v1.1 uses a thin dispatcher so the runtime remains easy to inspect, clone, and operate.
+Fuller multi-agent decomposition is intentionally left for later. v1.2 uses a thin dispatcher so the runtime remains easy to inspect, clone, and operate.

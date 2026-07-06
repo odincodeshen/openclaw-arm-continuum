@@ -200,7 +200,15 @@ OPENCLAW_WEB_CONTEXT_CHARS=1800
 
 ## 7. Start OpenClaw
 
-Start the default CPU-only services:
+Start the full CPU-only demo services:
+
+```bash
+docker compose --env-file .env -f compose.arm-cpu-only.yaml --profile web --profile gateway --profile voice up -d
+```
+
+For a lighter core-only start without scraper, Gateway dashboard, or voice
+service, set `OPENCLAW_WEB_ENABLED=false` and `OPENCLAW_WHISPER_ENABLED=false`
+in `.env`, then run:
 
 ```bash
 docker compose --env-file .env -f compose.arm-cpu-only.yaml up -d
@@ -215,13 +223,8 @@ docker logs --tail 80 openclaw-memory-watcher
 docker logs --tail 80 openclaw-cron
 ```
 
-Optional web scraper:
-
-```bash
-docker compose --env-file .env -f compose.arm-cpu-only.yaml --profile web up -d
-```
-
-Verify that the scraper container can resolve domains:
+Verify that the scraper container can resolve domains when the `web` profile is
+enabled:
 
 ```bash
 docker exec openclaw-browser-scraper cat /etc/resolv.conf
@@ -232,10 +235,10 @@ for host in ("duckduckgo.com", "google.com"):
 PY
 ```
 
-Optional Gateway dashboard:
+The Gateway dashboard is available when the `gateway` profile is enabled:
 
 ```bash
-docker compose --env-file .env -f compose.arm-cpu-only.yaml --profile gateway up -d
+curl -I http://127.0.0.1:18789/
 ```
 
 The Gateway image must support `linux/arm64` for this optional profile to work.
@@ -270,12 +273,15 @@ Success criteria:
 2. The O6 bot answers through ERNIE 4.5 on llama.cpp.
 3. /mem writes to the O6 Qdrant collections.
 4. /rag memory: retrieves the O6 memory.
-5. The DGX Spark / GB10 bot is unaffected.
+5. /search works when the web profile is enabled.
+6. Voice input works when the voice profile is enabled.
+7. The DGX Spark / GB10 bot is unaffected.
 ```
 
 ## Notes
 
 - Keep `OPENCLAW_VISION_ENABLED=false` for the first CPU-only profile.
-- Keep `OPENCLAW_WHISPER_ENABLED=false` for the first CPU-only profile.
+- Keep `OPENCLAW_WHISPER_ENABLED=true` only when the `voice` profile is running;
+  set it to `false` for core-only deployments.
 - The Thinking model may return `<response>` tags or thinking text. A future runtime adapter should sanitize ERNIE-specific response wrappers.
 - Treat `OPENCLAW_VLLM_BASE_URL` as the generation endpoint name, even when the backend is llama.cpp instead of vLLM.
