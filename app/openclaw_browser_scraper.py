@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
+import ipaddress
 import json
 import os
 import re
+import socket
 import time
 import traceback
 import urllib.parse
@@ -57,9 +59,38 @@ def safe_slug(value: str) -> str:
     return slug or "scrape"
 
 
+def assert_public_url(url: str) -> None:
+    """Reject URLs that resolve to a private, loopback, or link-local address.
+
+    This guards the direct-URL scrape path, which takes an untrusted URL
+    straight from a Telegram user. It resolves the hostname and checks every
+    returned address so a public hostname that DNS-rebinds to an internal IP
+    is still blocked.
+    """
+    parsed = urllib.parse.urlparse(url)
+    if not parsed.hostname:
+        raise ValueError("url is missing a host")
+    try:
+        infos = socket.getaddrinfo(parsed.hostname, None)
+    except socket.gaierror as exc:
+        raise ValueError(f"could not resolve host: {parsed.hostname}") from exc
+    for info in infos:
+        address = ipaddress.ip_address(info[4][0])
+        if (
+            address.is_private
+            or address.is_loopback
+            or address.is_link_local
+            or address.is_reserved
+            or address.is_multicast
+            or address.is_unspecified
+        ):
+            raise ValueError(f"refusing to fetch a private or reserved address: {address}")
+
+
 def normalize_url(url: str) -> str:
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme in {"http", "https"} and parsed.netloc:
+        assert_public_url(url)
         return url
     raise ValueError("url must start with http:// or https://")
 

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from openclaw_runtime.config import Settings
-from openclaw_runtime.http_client import USER_AGENT
+from openclaw_runtime.http_client import USER_AGENT, assert_public_url
 
 
 GOOGLE_DOC_ID_RE = re.compile(r"https?://docs\.google\.com/document/(?:u/\d+/)?d/([^/?#]+)")
@@ -40,6 +40,7 @@ def google_doc_export_url(url: str) -> str:
 
 
 def fetch_public_text(url: str, timeout: int) -> str:
+    assert_public_url(url)
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT}, method="GET")
     with urllib.request.urlopen(request, timeout=timeout) as response:
         content_type = response.headers.get("Content-Type", "")
