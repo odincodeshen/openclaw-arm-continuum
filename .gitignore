@@ -15,7 +15,7 @@ workspace/*
 
 gateway-data/*
 !gateway-data/.gitkeep
-lp_content.md
+lp_*
 
 profiles/*/.env
 !profiles/*/.env.example
