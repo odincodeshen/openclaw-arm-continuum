@@ -67,7 +67,8 @@ class WeatherSkill:
         self.location_map.update(config.get("locations", {}))
 
     def can_handle(self, text: str) -> bool:
-        return any(keyword in text for keyword in self.keywords)
+        lowered_text = text.casefold()
+        return any(keyword.casefold() in lowered_text for keyword in self.keywords)
 
     def run(self, text: str) -> SkillResult:
         location = self._extract_location(text)

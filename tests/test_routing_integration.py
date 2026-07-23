@@ -49,6 +49,7 @@ def build_real_agent_registry(settings) -> AgentRegistry:
 
 # (input text, expected agent name, why this case matters)
 ROUTING_MATRIX = [
+    ("Weather tomorrow", "weather_agent", "English weather routing must be case-insensitive"),
     ("/search 劍橋本日天氣預報", "browser_search_agent", "explicit /search must beat weather keyword overlap"),
     ("/search fifa 今天的賽程", "browser_search_agent", "explicit /search with a 今天 keyword overlap"),
     ("/search", "browser_search_agent", "bare /search with no query still routes to web_search"),

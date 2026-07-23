@@ -12,6 +12,11 @@ def build_weather_skill(default_location: str = "") -> WeatherSkill:
 
 
 class ExtractLocationTest(unittest.TestCase):
+    def test_weather_keyword_matching_is_case_insensitive(self) -> None:
+        skill = build_weather_skill()
+        skill.keywords = ("weather",)
+        self.assertTrue(skill.can_handle("Weather tomorrow"))
+
     def test_query_without_location_has_no_implicit_regional_default(self) -> None:
         skill = build_weather_skill()
         self.assertEqual(skill._extract_location("weather tomorrow"), "")
