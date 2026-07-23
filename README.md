@@ -90,7 +90,16 @@ OPENCLAW_CRON_CHAT_IDS=<your-chat-id>
 OPENCLAW_GATEWAY_TOKEN=<generate-a-long-random-token>
 ```
 
-These are the minimum personal settings for an already prepared host. Different GPU, memory, model, or cache setups may also need:
+These are the minimum personal settings for an already prepared host. Set the cron timezone to your local [IANA timezone](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones). If it is not set, the runtime uses UTC. You can also set an optional fallback for weather questions that do not include a location:
+
+```text
+OPENCLAW_CRON_TIMEZONE=America/New_York
+OPENCLAW_DEFAULT_WEATHER_LOCATION=New York,USA
+```
+
+Without `OPENCLAW_DEFAULT_WEATHER_LOCATION`, the bot asks for a location when a weather question does not name one.
+
+Different GPU, memory, model, or cache setups may also need:
 
 ```text
 OPENCLAW_VLLM_MODEL=
@@ -175,9 +184,9 @@ Currently implemented help commands:
 ```
 
 Weather is not a slash command. Ask in plain language and it is routed to
-the local weather skill automatically, for example `Cambridge weather today`.
+the local weather skill automatically, for example `Berlin weather today`.
 Do not prefix a weather question with `/search`: an explicit `/search`
-always wins the routing priority, so `/search Cambridge weather today` runs
+always wins the routing priority, so `/search Berlin weather today` runs
 a general web search instead of the purpose-built weather lookup.
 
 ## Memory And RAG
@@ -242,7 +251,7 @@ Create dynamic Telegram cron tasks with `name :: prompt` (the `::` separator
 is required):
 
 ```text
-/cron add daily 07:30 Morning weather :: Cambridge weather today
+/cron add daily 07:30 Morning weather :: Berlin weather today
 /cron add weekly mon 08:00 AI roundup :: Summarize this week's AI hardware news
 /cron add monthly 1 09:00 Monthly review :: Review monthly personal goals
 /cron list

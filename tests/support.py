@@ -22,6 +22,7 @@ def build_settings(**overrides) -> Settings:
         scraper_base_url=UNREACHABLE_URL,
         scraper_limit=1,
         web_context_chars=1,
+        default_weather_location="",
         skills_config_path=Path("skills.json"),
         vision_enabled=False,
         vision_max_tokens=1,

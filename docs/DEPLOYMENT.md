@@ -73,6 +73,18 @@ OPENCLAW_GATEWAY_TOKEN=
 
 These four values configure Telegram access and Gateway dashboard auth. They do not install Docker, GPU runtime, Ollama, Qdrant, or model files.
 
+Set an IANA timezone for scheduled jobs. The runtime uses UTC when this value is omitted:
+
+```text
+OPENCLAW_CRON_TIMEZONE=Asia/Singapore
+```
+
+Weather questions should include a location. To support questions that omit it, configure an optional fallback:
+
+```text
+OPENCLAW_DEFAULT_WEATHER_LOCATION=Singapore
+```
+
 ## 4. Start
 
 ```bash

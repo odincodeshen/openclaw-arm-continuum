@@ -2,5 +2,5 @@
 /mem #demo OpenClaw can remember local private context.
 /rag memory: What can OpenClaw remember?
 /search latest Arm AI software news
-/cron add daily 07:30 Local morning check :: Cambridge weather today
+/cron add daily 07:30 Local morning check :: Berlin weather today
 /cron list

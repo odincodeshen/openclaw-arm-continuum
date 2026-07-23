@@ -145,7 +145,7 @@ services:
       OPENCLAW_OLLAMA_BASE_URL: ${OPENCLAW_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OPENCLAW_QDRANT_BASE_URL: ${OPENCLAW_QDRANT_BASE_URL:-http://host.docker.internal:6333}
       OPENCLAW_SCRAPER_BASE_URL: http://openclaw-browser-scraper:8787
-      OPENCLAW_CRON_TIMEZONE: ${OPENCLAW_CRON_TIMEZONE:-Europe/London}
+      OPENCLAW_CRON_TIMEZONE: ${OPENCLAW_CRON_TIMEZONE:-UTC}
       OPENCLAW_CRON_DAILY_REPORT_TIME: ${OPENCLAW_CRON_DAILY_REPORT_TIME:-07:00}
       OPENCLAW_CRON_TASKS_CONFIG: /app/cron_tasks.json
       OPENCLAW_CRON_JOBS_PATH: /workspace/.openclaw/cron_jobs.json

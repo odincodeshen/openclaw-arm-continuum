@@ -3,8 +3,8 @@
     "enabled": true,
     "title": "OpenClaw Daily Briefing",
     "weather_questions": [
-      "What is the weather tomorrow in London?",
-      "What is the weather tomorrow in Taipei?"
+      "What is the weather tomorrow in Berlin?",
+      "What is the weather tomorrow in Singapore?"
     ],
     "product_queries": [
       {

@@ -92,7 +92,7 @@ Note:
 Weather questions are routed as plain language, not through `/search`:
 
 ```text
-Cambridge weather tomorrow
+Berlin weather tomorrow
 ```
 
 ## 4. Proactive Cron Briefings
@@ -108,7 +108,7 @@ Why it matters:
 Try it in Telegram:
 
 ```text
-/cron add daily 07:30 Morning weather :: Cambridge weather today
+/cron add daily 07:30 Morning weather :: Berlin weather today
 /cron add weekly mon 08:00 AI hardware roundup :: /search latest AI hardware news
 /cron list
 ```
@@ -224,7 +224,7 @@ After setup, this is the fastest end-to-end test:
 /mem #demo OpenClaw can remember local private context.
 /rag memory: What can OpenClaw remember?
 /search latest Arm AI software news
-/cron add daily 07:30 Local morning check :: Cambridge weather today
+/cron add daily 07:30 Local morning check :: Singapore weather today
 /cron list
 ```
 

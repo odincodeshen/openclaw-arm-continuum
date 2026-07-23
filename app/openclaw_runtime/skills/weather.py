@@ -71,6 +71,11 @@ class WeatherSkill:
 
     def run(self, text: str) -> SkillResult:
         location = self._extract_location(text)
+        if not location:
+            return SkillResult(
+                self.name,
+                'Please include a location, for example: "What is the weather in Berlin tomorrow?"',
+            )
         index = self._day_index(text)
         url = "https://wttr.in/" + urllib.parse.quote(location) + "?format=j1"
         data = get_json(url, timeout=self.settings.web_timeout)
@@ -123,7 +128,7 @@ class WeatherSkill:
             cleaned = self._clean_location(match.group(1))
             if cleaned:
                 return cleaned
-        return "London,United Kingdom"
+        return self.settings.default_weather_location or ""
 
     @staticmethod
     def _clean_location(raw: str) -> str:

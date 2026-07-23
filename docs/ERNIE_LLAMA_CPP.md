@@ -71,7 +71,7 @@ cd $HOME/ernie_lp/llama.cpp/build_v9_on
 ./bin/llama-cli \
   --jinja \
   -m $HOME/ernie_lp/model/ERNIE-4.5-21B-A3B-Thinking-Q4_0.gguf \
-  -p "用繁體中文一句話說明 MoE。" \
+  -p "Explain mixture-of-experts models in one sentence." \
   -c 2048 \
   -t 12 \
   -n 80
@@ -111,7 +111,7 @@ curl -sS http://127.0.0.1:8080/v1/chat/completions \
     "messages": [
       {
         "role": "user",
-        "content": "請用繁體中文用一句話說明 Orion O6 適合什麼地端 AI 任務。"
+        "content": "In one sentence, describe a local AI workload suitable for Orion O6."
       }
     ],
     "max_tokens": 80,
@@ -256,14 +256,14 @@ Use the dedicated O6 bot:
 Test chat:
 
 ```text
-請用一句話說明 Orion O6 適合什麼地端 AI 任務
+In one sentence, describe a local AI workload suitable for Orion O6.
 ```
 
 Test memory:
 
 ```text
-/mem #test O6 OpenClaw 記憶測試
-/rag memory: O6 OpenClaw 記憶測試
+/mem #test The O6 runtime uses llama.cpp for local generation.
+/rag memory: Which backend does the O6 runtime use for local generation?
 ```
 
 Success criteria:

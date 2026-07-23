@@ -1,5 +1,5 @@
 /search latest Arm server CPU news
 /search recent llama.cpp Arm performance notes
 /search OpenClaw local-first personal AI examples
-Cambridge weather tomorrow
-Taipei weather tomorrow
+Berlin weather tomorrow
+Singapore weather tomorrow

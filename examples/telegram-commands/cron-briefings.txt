@@ -1,4 +1,4 @@
-/cron add daily 07:30 Morning weather :: Cambridge weather today
+/cron add daily 07:30 Morning weather :: Berlin weather today
 /cron add weekly mon 08:00 AI hardware roundup :: /search latest AI hardware news
 /cron add monthly 1 09:00 Monthly review :: Review my saved goals from memory
 /cron list
