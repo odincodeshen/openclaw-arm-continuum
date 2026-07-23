@@ -7,11 +7,9 @@
 workspace/*
 !workspace/.gitkeep
 !workspace/inbox/
-!workspace/inbox/.gitkeep
-!workspace/inbox/knowledge/
-!workspace/inbox/knowledge/.gitkeep
-!workspace/inbox/tracker/
-!workspace/inbox/tracker/.gitkeep
+workspace/inbox/**
+!workspace/inbox/**/
+!workspace/inbox/**/.gitkeep
 
 gateway-data/*
 !gateway-data/.gitkeep
