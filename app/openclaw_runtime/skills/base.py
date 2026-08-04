@@ -6,6 +6,7 @@ from typing import Protocol
 class SkillResult:
     skill_name: str
     answer: str
+    status: str = "success"
 
 
 class Skill(Protocol):
@@ -24,4 +25,3 @@ def has_explicit_command_prefix(keywords, text: str) -> bool:
     # that skill's keyword (e.g. "/search today's weather").
     stripped = text.strip().lower()
     return any(stripped.startswith(keyword) for keyword in keywords if keyword.startswith("/"))
-

@@ -14,6 +14,7 @@ def build_settings(**overrides) -> Settings:
         max_reply_chars=3500,
         vllm_base_url=UNREACHABLE_URL,
         vllm_model="x",
+        model_catalog_path=Path("models.json"),
         system_prompt="x",
         max_tokens=1,
         request_timeout=1,

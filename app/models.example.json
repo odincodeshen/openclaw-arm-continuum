@@ -1,0 +1,31 @@
+{
+  "models": {
+    "local_default": {
+      "base_url": "http://openclaw-vllm:8000/v1",
+      "model": "replace-with-general-model",
+      "roles": ["general"],
+      "timeout": 60
+    },
+    "local_router": {
+      "base_url": "http://openclaw-router:8000/v1",
+      "model": "replace-with-router-model",
+      "roles": ["classification"],
+      "timeout": 30,
+      "fallback": "local_default"
+    },
+    "local_coder": {
+      "base_url": "http://openclaw-coder:8000/v1",
+      "model": "replace-with-coding-model",
+      "roles": ["code_review"],
+      "timeout": 120,
+      "fallback": "local_default"
+    },
+    "local_reasoner": {
+      "base_url": "http://openclaw-reasoner:8000/v1",
+      "model": "replace-with-reasoning-model",
+      "roles": ["architecture_review", "synthesis"],
+      "timeout": 180,
+      "fallback": "local_default"
+    }
+  }
+}

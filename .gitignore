@@ -40,5 +40,6 @@ __pycache__/
 *.db
 *.jsonl
 *.log
+app/models.json
 
 scripts/*.exp

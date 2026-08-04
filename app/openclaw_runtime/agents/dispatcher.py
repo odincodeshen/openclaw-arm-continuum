@@ -1,5 +1,4 @@
 import time
-import traceback
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -38,15 +37,18 @@ class TaskDispatcher:
         started = time.time()
         started_at = self._now()
         agent = self.registry.find(task)
+        model_policy = getattr(agent, "model_policy", "local_default")
+        input_summary = self._agent_input_summary(agent.name, text)
         self.history.append(
             {
                 "task_id": task.task_id,
                 "source": source,
                 "chat_id": chat_id,
                 "agent": agent.name,
+                "model_policy": model_policy,
                 "status": "started",
                 "started_at": started_at,
-                "input_summary": self._summary(text),
+                "input_summary": input_summary,
                 "metadata": task.metadata,
             }
         )
@@ -60,13 +62,13 @@ class TaskDispatcher:
                     "source": source,
                     "chat_id": chat_id,
                     "agent": agent.name,
+                    "model_policy": model_policy,
                     "status": "failed",
                     "started_at": started_at,
                     "ended_at": self._now(),
                     "duration_ms": duration_ms,
-                    "input_summary": self._summary(text),
+                    "input_summary": input_summary,
                     "error": f"{type(exc).__name__}: {exc}",
-                    "traceback": traceback.format_exc(limit=8),
                 }
             )
             raise
@@ -77,11 +79,12 @@ class TaskDispatcher:
                 "source": source,
                 "chat_id": chat_id,
                 "agent": agent.name,
-                "status": "success",
+                "status": getattr(result, "status", "success"),
+                "model_policy": model_policy,
                 "started_at": started_at,
                 "ended_at": self._now(),
                 "duration_ms": duration_ms,
-                "input_summary": self._summary(text),
+                "input_summary": input_summary,
                 "output_summary": self._summary(result.answer),
             }
         )
@@ -102,3 +105,9 @@ class TaskDispatcher:
         if len(clean) <= limit:
             return clean
         return clean[: limit - 1] + "…"
+
+    @classmethod
+    def _agent_input_summary(cls, agent_name: str, text: str) -> str:
+        if agent_name == "engineering_review_agent":
+            return "[redacted engineering review input]"
+        return cls._summary(text)

@@ -161,6 +161,34 @@ curl -I http://127.0.0.1:18789/
 
 ## Telegram Commands
 
+### Multi-model engineering review (v1.3 development)
+
+The `v1.3` branch can load a configuration-driven local model catalog. Copy
+the example only after replacing every placeholder with endpoints and models
+validated on your DGX Spark:
+
+```bash
+cp app/models.example.json app/models.json
+```
+
+Then set:
+
+```text
+OPENCLAW_MODEL_CATALOG=/app/models.json
+```
+
+When `local_router`, `local_coder`, and `local_reasoner` are all configured,
+OpenClaw registers the bounded engineering review agent and enables:
+
+```text
+/review Review this sanitized design package and identify implementation risks.
+```
+
+If the catalog file does not exist, the runtime preserves the v1.2 behavior
+and builds `local_default` from `OPENCLAW_VLLM_BASE_URL` and
+`OPENCLAW_VLLM_MODEL`. Engineering review inputs and model endpoints must stay
+on the local host or a trusted private network.
+
 Use `/help` in Telegram for the mobile command card.
 
 Main commands:
