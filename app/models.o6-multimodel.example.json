@@ -1,0 +1,31 @@
+{
+  "models": {
+    "local_default": {
+      "base_url": "http://127.0.0.1:8080/v1",
+      "model": "ernie-o6",
+      "roles": ["general"],
+      "timeout": 180
+    },
+    "local_router": {
+      "base_url": "http://127.0.0.1:18001/v1",
+      "model": "qwen3-0.6b",
+      "roles": ["classification"],
+      "timeout": 120,
+      "fallback": "local_default"
+    },
+    "local_coder": {
+      "base_url": "http://127.0.0.1:18002/v1",
+      "model": "qwen2.5-coder-1.5b",
+      "roles": ["code_review"],
+      "timeout": 240,
+      "fallback": "local_default"
+    },
+    "local_reasoner": {
+      "base_url": "http://127.0.0.1:18003/v1",
+      "model": "qwen3-4b",
+      "roles": ["architecture_review", "synthesis"],
+      "timeout": 360,
+      "fallback": "local_default"
+    }
+  }
+}
