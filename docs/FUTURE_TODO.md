@@ -404,12 +404,25 @@ Candidate model families:
 - Qwen3-VL
 - Llama Vision family
 
-Expected work:
+Done (post-v1.6):
 
-- Update vLLM model configuration.
-- Verify OpenAI-compatible multimodal request formatting.
-- Add image/PDF smoke tests.
-- Update `/help` and platform docs.
+- Both image paths (Telegram photo analysis and Category RAG image indexing)
+  now go through the `VisionClient` seam / catalog `vision` role -- the plain
+  photo path no longer bypasses it to `local_default`.
+- `scripts/vision_smoke.py` -- live endpoint check, run in-container before
+  enabling vision for users; warns when `vision` still resolves to the text
+  model.
+- `docs/VISION_SETUP.md` -- the three ways to point `vision` at a VLM
+  (`models.json`, `OPENCLAW_VLM_*`, `--profile vision`), verification, and
+  troubleshooting. `/help` points at it.
+- `compose.yaml` `vision` profile + `models.example.json` `vision` entry.
+
+Remaining (hardware / ops):
+
+- Stand up an actual VLM endpoint on GB10 and confirm `vision_smoke.py` passes
+  against it with a real photo.
+- Image/PDF smoke tests in the GPU e2e layer (CI Tier 2), not just the manual
+  script.
 
 ## Future: Richer Multi-Agent Runtime
 

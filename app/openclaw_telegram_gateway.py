@@ -57,7 +57,7 @@ from openclaw_runtime.skill_router import SkillRouter
 from openclaw_runtime.source_ingest import save_google_doc
 from openclaw_runtime.task_history import TaskHistory
 from openclaw_runtime.transcription_client import TranscriptionClient
-from openclaw_runtime.vision_client import DEFAULT_DESCRIBE_INSTRUCTION, VisionClient
+from openclaw_runtime.vision_client import DEFAULT_DESCRIBE_INSTRUCTION, VisionClient, VisionError
 
 
 settings = load_settings()
@@ -179,8 +179,9 @@ it used.
 
 Photos and voice
 Upload a photo directly and OpenClaw will save it to the
-{settings.runtime_label} inbox and hand it to the local VLM for
-analysis (set OPENCLAW_VLM_MODEL to a vision model).
+{settings.runtime_label} inbox and hand it to the vision model for
+analysis (configure a dedicated VLM via models.json or
+OPENCLAW_VLM_*; see docs/VISION_SETUP.md).
 
 A photo caption can double as an analysis instruction.
 Example: Read out the text in this image and summarize the key points
@@ -716,19 +717,20 @@ def process_image_message(chat_id: int, image_path: Path, caption: str) -> None:
 
     prompt = caption.strip() or "Analyze this image: describe the key points, any visible text, possible issues, and suggested next steps."
     try:
-        answer = llm.chat_with_image(image_path, prompt)
-    except Exception as exc:
-        log(f"[vision] error chat_id={chat_id} path={image_path}: {exc}")
+        answer = vision.describe_image(image_path, prompt, max_tokens=settings.vision_max_tokens)
+    except VisionError as exc:
+        log(f"[vision] error chat_id={chat_id} path={image_path} endpoint={vision.endpoint_id}: {exc}")
         send_message(
             chat_id,
-            "Image saved, but vLLM failed to process the image input.\n"
+            "Image saved, but the vision model failed to process the image input.\n"
             f"Reason: {exc}\n\n"
-            "If the current model is text-only, switch OPENCLAW_VLLM_MODEL to a VLM such as Qwen2.5-VL or Llama Vision, then restart vLLM.",
+            "Configure a dedicated VLM (models.json role \"vision\" or OPENCLAW_VLM_*) and "
+            "verify it with scripts/vision_smoke.py. See docs/VISION_SETUP.md.",
         )
         return
 
-    send_message(chat_id, answer or "The VLM did not return any image analysis content.")
-    log(f"[vision] done chat_id={chat_id} path={image_path} answer_chars={len(answer or '')}")
+    send_message(chat_id, answer or "The vision model did not return any image analysis content.")
+    log(f"[vision] done chat_id={chat_id} path={image_path} endpoint={vision.endpoint_id} answer_chars={len(answer or '')}")
 
 
 def process_voice_message(chat_id: int, audio_path: Path, caption: str) -> None:

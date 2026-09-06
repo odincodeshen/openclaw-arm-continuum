@@ -156,6 +156,59 @@ class CategoryIngestTest(CategoryGatewayTestBase):
         self.assertTrue((self.inbox / "categories" / entry["slug"] / "media" / "rack.jpg").exists())
 
 
+class ProcessImageMessageTest(CategoryGatewayTestBase):
+    def setUp(self) -> None:
+        super().setUp()
+        self._set_vision_enabled(True)
+        self.img = self.inbox / "pic.jpg"
+        self.img.write_bytes(b"\xff\xd8\xff\xd9")
+
+    def _set_vision_enabled(self, value: bool) -> None:
+        import dataclasses
+
+        self.settings = dataclasses.replace(self.settings, vision_enabled=value)
+        gateway.settings = self.settings
+
+    def _install_vision(self, fake) -> None:
+        orig = gateway.vision
+        gateway.vision = fake
+        self.addCleanup(setattr, gateway, "vision", orig)
+
+    def test_routes_through_vision_client_with_caption(self) -> None:
+        calls = []
+
+        class FakeVision:
+            endpoint_id = "vision"
+
+            def describe_image(self, path, instruction=None, *, max_tokens=None):
+                calls.append((path, instruction, max_tokens))
+                return "A network switch, model X."
+
+        self._install_vision(FakeVision())
+        gateway.process_image_message(5, self.img, "what model is this?")
+
+        self.assertEqual(calls[0][1], "what model is this?")
+        self.assertEqual(calls[0][2], self.settings.vision_max_tokens)
+        self.assertTrue(any("model X" in text for _, text in self.sent))
+
+    def test_disabled_vision_skips_call(self) -> None:
+        self._set_vision_enabled(False)
+        self._install_vision(object())  # any attribute access would raise
+        gateway.process_image_message(5, self.img, "")
+        self.assertTrue(any("OPENCLAW_VISION_ENABLED=false" in t for _, t in self.sent))
+
+    def test_vision_error_points_at_setup_docs(self) -> None:
+        class FakeVision:
+            endpoint_id = "vision"
+
+            def describe_image(self, path, instruction=None, *, max_tokens=None):
+                raise gateway.VisionError("endpoint down")
+
+        self._install_vision(FakeVision())
+        gateway.process_image_message(5, self.img, "")
+        self.assertTrue(any("vision_smoke.py" in t for _, t in self.sent))
+
+
 class CategoryCommandTest(CategoryGatewayTestBase):
     def test_cat_list_empty(self) -> None:
         self.assertTrue(gateway.handle_category_command(100, "/cat list"))
