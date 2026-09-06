@@ -51,6 +51,7 @@ from openclaw_runtime.conversation_memory import ConversationMemory
 from openclaw_runtime.file_ingest import SUPPORTED_SUFFIXES
 from openclaw_runtime.engineering_review import EngineeringReviewAgent
 from openclaw_runtime.http_client import request_json
+from openclaw_runtime.llm_client import VLLM_NOT_READY_MESSAGE
 from openclaw_runtime.model_catalog import load_model_registry
 from openclaw_runtime.model_client_factory import ModelClientFactory
 from openclaw_runtime.qdrant_client import QdrantClient
@@ -769,7 +770,10 @@ def process_voice_message(chat_id: int, audio_path: Path, caption: str) -> None:
         )
     except Exception as exc:
         log(f"[voice-runtime] error chat_id={chat_id}: {exc}")
-        send_message(chat_id, f"Voice message transcribed, but the OpenClaw runtime failed to respond: {exc}")
+        if str(exc) == VLLM_NOT_READY_MESSAGE or not llm.is_reachable():
+            send_message(chat_id, "Voice message transcribed and saved.\n\n" + MODEL_PAUSED_MESSAGE)
+        else:
+            send_message(chat_id, f"Voice message transcribed, but the OpenClaw runtime failed to respond: {exc}")
         return
 
     send_message(chat_id, dispatch.answer or "The OpenClaw runtime returned an empty reply.")
@@ -1137,6 +1141,14 @@ ACK_MESSAGES = {
 }
 DEFAULT_ACK_MESSAGE = "Got it, handing this to the local reasoning model."
 
+MODEL_PAUSED_MESSAGE = (
+    "The local model engine is not responding. It may be paused to free the GPU "
+    "(OPENCLAW_BOOT_MODE=core) or still loading a model.\n\n"
+    "Still works without it: /mem writes, /cat, /doc imports, /cron, /tasks, "
+    "/agents, /help.\n"
+    "On the host, start it with:  bin/openclawctl start model"
+)
+
 
 def ack_message(text: str) -> str:
     # Ask the same agent_registry that will actually handle the message,
@@ -1162,7 +1174,10 @@ def handle_text_message(chat_id: int, text: str) -> None:
             dispatch = task_dispatcher.dispatch(text, source="telegram_text", chat_id=chat_id)
         except Exception as exc:
             log(f"[runtime] error chat_id={chat_id}: {exc}")
-            send_message(chat_id, f"The OpenClaw runtime could not respond right now: {exc}")
+            if str(exc) == VLLM_NOT_READY_MESSAGE or not llm.is_reachable():
+                send_message(chat_id, MODEL_PAUSED_MESSAGE)
+            else:
+                send_message(chat_id, f"The OpenClaw runtime could not respond right now: {exc}")
             return
         send_message(chat_id, dispatch.answer or "The OpenClaw runtime returned an empty reply.")
         log(

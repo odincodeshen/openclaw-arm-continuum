@@ -54,8 +54,14 @@ Still open from the original list, re-baselined against v1.6:
 - Personal memory deepening — the "more precise `/rag` scope filters"
   item is **partially done** via Category RAG (`#<category>` / `#all`);
   the rest is not started.
-- Runtime lifecycle / `openclawctl` / `OPENCLAW_BOOT_MODE` — **not
-  started**.
+- Runtime lifecycle / `openclawctl` / `OPENCLAW_BOOT_MODE` — **first cut
+  done (post-v1.6)**. `bin/openclawctl status|start|stop|restart
+  core|model|full` + `boot` (honours `OPENCLAW_BOOT_MODE=core|full|manual`)
+  over `docker compose`, no compose restructuring. Telegram plain-chat and
+  voice replies degrade gracefully when the model engine is stopped. See
+  `docs/RUNTIME_LIFECYCLE.md`. Not done: the `openclawctl status model`
+  remote-endpoint probe for the Arm-gateway profile, and per-platform
+  model-service wiring beyond `openclaw-vllm`.
 - Platform presets — **partially done**: the v1.3 branch added O6 and DGX
   multi-model configs and catalog examples (shipped in v1.4); the
   remaining profiles and per-platform smoke tests are not done.
@@ -461,6 +467,13 @@ Candidate work:
 Goal: keep OpenClaw useful even when the main model engine is stopped for other
 projects, especially on shared GB10 / DGX GPU workstations and Arm CPU-only
 hosts.
+
+**First cut shipped post-v1.6** (`bin/openclawctl`, `OPENCLAW_BOOT_MODE`,
+graceful Telegram degradation -- see `docs/RUNTIME_LIFECYCLE.md`). The
+`openclawctl` design below described a fuller `status`/`status model` and
+per-platform model actions; what shipped covers `core`/`model`/`full`
+start/stop/restart/status/boot over `docker compose`. The rest of this
+section is still the target.
 
 Core design principle:
 

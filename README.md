@@ -159,6 +159,15 @@ curl http://127.0.0.1:8000/v1/models
 curl -I http://127.0.0.1:18789/
 ```
 
+On a shared GPU box, run the core services without the vLLM engine and start
+it only when needed (`docs/RUNTIME_LIFECYCLE.md`):
+
+```bash
+bin/openclawctl start core      # Telegram, memory, cron, scraper, whisper
+bin/openclawctl start model     # vLLM, when you need chat / RAG summaries
+bin/openclawctl stop  model     # free the GPU, Telegram stays up
+```
+
 ## Telegram Commands
 
 ### Multi-model engineering review (v1.3 development)

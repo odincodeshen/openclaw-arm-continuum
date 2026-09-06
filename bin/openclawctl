@@ -1,0 +1,114 @@
+#!/usr/bin/env sh
+# openclawctl -- run OpenClaw core services independently of the model engine.
+#
+# The Telegram gateway, dashboard, cron worker, memory watcher, scraper and
+# Whisper ("core") do not need the GPU. The vLLM model engine ("model") does.
+# On a shared GB10 / DGX box you usually want core always-on and the model
+# engine started only when you need chat / RAG summarization.
+#
+#   openclawctl status                 show core + model container status
+#   openclawctl start   core|model|full
+#   openclawctl stop    core|model|full
+#   openclawctl restart core|model|full
+#   openclawctl boot                   act on OPENCLAW_BOOT_MODE (core|full|manual)
+#
+# Environment overrides:
+#   OPENCLAWCTL_CORE_SERVICES   space-separated core service names
+#   OPENCLAWCTL_MODEL_SERVICES  space-separated model service names (default: openclaw-vllm)
+#   OPENCLAWCTL_COMPOSE         compose command (default: "docker compose")
+#   OPENCLAWCTL_DRY_RUN=1       print the compose commands instead of running them
+#   OPENCLAW_BOOT_MODE          core | full | manual   (consumed by 'boot')
+
+set -eu
+
+CORE_SERVICES="${OPENCLAWCTL_CORE_SERVICES:-openclaw-gateway openclaw-telegram openclaw-cron openclaw-memory-watcher openclaw-browser-scraper openclaw-whisper}"
+MODEL_SERVICES="${OPENCLAWCTL_MODEL_SERVICES:-openclaw-vllm}"
+COMPOSE="${OPENCLAWCTL_COMPOSE:-docker compose}"
+
+usage() {
+    cat >&2 <<'EOF'
+openclawctl -- run OpenClaw core services independently of the model engine.
+
+  openclawctl status                 show core + model container status
+  openclawctl start   core|model|full
+  openclawctl stop    core|model|full
+  openclawctl restart core|model|full
+  openclawctl boot                   act on OPENCLAW_BOOT_MODE (core|full|manual)
+
+core  = gateway, telegram, cron, memory-watcher, browser-scraper, whisper
+model = vLLM (the GPU engine)
+full  = core + model
+EOF
+    exit "${1:-0}"
+}
+
+run_compose() {
+    if [ "${OPENCLAWCTL_DRY_RUN:-0}" = "1" ]; then
+        echo "+ ${COMPOSE} $*"
+    else
+        # word-split COMPOSE and args on purpose
+        # shellcheck disable=SC2086
+        ${COMPOSE} "$@"
+    fi
+}
+
+services_for() {
+    case "$1" in
+        core)  printf '%s' "$CORE_SERVICES" ;;
+        model) printf '%s' "$MODEL_SERVICES" ;;
+        full)  printf '%s' "$CORE_SERVICES $MODEL_SERVICES" ;;
+        *) echo "openclawctl: unknown group '$1' (want: core|model|full)" >&2; exit 2 ;;
+    esac
+}
+
+cmd_start() {
+    _svc=$(services_for "$1") || exit $?
+    # shellcheck disable=SC2086
+    run_compose up -d $_svc
+}
+
+cmd_stop() {
+    _svc=$(services_for "$1") || exit $?
+    # shellcheck disable=SC2086
+    run_compose stop $_svc
+}
+
+cmd_restart() {
+    cmd_stop "$1"
+    cmd_start "$1"
+}
+
+cmd_status() {
+    echo "== core =="
+    # shellcheck disable=SC2086
+    run_compose ps $CORE_SERVICES
+    echo
+    echo "== model =="
+    # shellcheck disable=SC2086
+    run_compose ps $MODEL_SERVICES
+}
+
+cmd_boot() {
+    mode="${OPENCLAW_BOOT_MODE:-full}"
+    case "$mode" in
+        core)   echo "boot mode: core";                        cmd_start core ;;
+        full)   echo "boot mode: full";                        cmd_start full ;;
+        manual) echo "boot mode: manual -- starting nothing" ;;
+        *) echo "openclawctl: invalid OPENCLAW_BOOT_MODE '$mode' (want: core|full|manual)" >&2; exit 2 ;;
+    esac
+}
+
+[ $# -ge 1 ] || usage 2
+action="$1"
+shift || true
+
+case "$action" in
+    -h|--help|help) usage 0 ;;
+    status) cmd_status ;;
+    boot)   cmd_boot ;;
+    start|stop|restart)
+        [ $# -ge 1 ] || { echo "openclawctl: '$action' needs a group (core|model|full)" >&2; exit 2; }
+        "cmd_${action}" "$1"
+        ;;
+    *) echo "openclawctl: unknown command '$action'" >&2; usage 2 ;;
+esac

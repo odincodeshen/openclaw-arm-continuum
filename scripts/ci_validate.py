@@ -63,13 +63,25 @@ def _validate_catalog(path: Path) -> None:
 for f in sorted(glob.glob(str(ROOT / "app" / "models*.json"))):
     check(f"catalog {Path(f).name}", lambda p=Path(f): _validate_catalog(p))
 
-# 4. helper scripts import cleanly -------------------------------------------
+# 4. helper scripts import / parse cleanly -----------------------------------
 import py_compile  # noqa: E402
+import subprocess  # noqa: E402
 
 for f in sorted(glob.glob(str(ROOT / "scripts" / "*.py"))):
     if Path(f).name == "ci_validate.py":
         continue
     check(f"compile scripts/{Path(f).name}", lambda p=f: py_compile.compile(p, doraise=True))
+
+
+def _sh_syntax(path: str) -> None:
+    result = subprocess.run(["sh", "-n", path], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise ValueError(result.stderr.strip() or "shell syntax error")
+
+
+for f in sorted(glob.glob(str(ROOT / "bin" / "*"))):
+    if Path(f).is_file():
+        check(f"sh -n bin/{Path(f).name}", lambda p=f: _sh_syntax(p))
 
 # ---------------------------------------------------------------------------
 if failures:

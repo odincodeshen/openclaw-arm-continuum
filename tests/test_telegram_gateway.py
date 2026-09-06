@@ -124,6 +124,44 @@ class NewConversationCommandTest(unittest.TestCase):
         self.assertTrue(any("disabled" in t.lower() for _, t in self.sent))
 
 
+class ModelPausedMessageTest(unittest.TestCase):
+    def setUp(self):
+        self.sent = []
+        self._orig_send = gateway.send_message
+        gateway.send_message = lambda chat_id, text: self.sent.append((chat_id, text))
+        self.addCleanup(setattr, gateway, "send_message", self._orig_send)
+
+        self._orig_dispatch = gateway.task_dispatcher.dispatch
+        self.addCleanup(setattr, gateway.task_dispatcher, "dispatch", self._orig_dispatch)
+
+        self._orig_reachable = gateway.llm.is_reachable
+        self.addCleanup(setattr, gateway.llm, "is_reachable", self._orig_reachable)
+
+    def _fail_dispatch(self, exc):
+        def _raise(*a, **k):
+            raise exc
+
+        gateway.task_dispatcher.dispatch = _raise
+
+    def test_unreachable_engine_gets_paused_message(self):
+        self._fail_dispatch(RuntimeError("connection refused"))
+        gateway.llm.is_reachable = lambda: False
+        gateway.handle_text_message(5, "hello there")
+        self.assertTrue(any("bin/openclawctl start model" in t for _, t in self.sent))
+
+    def test_not_ready_message_is_recognised_even_if_probe_flaps(self):
+        self._fail_dispatch(RuntimeError(gateway.VLLM_NOT_READY_MESSAGE))
+        gateway.llm.is_reachable = lambda: True
+        gateway.handle_text_message(5, "hello there")
+        self.assertTrue(any("model engine is not responding" in t for _, t in self.sent))
+
+    def test_other_errors_still_surface_verbatim(self):
+        self._fail_dispatch(RuntimeError("something else broke"))
+        gateway.llm.is_reachable = lambda: True
+        gateway.handle_text_message(5, "hello there")
+        self.assertTrue(any("something else broke" in t for _, t in self.sent))
+
+
 class AckMessageTest(unittest.TestCase):
     def setUp(self) -> None:
         # ack_message() reads the module-level agent_registry directly to
