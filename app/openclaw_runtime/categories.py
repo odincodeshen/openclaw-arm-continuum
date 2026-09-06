@@ -25,7 +25,10 @@ _ASCII_SLUG_RE = re.compile(r"[^a-z0-9]+")
 _REGISTRY_VERSION = 1
 
 _CAPTION_CATEGORY_RE = re.compile(
-    r"^#(?:\[([^\]]+)\]|\{([^}]+)\}|(\S+))(?:\s+(.*))?$", re.DOTALL
+    r"^[#＃]+[ \t]*(?:[\[［]([^\]］]+)[\]］]"
+    r"|[\{｛]([^\}｝]+)[\}｝]"
+    r"|(\S+))(?:\s+(.*))?$",
+    re.DOTALL,
 )
 
 
@@ -33,7 +36,8 @@ def parse_category_caption(caption: str) -> tuple[str | None, str]:
     """Parse a Telegram caption of the form ``#category optional note``.
 
     Returns ``(category_name_or_None, note)``. ``#[multi word]`` and
-    ``#{multi word}`` carry a category name containing spaces.
+    ``#{multi word}`` carry a category name containing spaces. The full-width
+    ``＃`` (common from CJK IMEs) is accepted too.
     """
     match = _CAPTION_CATEGORY_RE.match((caption or "").strip())
     if not match:
@@ -205,40 +209,29 @@ def resolve_category(settings: Settings, token: str) -> dict | None:
     registry = load_registry(settings)
     categories = registry["categories"]
 
-    if token in categories:
-        entry = categories[token]
+    def _from(slug: str, entry: dict, display_fallback: str) -> dict:
         return {
-            "slug": token,
-            "display": entry.get("display", token),
-            "collection": entry.get(
-                "collection", category_collection_name(settings, token)
-            ),
+            "slug": slug,
+            "display": entry.get("display", display_fallback),
+            "collection": entry.get("collection", category_collection_name(settings, slug)),
+            "known": True,
         }
+
+    if token in categories:
+        return _from(token, categories[token], token)
 
     lowered = token.casefold()
     for slug, entry in categories.items():
         if entry.get("display", "").casefold() == lowered or slug.casefold() == lowered:
-            return {
-                "slug": slug,
-                "display": entry.get("display", slug),
-                "collection": entry.get(
-                    "collection", category_collection_name(settings, slug)
-                ),
-            }
+            return _from(slug, entry, slug)
 
     computed_slug = category_slug(token)
     if computed_slug in categories:
-        entry = categories[computed_slug]
-        return {
-            "slug": computed_slug,
-            "display": entry.get("display", token),
-            "collection": entry.get(
-                "collection", category_collection_name(settings, computed_slug)
-            ),
-        }
+        return _from(computed_slug, categories[computed_slug], token)
 
     return {
         "slug": computed_slug,
         "display": token,
         "collection": category_collection_name(settings, computed_slug),
+        "known": False,
     }

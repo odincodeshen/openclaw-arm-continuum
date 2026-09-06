@@ -26,6 +26,12 @@ class SplitCategoryPrefixTest(unittest.TestCase):
         self.assertNotIn(token, (None, "all"))
         self.assertEqual(rest, "where is the rack diagram")
 
+    def test_fullwidth_hash_from_cjk_ime(self) -> None:
+        self.assertEqual(split_category_prefix("＃AI應用 這個類別有什麼"), ("AI應用", "這個類別有什麼"))
+
+    def test_hash_then_space_then_name(self) -> None:
+        self.assertEqual(split_category_prefix("# 工作筆記 問題"), ("工作筆記", "問題"))
+
 
 class FakeEmbeddings:
     def embed(self, text: str) -> list[float]:
@@ -84,11 +90,27 @@ class CategoryRagRetrieveTest(unittest.TestCase):
         self.assertNotIn("tracker_coll", qdrant.searched)
         self.assertNotIn("knowledge_coll", qdrant.searched)
 
-    def test_unknown_category_still_resolves_to_computed_collection(self) -> None:
+    def test_unknown_category_lists_existing_and_does_not_search(self) -> None:
         qdrant = FakeQdrant({})
         skill = self._skill(qdrant)
         result = skill.run("/rag #尚未建立 問題")
-        self.assertIn("No content found in category", result.answer)
+        self.assertIn("找不到類別", result.answer)
+        self.assertIn("工作筆記", result.answer)  # the one registered in setUp
+        self.assertEqual(qdrant.searched, [])
+
+    def test_known_but_empty_category_reports_no_content(self) -> None:
+        qdrant = FakeQdrant({})  # entry collection has no hits
+        skill = self._skill(qdrant)
+        result = skill.run("/rag #工作筆記 問題")
+        self.assertIn("目前還沒有可檢索的內容", result.answer)
+        self.assertEqual(qdrant.searched, [self.entry["collection"]])
+
+    def test_fullwidth_hash_query_hits_the_category(self) -> None:
+        qdrant = FakeQdrant({self.entry["collection"]: [_hit("content")]})
+        skill = self._skill(qdrant)
+        result = skill.run("/rag ＃工作筆記 重點")
+        self.assertEqual(result.answer, "answer-from-context")
+        self.assertEqual(qdrant.searched, [self.entry["collection"]])
 
     def test_default_query_keeps_legacy_two_collection_behaviour(self) -> None:
         qdrant = FakeQdrant(

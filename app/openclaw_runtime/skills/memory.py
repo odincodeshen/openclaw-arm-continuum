@@ -9,7 +9,14 @@ from openclaw_runtime.qdrant_client import QdrantClient
 from openclaw_runtime.skills.base import SkillResult
 
 
-_CATEGORY_PREFIX_RE = re.compile(r"^#(?:\[([^\]]+)\]|\{([^}]+)\}|(\S+))(?:\s+(.*))?$", re.DOTALL)
+# Accept the half-width "#" and the full-width "＃" (common from CJK IMEs),
+# and half/full-width brackets for multi-word names.
+_CATEGORY_PREFIX_RE = re.compile(
+    r"^[#＃]+[ \t]*(?:[\[［]([^\]］]+)[\]］]"
+    r"|[\{｛]([^\}｝]+)[\}｝]"
+    r"|(\S+))(?:\s+(.*))?$",
+    re.DOTALL,
+)
 _ALL_CATEGORIES_TOKEN = "\x00all\x00"
 
 
@@ -17,14 +24,14 @@ def split_category_prefix(query: str) -> tuple[str | None, str]:
     """Pull a leading ``#category`` / ``#[multi word]`` / ``#all`` off a query.
 
     Returns ``(category_token_or_None, remaining_query)``. ``#all`` yields the
-    internal all-categories sentinel.
+    internal all-categories sentinel. Also accepts the full-width ``＃``.
     """
     match = _CATEGORY_PREFIX_RE.match(query.strip())
     if not match:
         return None, query.strip()
     token = (match.group(1) or match.group(2) or match.group(3) or "").strip()
     rest = (match.group(4) or "").strip()
-    if token.casefold() in {"all", "*", "全部"}:
+    if token.casefold() in {"all", "*", "全部", "所有"}:
         return _ALL_CATEGORIES_TOKEN, rest
     return token, rest
 
@@ -129,8 +136,14 @@ class RagRetrieveSkill:
 
     def _run_single_category(self, token: str, query: str) -> SkillResult:
         entry = resolve_category(self.settings, token)
-        if not entry:
-            return SkillResult(self.name, f"Unknown category: {token}")
+        known = list(registry_entries(self.settings))
+        if not entry or not entry.get("known"):
+            names = "、".join(item["display"] for item in known) or "（尚無任何類別）"
+            return SkillResult(
+                self.name,
+                f"找不到類別「{token}」。目前的類別：{names}\n"
+                "（用 /rag #<類別> 查詢，或上傳檔案時用 #<類別> 建立。）",
+            )
         collection = entry["collection"]
         vector = self.embeddings.embed(query)
         try:
@@ -144,7 +157,8 @@ class RagRetrieveSkill:
         if not context:
             return SkillResult(
                 self.name,
-                f"No content found in category 「{entry['display']}」 yet.",
+                f"類別「{entry['display']}」目前還沒有可檢索的內容"
+                "（剛上傳的話等 10 秒左右讓索引器處理）。",
             )
         return SkillResult(self.name, self._answer(query, context))
 

@@ -106,6 +106,14 @@
 
 ## 出問題時看什麼
 
-- 圖片步驟失敗 → VLM 模型沒設對；主機上 `docker compose logs -f openclaw-telegram` 看 `[vision]` / `[category]` log
-- 文件排入後 `/rag` 查不到 → 等久一點（watcher 每 10 秒掃一次），或看 `[watcher] ingested ...` log
+- **`/rag #類別 問題` 說「找不到類別」或「還沒有內容」，但 `/rag 問題` 查得到**
+  → 表示那份資料在一般知識庫、不在類別裡。檢查：
+  1. `/cat list` 有沒有列出該類別、chunks 是不是 > 0
+  2. 上傳時 caption 是不是 `#類別名`（半形 `#` 或全形 `＃` 都可）
+  3. 主機是否在切到 `dev` 後**重啟過** `openclaw-telegram` 和 `openclaw-memory-watcher`
+     （程式碼是掛載的，但設定只在容器啟動時載入）
+  4. `docker compose logs openclaw-memory-watcher | grep -i category`
+     應看到 `ingested ... collection=oc_cat_...`
+- 圖片步驟失敗 → VLM 模型沒設對；`docker compose logs -f openclaw-telegram` 看 `[vision]` / `[category]`
+- 文件排入後 `/rag` 查不到 → 等久一點（watcher 每 10 秒掃一次），看 `[watcher] ingested ...`
 - 第 10 步外洩 → 回報，附上你用的字詞與兩邊的回覆
