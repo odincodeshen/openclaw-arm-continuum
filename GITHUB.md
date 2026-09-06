@@ -115,3 +115,60 @@ agent, richer multi-agent runtime, personal memory deepening, runtime
 lifecycle control, platform presets) move to v2.0. See
 docs/FUTURE_TODO.md.
 ```
+
+## Suggested Release Title (v1.4)
+
+```text
+OpenClaw Arm Continuum v1.4 - Category RAG and source attribution
+```
+
+## Suggested Release Notes (v1.4)
+
+```text
+v1.4 adds per-category knowledge bases, decouples image analysis from the
+model, and makes every /rag answer cite its sources. Text-only flows are
+unchanged; the feature is gated by OPENCLAW_CATEGORY_RAG_ENABLED (default on).
+
+New: Category RAG
+- Upload a photo or document to Telegram, then name a category with a
+  "#name" caption (half-width # or full-width ＃, "#[multi word]" too) or by
+  replying with the name after the file. Each category is its own Qdrant
+  collection (oc_cat_<slug>), so unrelated material never cross-matches.
+- Query one category with "/rag #name <question>", every category with
+  "/rag #all <question>". A plain "/rag" is unchanged and never touches
+  category collections.
+- "/cat list" shows categories and their chunk counts. "/cancel" drops a
+  file that is waiting for a category; a document with no category given
+  within OPENCLAW_CATEGORY_PENDING_TTL_SECONDS falls back to the general
+  knowledge base.
+- Photos are indexed by embedding a vision-model description plus any
+  transcribed text; the original image is kept alongside it.
+- See docs/CATEGORY_RAG.md and docs/CATEGORY_RAG_MANUAL_TEST.md.
+
+New: source attribution in /rag
+- Every /rag answer ends with a "來源：" line naming the documents it drew
+  from. The name shown is the uploader's original filename when known,
+  otherwise the document's first heading, otherwise the stored filename.
+- The gateway records the original filename in a <file>.meta.json sidecar at
+  upload time (Telegram-stored names are timestamped and ASCII-sanitised, so
+  a CJK filename would otherwise be lost). Imported Google Docs cite their
+  title.
+
+New: vision endpoint decoupling
+- A VisionClient seam is the only place OpenClaw talks to a vision model.
+- OPENCLAW_VLM_BASE_URL / OPENCLAW_VLM_MODEL / OPENCLAW_VLM_MAX_TOKENS
+  (default back to the main vLLM). Point them at any OpenAI-compatible
+  endpoint to switch models with no code change.
+- compose.yaml has an optional "vision" profile with a dedicated
+  openclaw-vllm-vision service (port 8001, off by default).
+- Image indexing quality depends on this model; the default text model
+  cannot read images.
+
+Other:
+- Memory watcher skips dotfiles/dot-directories under the inbox.
+- Full unit coverage for the above (categories, vision client, retrieval
+  routing, gateway upload flow).
+
+Note: an independent v1.3 line of work (multi-model catalog / engineering
+review) lives on its own branch and is not part of this release.
+```

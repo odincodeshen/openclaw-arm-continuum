@@ -1,6 +1,6 @@
 # OpenClaw Arm Continuum
 
-版本：`v1.2`
+版本：`v1.4`
 
 授權：Apache-2.0
 
@@ -58,7 +58,7 @@ OpenClaw Arm Continuum 利用這個特性，把個人 AI 助理拆成幾個可�
 - 最大推理能力：導向 DGX Spark / GB10 或內網 vLLM。
 - 最佳彈性：同一套 runtime，未來可逐步替換模型與硬體。
 
-## 目前 v1.2 包含什麼
+## 這個 release 包含什麼
 
 - `openclaw-vllm`：本機 OpenAI-compatible vLLM endpoint。
 - `openclaw-telegram`：Telegram long polling gateway 與指令入口。
