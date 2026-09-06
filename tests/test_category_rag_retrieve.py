@@ -60,8 +60,8 @@ class FakeLlm:
         return "answer-from-context"
 
 
-def _hit(text: str, score: float = 0.9) -> dict:
-    return {"score": score, "payload": {"text": text}}
+def _hit(text: str, score: float = 0.9, **payload) -> dict:
+    return {"score": score, "payload": {"text": text, **payload}}
 
 
 class CategoryRagRetrieveTest(unittest.TestCase):
@@ -137,6 +137,30 @@ class CategoryRagRetrieveTest(unittest.TestCase):
         self.assertEqual(
             set(qdrant.searched), {self.entry["collection"], second["collection"]}
         )
+
+    def test_answer_appends_source_document_names(self) -> None:
+        qdrant = FakeQdrant(
+            {
+                self.entry["collection"]: [
+                    _hit("chunk one", original_file_name="第一季報告.pdf"),
+                    _hit("chunk two", original_file_name="第一季報告.pdf"),
+                    _hit("chunk three", doc_title="Arm V3 Notes"),
+                ]
+            }
+        )
+        skill = self._skill(qdrant)
+        result = skill.run("/rag #工作筆記 重點")
+        self.assertIn("來源：", result.answer)
+        self.assertIn("第一季報告.pdf", result.answer)
+        self.assertIn("Arm V3 Notes", result.answer)
+        # de-duplicated
+        self.assertEqual(result.answer.count("第一季報告.pdf"), 1)
+
+    def test_no_footer_when_hits_have_no_source(self) -> None:
+        qdrant = FakeQdrant({self.entry["collection"]: [_hit("content")]})
+        skill = self._skill(qdrant)
+        result = skill.run("/rag #工作筆記 重點")
+        self.assertEqual(result.answer, "answer-from-context")
 
     def test_category_disabled_falls_back_to_default(self) -> None:
         self.settings = build_settings(

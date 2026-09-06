@@ -187,5 +187,49 @@ class InboxIngestorCategoryTest(unittest.TestCase):
         self.assertEqual(result.reason, "unsupported_suffix")
 
 
+class InboxIngestorAttributionTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.inbox = self.root / "inbox"
+        (self.inbox / "knowledge").mkdir(parents=True)
+        self.settings = build_settings(
+            web_enabled=False,
+            inbox_path=self.inbox,
+            watcher_state_path=self.root / "watcher_state.json",
+            category_registry_path=self.root / ".openclaw" / "categories.json",
+        )
+
+    def _ingest(self, path: Path):
+        qdrant = FakeQdrantClient()
+        InboxIngestor(self.settings, FakeEmbeddingClient(), qdrant).ingest_file(path)
+        return qdrant
+
+    def test_meta_sidecar_original_name_lands_in_payload(self) -> None:
+        doc = self.inbox / "knowledge" / "20260906-report.md"
+        doc.write_text("some report body text here", encoding="utf-8")
+        (self.inbox / "knowledge" / "20260906-report.md.meta.json").write_text(
+            '{"original_file_name": "第一季報告.pdf"}', encoding="utf-8"
+        )
+        qdrant = self._ingest(doc)
+        _, _, metadata = qdrant.upserts[0]
+        self.assertEqual(metadata["original_file_name"], "第一季報告.pdf")
+
+    def test_markdown_h1_becomes_doc_title(self) -> None:
+        doc = self.inbox / "knowledge" / "notes.md"
+        doc.write_text("# Arm Neoverse V3 Notes\n\nbody", encoding="utf-8")
+        qdrant = self._ingest(doc)
+        _, _, metadata = qdrant.upserts[0]
+        self.assertEqual(metadata["doc_title"], "Arm Neoverse V3 Notes")
+
+    def test_plain_text_has_no_title(self) -> None:
+        doc = self.inbox / "knowledge" / "plain.txt"
+        doc.write_text("just a line, no heading", encoding="utf-8")
+        qdrant = self._ingest(doc)
+        _, _, metadata = qdrant.upserts[0]
+        self.assertNotIn("doc_title", metadata)
+
+
 if __name__ == "__main__":
     unittest.main()

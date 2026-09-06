@@ -123,22 +123,22 @@ class RagRetrieveSkill:
         vector = self.embeddings.embed(query)
         tracker_hits = self.qdrant.search(self.settings.tracker_collection, vector)
         knowledge_hits = self.qdrant.search(self.settings.knowledge_collection, vector)
-        context = self._format_context(
+        answer = self._answer_from(
+            query,
             [
                 ("filename_match", file_hits),
                 (self.settings.tracker_collection, tracker_hits),
                 (self.settings.knowledge_collection, knowledge_hits),
-            ]
+            ],
         )
-        if not context:
+        if answer is None:
             return SkillResult(self.name, "No relevant memory was found in either Qdrant collection.")
-        return SkillResult(self.name, self._answer(query, context))
+        return SkillResult(self.name, answer)
 
     def _run_single_category(self, token: str, query: str) -> SkillResult:
         entry = resolve_category(self.settings, token)
-        known = list(registry_entries(self.settings))
         if not entry or not entry.get("known"):
-            names = "、".join(item["display"] for item in known) or "（尚無任何類別）"
+            names = "、".join(item["display"] for item in registry_entries(self.settings)) or "（尚無任何類別）"
             return SkillResult(
                 self.name,
                 f"找不到類別「{token}」。目前的類別：{names}\n"
@@ -151,16 +151,16 @@ class RagRetrieveSkill:
         except Exception:
             hits = []
         file_hits = self._file_hits(query, [collection])
-        context = self._format_context(
-            [("filename_match", file_hits), (f"category:{entry['display']}", hits)]
+        answer = self._answer_from(
+            query, [("filename_match", file_hits), (f"category:{entry['display']}", hits)]
         )
-        if not context:
+        if answer is None:
             return SkillResult(
                 self.name,
                 f"類別「{entry['display']}」目前還沒有可檢索的內容"
                 "（剛上傳的話等 10 秒左右讓索引器處理）。",
             )
-        return SkillResult(self.name, self._answer(query, context))
+        return SkillResult(self.name, answer)
 
     def _run_all_categories(self, query: str) -> SkillResult:
         entries = registry_entries(self.settings)
@@ -175,19 +175,47 @@ class RagRetrieveSkill:
                 hits = []
             if hits:
                 sections.append((f"category:{entry['display']}", hits))
-        context = self._format_context(sections)
-        if not context:
+        answer = self._answer_from(query, sections)
+        if answer is None:
             return SkillResult(self.name, "No relevant content was found in any category.")
-        return SkillResult(self.name, self._answer(query, context))
+        return SkillResult(self.name, answer)
 
-    def _answer(self, query: str, context: str) -> str:
+    def _answer_from(self, query: str, labelled_hits: list[tuple[str, list[dict]]]) -> str | None:
+        context = self._format_context(labelled_hits)
+        if not context:
+            return None
         prompt = (
             "You are OpenClaw's local RAG assistant. Answer using only the Context below; "
-            "if the Context is insufficient, say so explicitly.\n\n"
+            "if the Context is insufficient, say so explicitly. When you use a fact, name "
+            "the source document it came from.\n\n"
             f"Question: {query}\n\n"
             f"Context:\n{context}"
         )
-        return self.llm.chat(prompt, max_tokens=360)
+        answer = self.llm.chat(prompt, max_tokens=360)
+        sources = self._collect_sources(labelled_hits)
+        if sources:
+            answer = f"{answer}\n\n來源：{'、'.join(sources)}"
+        return answer
+
+    @staticmethod
+    def _source_name(payload: dict) -> str | None:
+        for key in ("original_file_name", "doc_title", "file_name"):
+            value = str(payload.get(key) or "").strip()
+            if value:
+                return value
+        return None
+
+    def _collect_sources(self, labelled_hits: list[tuple[str, list[dict]]]) -> list[str]:
+        seen: list[str] = []
+        for _label, hits in labelled_hits:
+            for hit in hits:
+                payload = hit.get("payload") or {}
+                if not str(payload.get("text") or "").strip():
+                    continue
+                name = self._source_name(payload)
+                if name and name not in seen:
+                    seen.append(name)
+        return seen
 
     def _file_hits(self, query: str, collections: list[str]) -> list[dict]:
         file_names = re.findall(r"[\w.+-]+\.(?:pdf|odf|md|txt|log|json|csv|tsv)", query, flags=re.IGNORECASE)
@@ -212,9 +240,12 @@ class RagRetrieveSkill:
             for index, hit in enumerate(hits, start=1):
                 payload = hit.get("payload") or {}
                 text = str(payload.get("text") or "").strip()
-                if text:
-                    score = hit.get("score", 0)
-                    parts.append(f"[{label} #{index} score={score:.3f}] {text}")
+                if not text:
+                    continue
+                score = hit.get("score", 0)
+                source = self._source_name(payload)
+                tag = f"{label} · {source}" if source else label
+                parts.append(f"[{tag} #{index} score={score:.3f}] {text}")
         return "\n".join(parts)
 
     @staticmethod

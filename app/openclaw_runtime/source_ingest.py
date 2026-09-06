@@ -1,3 +1,4 @@
+import json
 import re
 import time
 import urllib.request
@@ -71,6 +72,14 @@ def save_google_doc(settings: Settings, url: str, collection_kind: str = "knowle
     stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
     path = _unique_path(directory / f"{stamp}-google-doc-{_safe_slug(title)}.md")
     path.write_text(markdown, encoding="utf-8")
+    path.with_name(path.name + ".meta.json").write_text(
+        json.dumps(
+            {"original_file_name": title, "origin": "google-doc", "source_url": url},
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     return SourceIngestResult(
         path=path,
         title=title,

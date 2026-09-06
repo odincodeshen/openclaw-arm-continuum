@@ -97,7 +97,7 @@ class InboxIngestor:
 
         collection = self._collection_for(path)
         self._ensure_collection(collection, path)
-        extra_metadata = self._category_metadata(path, collection)
+        extra_metadata = self._source_metadata(path, collection, text)
         chunks = self._chunk_text(text)
         for index, chunk in enumerate(chunks):
             vector = self.embeddings.embed(chunk)
@@ -172,22 +172,48 @@ class InboxIngestor:
                     pass
         self._ensured_collections.add(collection)
 
-    def _category_metadata(self, path: Path, collection: str) -> dict:
-        slug = self._category_slug_for(path)
-        if not slug:
-            return {}
-        metadata: dict = {"category_slug": slug, "category": slug}
+    def _read_sidecar(self, path: Path) -> dict:
         sidecar = path.with_name(path.name + META_SIDECAR_SUFFIX)
-        if sidecar.exists():
-            try:
-                data = json.loads(sidecar.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                data = {}
-            for key in ("category", "category_slug", "image_path", "origin", "caption_note"):
-                value = data.get(key)
-                if value:
-                    metadata[key] = value
+        if not sidecar.exists():
+            return {}
+        try:
+            data = json.loads(sidecar.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _source_metadata(self, path: Path, collection: str, text: str) -> dict:
+        """Attribution + category metadata merged into every chunk's payload."""
+        sidecar = self._read_sidecar(path)
+        metadata: dict = {}
+        for key in ("original_file_name", "origin", "source_url", "caption_note"):
+            value = sidecar.get(key)
+            if value:
+                metadata[key] = value
+
+        title = self._extract_title(text)
+        if title:
+            metadata.setdefault("doc_title", title)
+
+        slug = self._category_slug_for(path)
+        if slug:
+            metadata["category_slug"] = slug
+            metadata["category"] = sidecar.get("category") or slug
+            if sidecar.get("image_path"):
+                metadata["image_path"] = sidecar["image_path"]
+
         return metadata
+
+    @staticmethod
+    def _extract_title(text: str) -> str:
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("#"):
+                return stripped.lstrip("#").strip()[:200]
+            return ""
+        return ""
 
     def _chunk_text(self, text: str) -> list[str]:
         chunk_size = max(200, self.settings.ingest_chunk_chars)

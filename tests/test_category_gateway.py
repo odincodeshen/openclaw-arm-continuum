@@ -107,15 +107,29 @@ class CategoryIngestTest(CategoryGatewayTestBase):
         src.write_text("quarterly report body", encoding="utf-8")
 
         entry = categories.upsert_registry_entry(self.settings, "報告")
-        target = gateway.ingest_document_into_category(src, entry, note="Q1")
+        target = gateway.ingest_document_into_category(src, entry, note="Q1", original_name="第一季報告.pdf")
 
         self.assertTrue(target.exists())
         self.assertFalse(src.exists())
         self.assertEqual(
             target.parent, self.inbox / "categories" / entry["slug"]
         )
-        sidecar = target.with_name(target.name + ".meta.json")
-        self.assertIn("報告", sidecar.read_text(encoding="utf-8"))
+        import json as _json
+
+        sidecar = _json.loads(target.with_name(target.name + ".meta.json").read_text(encoding="utf-8"))
+        self.assertEqual(sidecar["category"], "報告")
+        self.assertEqual(sidecar["original_file_name"], "第一季報告.pdf")
+
+    def test_write_upload_meta_records_original_name(self) -> None:
+        d = self.inbox / "knowledge" / "telegram"
+        d.mkdir(parents=True)
+        stored = d / "20260906-100000-pdf.pdf"
+        stored.write_bytes(b"%PDF-1.4")
+        gateway.write_upload_meta(stored, "我的中文檔名.pdf")
+        import json as _json
+
+        data = _json.loads(stored.with_name(stored.name + ".meta.json").read_text(encoding="utf-8"))
+        self.assertEqual(data["original_file_name"], "我的中文檔名.pdf")
 
     def test_ingest_image_uses_vision_client_and_writes_markdown(self) -> None:
         media = self.inbox / "media" / "telegram"

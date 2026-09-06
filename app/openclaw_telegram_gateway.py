@@ -266,10 +266,18 @@ def is_tracker_caption(caption: str) -> bool:
 
 def _write_meta_sidecar(doc_path: Path, data: dict) -> None:
     sidecar = doc_path.with_name(doc_path.name + ".meta.json")
-    sidecar.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    clean = {key: value for key, value in data.items() if value}
+    sidecar.write_text(json.dumps(clean, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def ingest_document_into_category(source_path: Path, entry: dict, note: str = "") -> Path:
+def write_upload_meta(stored_path: Path, original_name: str, **extra: str) -> None:
+    """Record the uploader-supplied filename next to a saved upload so RAG can cite it."""
+    _write_meta_sidecar(stored_path, {"original_file_name": original_name, "origin": "telegram", **extra})
+
+
+def ingest_document_into_category(
+    source_path: Path, entry: dict, note: str = "", original_name: str = ""
+) -> Path:
     """Place an already-downloaded document into its category inbox folder."""
     directory = category_dir(entry["slug"])
     target = unique_path(directory, source_path.name)
@@ -281,12 +289,15 @@ def ingest_document_into_category(source_path: Path, entry: dict, note: str = ""
             "category_slug": entry["slug"],
             "origin": "telegram",
             "caption_note": note,
+            "original_file_name": original_name or source_path.name,
         },
     )
     return target
 
 
-def ingest_image_into_category(chat_id: int, image_path: Path, entry: dict, note: str = "") -> Path:
+def ingest_image_into_category(
+    chat_id: int, image_path: Path, entry: dict, note: str = "", original_name: str = ""
+) -> Path:
     """Describe an image with the vision model and index that text under a category."""
     directory = category_dir(entry["slug"])
     stored_image = unique_path(directory / "media", image_path.name)
@@ -327,6 +338,7 @@ def ingest_image_into_category(chat_id: int, image_path: Path, entry: dict, note
             "origin": "telegram",
             "image_path": str(stored_image),
             "caption_note": note,
+            "original_file_name": original_name or image_path.name,
         },
     )
     return doc
@@ -361,6 +373,7 @@ def sweep_pending_items_to_default(pending: dict) -> None:
         fallback = unique_path(settings.inbox_path / "knowledge" / "telegram", staged.name)
         try:
             shutil.move(str(staged), str(fallback))
+            write_upload_meta(fallback, item.get("original_name") or staged.name)
             log(f"[category] staged doc -> knowledge {fallback.name}")
         except OSError as exc:
             log(f"[category] fallback move failed {staged}: {exc}")
@@ -411,7 +424,7 @@ def resolve_pending_with_category(chat_id: int, category_text: str) -> bool:
 
 
 def _ingest_caption_category(
-    chat_id: int, source_path: Path, kind: str, category_name: str, note: str
+    chat_id: int, source_path: Path, kind: str, category_name: str, note: str, original_name: str = ""
 ) -> None:
     try:
         display = validate_category_name(settings, category_name)
@@ -422,21 +435,24 @@ def _ingest_caption_category(
     send_message(chat_id, f"Filing this into category 「{entry['display']}」.")
     worker = threading.Thread(
         target=_run_category_ingest,
-        args=(chat_id, [{"path": str(source_path), "kind": kind, "note": note}], entry),
+        args=(chat_id, [{"path": str(source_path), "kind": kind, "note": note, "original_name": original_name}], entry),
         daemon=True,
     )
     worker.start()
 
 
 def _route_image_to_category(
-    chat_id: int, image_path: Path, category_name: str | None, note: str
+    chat_id: int, image_path: Path, category_name: str | None, note: str, original_name: str = ""
 ) -> None:
     if not settings.category_rag_enabled:
         return
     if category_name:
-        _ingest_caption_category(chat_id, image_path, "image", category_name, note)
+        _ingest_caption_category(chat_id, image_path, "image", category_name, note, original_name)
         return
-    set_pending_category(chat_id, {"path": str(image_path), "kind": "image", "note": note})
+    set_pending_category(
+        chat_id,
+        {"path": str(image_path), "kind": "image", "note": note, "original_name": original_name},
+    )
     send_message(
         chat_id,
         "To also index this image for retrieval, reply with a category name "
@@ -450,11 +466,12 @@ def _run_category_ingest(chat_id: int, items: list[dict], entry: dict) -> None:
     for item in items:
         path = Path(item["path"])
         note = item.get("note", "")
+        original_name = item.get("original_name", "")
         try:
             if item.get("kind") == "image":
-                doc = ingest_image_into_category(chat_id, path, entry, note)
+                doc = ingest_image_into_category(chat_id, path, entry, note, original_name)
             else:
-                doc = ingest_document_into_category(path, entry, note)
+                doc = ingest_document_into_category(path, entry, note, original_name)
             done.append(doc.name)
         except Exception as exc:  # noqa: BLE001 - report back to the user
             log(f"[category] ingest failed chat_id={chat_id} path={path}: {exc}")
@@ -555,18 +572,20 @@ def handle_document_message(chat_id: int, message: dict, caption: str) -> bool:
         )
         worker.start()
         log(f"[telegram] saved image-document chat_id={chat_id} path={downloaded_path} bytes={byte_count}")
-        _route_image_to_category(chat_id, downloaded_path, category_name, category_note)
+        _route_image_to_category(chat_id, downloaded_path, category_name, category_note, original_name)
         return True
 
     if category_name:
-        _ingest_caption_category(chat_id, downloaded_path, "document", category_name, category_note)
+        _ingest_caption_category(chat_id, downloaded_path, "document", category_name, category_note, original_name)
         return True
 
     if downloaded_path.suffix.lower() in SUPPORTED_SUFFIXES:
         if settings.category_rag_enabled and not is_tracker_caption(caption):
             staged = unique_path(category_staging_dir(), downloaded_path.name)
             shutil.move(str(downloaded_path), str(staged))
-            set_pending_category(chat_id, {"path": str(staged), "kind": "document", "note": ""})
+            set_pending_category(
+                chat_id, {"path": str(staged), "kind": "document", "note": "", "original_name": original_name}
+            )
             send_message(
                 chat_id,
                 f"Got {staged.name}. Which knowledge category should it go in?\n"
@@ -579,6 +598,7 @@ def handle_document_message(chat_id: int, message: dict, caption: str) -> bool:
             if target_directory.relative_to(settings.inbox_path).parts[0] == "tracker"
             else settings.knowledge_collection
         )
+        write_upload_meta(downloaded_path, original_name)
         send_message(
             chat_id,
             "File saved, the memory watcher will index it automatically.\n"
