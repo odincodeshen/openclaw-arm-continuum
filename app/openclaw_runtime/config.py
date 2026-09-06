@@ -32,6 +32,10 @@ class Settings:
     max_tokens: int
     request_timeout: int
 
+    vlm_base_url: str
+    vlm_model: str
+    vlm_max_tokens: int
+
     web_enabled: bool
     web_timeout: int
     scraper_base_url: str
@@ -59,6 +63,14 @@ class Settings:
     ingest_chunk_chars: int
     ingest_chunk_overlap: int
 
+    category_rag_enabled: bool
+    category_collection_prefix: str
+    category_inbox_dirname: str
+    category_registry_path: Path
+    category_pending_ttl_seconds: int
+    category_max_name_chars: int
+    category_image_max_tokens: int
+
     cron_enabled: bool
     cron_timezone: str
     cron_daily_report_time: str
@@ -81,6 +93,9 @@ def load_settings() -> Settings:
         for item in os.environ.get("OPENCLAW_TELEGRAM_ALLOWED_CHAT_IDS", "").split(",")
         if item.strip()
     }
+    vllm_base_url = os.environ.get("OPENCLAW_VLLM_BASE_URL", "http://127.0.0.1:8000/v1").rstrip("/")
+    vllm_model = os.environ.get("OPENCLAW_VLLM_MODEL", "Qwen/Qwen3.6-27B-FP8")
+    vision_max_tokens = env_int("OPENCLAW_VISION_MAX_TOKENS", 500)
     cron_chat_ids = {
         int(item.strip())
         for item in os.environ.get("OPENCLAW_CRON_CHAT_IDS", "").split(",")
@@ -93,14 +108,17 @@ def load_settings() -> Settings:
         telegram_allowed_chat_ids=allowed_chat_ids,
         telegram_poll_timeout=env_int("OPENCLAW_POLL_TIMEOUT", 30),
         max_reply_chars=env_int("OPENCLAW_MAX_REPLY_CHARS", 3500),
-        vllm_base_url=os.environ.get("OPENCLAW_VLLM_BASE_URL", "http://127.0.0.1:8000/v1").rstrip("/"),
-        vllm_model=os.environ.get("OPENCLAW_VLLM_MODEL", "Qwen/Qwen3.6-27B-FP8"),
+        vllm_base_url=vllm_base_url,
+        vllm_model=vllm_model,
         system_prompt=os.environ.get(
             "OPENCLAW_SYSTEM_PROMPT",
             "You are OpenClaw, a local-first personal AI assistant running on the user's Arm Continuum runtime. Answer clearly, practically, and stay actionable. Give the final answer directly and do not output your reasoning process.",
         ),
         max_tokens=env_int("OPENCLAW_MAX_TOKENS", 160),
         request_timeout=env_int("OPENCLAW_REQUEST_TIMEOUT", 60),
+        vlm_base_url=os.environ.get("OPENCLAW_VLM_BASE_URL", vllm_base_url).rstrip("/"),
+        vlm_model=os.environ.get("OPENCLAW_VLM_MODEL", vllm_model),
+        vlm_max_tokens=env_int("OPENCLAW_VLM_MAX_TOKENS", vision_max_tokens),
         web_enabled=env_bool("OPENCLAW_WEB_ENABLED", True),
         web_timeout=env_int("OPENCLAW_WEB_TIMEOUT", 20),
         scraper_base_url=os.environ.get("OPENCLAW_SCRAPER_BASE_URL", "http://openclaw-browser-scraper:8787").rstrip("/"),
@@ -109,7 +127,7 @@ def load_settings() -> Settings:
         default_weather_location=os.environ.get("OPENCLAW_DEFAULT_WEATHER_LOCATION", "").strip(),
         skills_config_path=Path(os.environ.get("OPENCLAW_SKILLS_CONFIG", "/app/skills.json")),
         vision_enabled=env_bool("OPENCLAW_VISION_ENABLED", True),
-        vision_max_tokens=env_int("OPENCLAW_VISION_MAX_TOKENS", 500),
+        vision_max_tokens=vision_max_tokens,
         whisper_enabled=env_bool("OPENCLAW_WHISPER_ENABLED", True),
         whisper_base_url=os.environ.get("OPENCLAW_WHISPER_BASE_URL", "http://openclaw-whisper:8765").rstrip("/"),
         whisper_timeout=env_int("OPENCLAW_WHISPER_TIMEOUT", 180),
@@ -126,6 +144,17 @@ def load_settings() -> Settings:
         watcher_poll_seconds=env_int("OPENCLAW_WATCHER_POLL_SECONDS", 10),
         ingest_chunk_chars=env_int("OPENCLAW_INGEST_CHUNK_CHARS", 1800),
         ingest_chunk_overlap=env_int("OPENCLAW_INGEST_CHUNK_OVERLAP", 200),
+        category_rag_enabled=env_bool("OPENCLAW_CATEGORY_RAG_ENABLED", True),
+        category_collection_prefix=os.environ.get("OPENCLAW_CATEGORY_COLLECTION_PREFIX", "oc_cat_").strip()
+        or "oc_cat_",
+        category_inbox_dirname=os.environ.get("OPENCLAW_CATEGORY_INBOX_DIRNAME", "categories").strip()
+        or "categories",
+        category_registry_path=Path(
+            os.environ.get("OPENCLAW_CATEGORY_REGISTRY_PATH", "/workspace/inbox/.openclaw/categories.json")
+        ),
+        category_pending_ttl_seconds=env_int("OPENCLAW_CATEGORY_PENDING_TTL_SECONDS", 600),
+        category_max_name_chars=env_int("OPENCLAW_CATEGORY_MAX_NAME_CHARS", 40),
+        category_image_max_tokens=env_int("OPENCLAW_CATEGORY_IMAGE_MAX_TOKENS", 600),
         cron_enabled=env_bool("OPENCLAW_CRON_ENABLED", True),
         cron_timezone=os.environ.get("OPENCLAW_CRON_TIMEZONE", "UTC"),
         cron_daily_report_time=os.environ.get("OPENCLAW_CRON_DAILY_REPORT_TIME", "07:00"),
