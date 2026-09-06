@@ -245,7 +245,7 @@ def scrape(payload: dict) -> dict:
         context.close()
 
     combined = [
-        f"# OpenClaw Web Scrape",
+        "# OpenClaw Web Scrape",
         "",
         f"- Query: {query or '(direct url)'}",
         f"- URL: {url or '(search)'}",

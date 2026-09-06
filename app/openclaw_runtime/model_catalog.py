@@ -1,6 +1,5 @@
 import json
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from openclaw_runtime.config import Settings

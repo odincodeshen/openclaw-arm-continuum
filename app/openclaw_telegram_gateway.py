@@ -16,7 +16,6 @@ from datetime import datetime, timezone
 from openclaw_runtime.categories import (
     parse_category_caption,
     registry_entries,
-    resolve_category,
     upsert_registry_entry,
     validate_category_name,
 )

@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/ruff-action@v3
+        with:
+          version: "0.16.6"
+          args: "check --output-format github"
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet pytest pypdf
+      - run: pytest
+
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Static checks (imports / skills.json / model catalogs)
+        run: python scripts/ci_validate.py
+      - name: Validate compose files
+        env:
+          OPENCLAW_GATEWAY_TOKEN: ci
+        run: |
+          for f in compose*.yaml; do
+            echo "::group::$f"
+            docker compose -f "$f" config --quiet
+            echo "::endgroup::"
+          done

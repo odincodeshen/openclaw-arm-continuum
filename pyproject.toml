@@ -1,0 +1,24 @@
+# Tooling config only -- OpenClaw is run from source via Docker Compose, not
+# installed as a package.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# `tests/` imports `from tests.support import ...` and the runtime lives under
+# `app/`; both need to be importable without a manual PYTHONPATH.
+pythonpath = ["app", "."]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+extend-exclude = ["gateway-data"]
+
+[tool.ruff.lint]
+# Start conservative: real-bug rules only (pyflakes + a subset of pycodestyle).
+# Import sorting (I) and line length (E501) are deferred to a dedicated
+# formatting pass so this stays reviewable.
+select = ["E4", "E7", "E9", "F", "W6"]
+ignore = ["E721"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]
