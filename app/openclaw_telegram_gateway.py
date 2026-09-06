@@ -49,8 +49,10 @@ from openclaw_runtime.gateway_cron import (
     update_gateway_job_state_sqlite,
 )
 from openclaw_runtime.file_ingest import SUPPORTED_SUFFIXES
+from openclaw_runtime.engineering_review import EngineeringReviewAgent
 from openclaw_runtime.http_client import request_json
-from openclaw_runtime.llm_client import LlmClient
+from openclaw_runtime.model_catalog import load_model_registry
+from openclaw_runtime.model_client_factory import ModelClientFactory
 from openclaw_runtime.qdrant_client import QdrantClient
 from openclaw_runtime.skill_router import SkillRouter
 from openclaw_runtime.source_ingest import save_google_doc
@@ -60,13 +62,24 @@ from openclaw_runtime.vision_client import DEFAULT_DESCRIBE_INSTRUCTION, VisionC
 
 
 settings = load_settings()
-llm = LlmClient(settings)
-vision = VisionClient(settings)
+model_registry = load_model_registry(settings)
+model_clients = ModelClientFactory(settings, model_registry)
+llm = model_clients.get("local_default")
+vision = VisionClient(model_clients.get_or_default("vision"))
 qdrant = QdrantClient(settings)
 transcriber = TranscriptionClient(settings)
 skill_router = SkillRouter(settings, llm)
-agent_registry = AgentRegistry([SkillAgent(skill) for skill in skill_router.skills] + [ChatAgent(llm)])
 task_history = TaskHistory(settings.task_history_path)
+runtime_agents = [SkillAgent(skill) for skill in skill_router.skills]
+try:
+    for required_policy in ("local_router", "local_coder", "local_reasoner"):
+        model_registry.resolve(required_policy)
+except LookupError:
+    pass
+else:
+    runtime_agents.append(EngineeringReviewAgent(model_clients, task_history))
+runtime_agents.append(ChatAgent(llm))
+agent_registry = AgentRegistry(runtime_agents)
 task_dispatcher = TaskDispatcher(agent_registry, task_history)
 
 RUNNING = True
@@ -122,6 +135,10 @@ List current OpenClaw agents and their model policy.
 
 /tasks last
 View the 5 most recent task history entries and their status.
+
+/review <sanitized engineering request>
+Run the bounded code and architecture review workflow. This command is
+available when the multi-model catalog is configured.
 
 /doc url <Google Doc URL>
 Import a public Google Doc, save it as Markdown, and index it into
@@ -793,7 +810,8 @@ Delete a schedule.
 def agents_text() -> str:
     lines = ["OpenClaw Agents"]
     for status in agent_registry.statuses():
-        lines.append(f"- {status.name}: {status.status} ({status.model_policy})")
+        endpoint = f" -> {status.endpoint_id}" if status.endpoint_id else ""
+        lines.append(f"- {status.name}: {status.status} ({status.model_policy}{endpoint})")
         lines.append(f"  {status.description}")
     return "\n".join(lines)
 
@@ -1086,6 +1104,7 @@ def setup_bot_commands() -> None:
         {"command": "cron", "description": "Configure proactive push schedules"},
         {"command": "agents", "description": "List OpenClaw agents"},
         {"command": "tasks", "description": "View recent task history"},
+        {"command": "review", "description": "Run a bounded private engineering review"},
         {"command": "start", "description": "Show status and usage"},
     ]
     telegram("setMyCommands", {"commands": commands}, timeout=20)
@@ -1096,6 +1115,7 @@ ACK_MESSAGES = {
     "rag_agent": "Got it, querying local memory and the document knowledge base.",
     "browser_search_agent": "Got it, searching the web and summarizing with the local reasoning model.",
     "weather_agent": "Got it, checking the weather.",
+    "engineering_review_agent": "Got it, running the bounded local engineering review.",
 }
 DEFAULT_ACK_MESSAGE = "Got it, handing this to the local reasoning model."
 

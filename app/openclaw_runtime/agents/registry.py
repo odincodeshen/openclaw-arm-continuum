@@ -26,6 +26,7 @@ class AgentRegistry:
                 description=agent.description,
                 status=self._health_check(agent),
                 model_policy=getattr(agent, "model_policy", "local_default"),
+                endpoint_id=getattr(agent, "endpoint_id", None),
             )
             for agent in self._agents
         ]

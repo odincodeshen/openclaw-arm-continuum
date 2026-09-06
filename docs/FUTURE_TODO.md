@@ -7,6 +7,40 @@ The v1.2 release is intentionally stable and text-first. The items below are
 future-facing and should be implemented incrementally without breaking the
 existing Telegram, memory, RAG, search, cron, and Gateway workflows.
 
+## Required pre-v1.4 milestone: Telegram conversational memory
+
+Schedule this after the v1.3 multi-agent release is complete and before the
+v1.4 multimodal implementation starts. This is a runtime enhancement, not a
+rewrite of the published local-first assistant tutorial.
+
+The existing `/mem` and `/rag` workflow is explicit persistent memory. The user
+chooses what to save and when to retrieve it. Ordinary Telegram chat is
+currently single-turn: task history records bounded summaries for observability,
+but previous user and assistant turns are not supplied to the next model
+request.
+
+Minimum implementation:
+
+- Persist complete user/assistant turns locally and isolate them by `chat_id`.
+- Load only the most recent configured number of turns within a token budget.
+- Add `/new` or `/reset` to clear the active conversation context.
+- Support a configurable retention period and a disabled mode.
+- Keep conversation data separate from task-history metadata and Qdrant.
+- Do not promote ordinary conversation into Qdrant automatically; preserve the
+  existing explicit `/mem` and `/rag` semantics.
+- Preserve the same context contract across normal chat and configured model
+  fallback.
+
+Required validation:
+
+- chat isolation;
+- persistence across gateway restart;
+- deterministic context truncation;
+- reset and retention behavior;
+- disabled-mode single-turn behavior;
+- no secrets or complete conversation bodies in task-history output; and
+- full v1.2 and v1.3 regression coverage.
+
 ## v2.0 Candidate: Platform-Aware MultimodalAnalysisAgent
 
 Goal: add a reusable multimodal analysis agent that can select the best local

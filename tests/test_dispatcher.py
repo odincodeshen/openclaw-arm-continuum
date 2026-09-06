@@ -69,7 +69,24 @@ class TaskDispatcherTest(unittest.TestCase):
         self.assertEqual(started["status"], "started")
         self.assertEqual(failed["status"], "failed")
         self.assertIn("wttr.in unreachable", failed["error"])
-        self.assertIn("traceback", failed)
+        self.assertNotIn("traceback", failed)
+
+    def test_degraded_skill_result_marks_parent_degraded(self) -> None:
+        agent = FakeAgent("review_agent", result=SkillResult("review_agent", "partial", "degraded"))
+        dispatcher = TaskDispatcher(FakeRegistry(agent), self.history)
+
+        dispatcher.dispatch("review", source="test")
+
+        self.assertEqual(self.history.recent(1)[0]["status"], "degraded")
+
+    def test_engineering_review_input_is_redacted(self) -> None:
+        agent = FakeAgent("engineering_review_agent", result=SkillResult("engineering_review_agent", "report"))
+        dispatcher = TaskDispatcher(FakeRegistry(agent), self.history)
+
+        dispatcher.dispatch("confidential source code", source="test")
+
+        entries = self.history.recent(10)
+        self.assertTrue(all(entry["input_summary"] == "[redacted engineering review input]" for entry in entries))
 
     def test_chat_id_and_metadata_are_recorded(self) -> None:
         agent = FakeAgent("chat_agent", result=SkillResult("chat_agent", "ok"))

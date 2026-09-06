@@ -19,12 +19,14 @@ class AgentStatus:
     description: str
     status: str = "ready"
     model_policy: str = "local_default"
+    endpoint_id: str | None = None
 
 
 class Agent(Protocol):
     name: str
     description: str
     model_policy: str
+    capabilities: tuple[str, ...]
 
     def can_handle(self, task: Task) -> bool:
         ...

@@ -1,21 +1,17 @@
 """The single point where OpenClaw talks to a vision model.
 
 Everything else (Telegram handlers, category ingest) depends only on
-``VisionClient.describe_image`` -- never on which model, endpoint, or provider
-is behind it. Point ``OPENCLAW_VLM_BASE_URL`` / ``OPENCLAW_VLM_MODEL`` at any
-OpenAI-compatible ``/chat/completions`` server (vLLM, Ollama, llama.cpp,
-LM Studio, a hosted API) to switch models without touching code.
+``VisionClient.describe_image`` -- never on which model or endpoint is behind
+it. The backing ``LlmClient`` comes from the model catalog: define a model
+with the ``vision`` role in ``models.json`` (or leave it out and the client
+falls back to ``local_default``). Point that model's ``base_url`` at any
+OpenAI-compatible ``/chat/completions`` server to switch models with no code
+change.
 """
 
-import base64
-import mimetypes
-import socket
-import urllib.error
 from pathlib import Path
 
-from openclaw_runtime.config import Settings
-from openclaw_runtime.http_client import is_reachable, request_json
-from openclaw_runtime.llm_client import VLLM_NOT_READY_MESSAGE, clean_model_content
+from openclaw_runtime.llm_client import LlmClient
 
 
 DEFAULT_DESCRIBE_INSTRUCTION = (
@@ -32,11 +28,15 @@ class VisionError(RuntimeError):
 
 
 class VisionClient:
-    def __init__(self, settings: Settings) -> None:
-        self.settings = settings
+    def __init__(self, llm: LlmClient) -> None:
+        self.llm = llm
+
+    @property
+    def endpoint_id(self) -> str:
+        return self.llm.endpoint_id
 
     def is_reachable(self) -> bool:
-        return is_reachable(f"{self.settings.vlm_base_url}/models", timeout=3)
+        return self.llm.is_reachable()
 
     def describe_image(
         self,
@@ -45,49 +45,12 @@ class VisionClient:
         *,
         max_tokens: int | None = None,
     ) -> str:
-        mime_type = mimetypes.guess_type(str(image_path))[0] or "image/jpeg"
-        image_b64 = base64.b64encode(Path(image_path).read_bytes()).decode("ascii")
-        text = (instruction or DEFAULT_DESCRIBE_INSTRUCTION).strip()
-        payload = {
-            "model": self.settings.vlm_model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": text},
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:{mime_type};base64,{image_b64}"},
-                        },
-                    ],
-                }
-            ],
-            "temperature": 0.2,
-            "max_tokens": max_tokens or self.settings.vlm_max_tokens,
-            "chat_template_kwargs": {"enable_thinking": False},
-        }
-        response = self._completion(payload)
-        message = response["choices"][0]["message"]
-        content = message.get("content") or ""
-        if not content and message.get("reasoning"):
-            raise VisionError("The vision model returned only its reasoning, not a description.")
-        cleaned = clean_model_content(content)
-        if not cleaned:
+        prompt = (instruction or DEFAULT_DESCRIBE_INSTRUCTION).strip()
+        try:
+            text = self.llm.chat_with_image(Path(image_path), prompt, max_tokens=max_tokens)
+        except Exception as exc:  # noqa: BLE001 - surface as a single vision error type
+            raise VisionError(str(exc)) from exc
+        cleaned = (text or "").strip()
+        if not cleaned or cleaned.startswith("The model only returned its reasoning"):
             raise VisionError("The vision model returned an empty description.")
         return cleaned
-
-    def _completion(self, payload: dict) -> dict:
-        try:
-            return request_json(
-                "POST",
-                f"{self.settings.vlm_base_url}/chat/completions",
-                payload,
-                timeout=self.settings.request_timeout,
-            )
-        except (ConnectionResetError, ConnectionRefusedError, TimeoutError, socket.timeout) as exc:
-            raise VisionError(VLLM_NOT_READY_MESSAGE) from exc
-        except urllib.error.URLError as exc:
-            reason = getattr(exc, "reason", exc)
-            if isinstance(reason, (ConnectionResetError, ConnectionRefusedError, TimeoutError, socket.timeout)):
-                raise VisionError(VLLM_NOT_READY_MESSAGE) from exc
-            raise VisionError(str(exc)) from exc

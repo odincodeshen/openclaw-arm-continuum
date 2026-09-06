@@ -1,0 +1,37 @@
+{
+  "models": {
+    "local_default": {
+      "base_url": "http://127.0.0.1:18003/v1",
+      "model": "Qwen/Qwen3.6-27B-FP8",
+      "roles": ["general"],
+      "timeout": 600
+    },
+    "local_router": {
+      "base_url": "http://127.0.0.1:18001/v1",
+      "model": "Qwen/Qwen3-8B",
+      "roles": ["classification"],
+      "timeout": 180,
+      "fallback": "local_default"
+    },
+    "local_coder": {
+      "base_url": "http://127.0.0.1:18002/v1",
+      "model": "Qwen/Qwen2.5-Coder-7B-Instruct",
+      "roles": ["code_review"],
+      "timeout": 600,
+      "fallback": "local_default"
+    },
+    "local_reasoner": {
+      "base_url": "http://127.0.0.1:18003/v1",
+      "model": "Qwen/Qwen3.6-27B-FP8",
+      "roles": ["architecture_review", "synthesis"],
+      "timeout": 600
+    },
+    "vision": {
+      "base_url": "http://openclaw-vllm-vision:8000/v1",
+      "model": "Qwen/Qwen2.5-VL-7B-Instruct",
+      "roles": ["vision"],
+      "timeout": 180,
+      "fallback": "local_default"
+    }
+  }
+}

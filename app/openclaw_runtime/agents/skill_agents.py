@@ -21,6 +21,7 @@ class SkillAgent:
         self.name = agent_name
         self.description = description
         self.model_policy = model_policy
+        self.capabilities = (skill.name,)
 
     def can_handle(self, task: Task) -> bool:
         return self.skill.can_handle(task.text)
@@ -41,12 +42,17 @@ class ChatAgent:
     name = "chat_agent"
     description = "Answer general messages with the local vLLM model."
     model_policy = "local_default"
+    capabilities = ("chat",)
 
     def __init__(self, llm: LlmClient) -> None:
         self.llm = llm
 
     def can_handle(self, task: Task) -> bool:
         return True
+
+    @property
+    def endpoint_id(self) -> str:
+        return self.llm.endpoint_id
 
     def health_check(self) -> str:
         return "ready" if self.llm.is_reachable() else "error: vLLM unreachable"

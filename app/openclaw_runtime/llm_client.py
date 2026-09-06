@@ -26,19 +26,36 @@ def clean_model_content(content: str) -> str:
 
 
 class LlmClient:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, model_spec=None) -> None:
         self.settings = settings
+        self.model_spec = model_spec
+
+    @property
+    def base_url(self) -> str:
+        return self.model_spec.base_url if self.model_spec else self.settings.vllm_base_url
+
+    @property
+    def model(self) -> str:
+        return self.model_spec.model if self.model_spec else self.settings.vllm_model
+
+    @property
+    def timeout(self) -> int:
+        return self.model_spec.timeout if self.model_spec else self.settings.request_timeout
+
+    @property
+    def endpoint_id(self) -> str:
+        return self.model_spec.model_id if self.model_spec else "local_default"
 
     def is_reachable(self) -> bool:
-        return is_reachable(f"{self.settings.vllm_base_url}/models", timeout=3)
+        return is_reachable(f"{self.base_url}/models", timeout=3)
 
-    def _chat_completion(self, payload: dict, *, base_url: str | None = None) -> dict:
+    def _chat_completion(self, payload: dict) -> dict:
         try:
             return request_json(
                 "POST",
-                f"{base_url or self.settings.vllm_base_url}/chat/completions",
+                f"{self.base_url}/chat/completions",
                 payload,
-                timeout=self.settings.request_timeout,
+                timeout=self.timeout,
             )
         except (ConnectionResetError, ConnectionRefusedError, TimeoutError, socket.timeout) as exc:
             raise RuntimeError(VLLM_NOT_READY_MESSAGE) from exc
@@ -54,7 +71,7 @@ class LlmClient:
     def chat(self, user_text: str, *, max_tokens: int | None = None) -> str:
         final_answer_prompt = f"{user_text}\n\nAnswer directly and do not output your reasoning process."
         payload = {
-            "model": self.settings.vllm_model,
+            "model": self.model,
             "messages": [
                 {"role": "system", "content": self.settings.system_prompt},
                 {"role": "user", "content": final_answer_prompt},
@@ -70,11 +87,33 @@ class LlmClient:
             return "The model only returned its reasoning, not a final answer. Send it again and I'll ask for something shorter and more direct."
         return clean_model_content(content)
 
+    def chat_json(self, user_text: str, schema: dict, *, schema_name: str, max_tokens: int | None = None) -> str:
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": self.settings.system_prompt},
+                {"role": "user", "content": user_text},
+            ],
+            "temperature": 0,
+            "max_tokens": max_tokens or self.settings.max_tokens,
+            "chat_template_kwargs": {"enable_thinking": False},
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": schema_name, "schema": schema},
+            },
+        }
+        response = self._chat_completion(payload)
+        message = response["choices"][0]["message"]
+        content = message.get("content") or ""
+        if not content:
+            raise ValueError("model returned an empty structured response")
+        return clean_model_content(content)
+
     def chat_with_image(self, image_path: Path, prompt: str, *, max_tokens: int | None = None) -> str:
         mime_type = mimetypes.guess_type(str(image_path))[0] or "image/jpeg"
         image_b64 = base64.b64encode(image_path.read_bytes()).decode("ascii")
         payload = {
-            "model": self.settings.vlm_model,
+            "model": self.model,
             "messages": [
                 {"role": "system", "content": self.settings.system_prompt},
                 {
@@ -92,7 +131,7 @@ class LlmClient:
             "max_tokens": max_tokens or self.settings.vlm_max_tokens,
             "chat_template_kwargs": {"enable_thinking": False},
         }
-        response = self._chat_completion(payload, base_url=self.settings.vlm_base_url)
+        response = self._chat_completion(payload)
         message = response["choices"][0]["message"]
         content = message.get("content") or ""
         if not content and message.get("reasoning"):
