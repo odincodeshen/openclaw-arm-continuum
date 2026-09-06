@@ -20,8 +20,12 @@ class SkillAgent:
         self.skill = skill
         self.name = agent_name
         self.description = description
-        self.model_policy = model_policy
+        self.model_policy = getattr(skill, "model_policy", None) or model_policy
         self.capabilities = (skill.name,)
+
+    @property
+    def endpoint_id(self):
+        return getattr(self.skill, "endpoint_id", None)
 
     def can_handle(self, task: Task) -> bool:
         return self.skill.can_handle(task.text)

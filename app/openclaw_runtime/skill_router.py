@@ -11,11 +11,20 @@ from openclaw_runtime.skills.web_search import WebSearchSkill
 
 
 class SkillRouter:
-    def __init__(self, settings: Settings, llm: LlmClient) -> None:
+    def __init__(self, settings: Settings, llm: LlmClient, model_clients=None) -> None:
         self.settings = settings
         self.llm = llm
+        self.model_clients = model_clients
         self.config = self._load_config()
         self.skills = self._load_skills()
+
+    def _client_for(self, skill_config: dict) -> LlmClient:
+        """Pick the expert model for a skill: its configured model_policy from
+        skills.json (resolved through the catalog), else the default client."""
+        policy = str(skill_config.get("model_policy") or "").strip()
+        if policy and self.model_clients is not None:
+            return self.model_clients.get_or_default(policy)
+        return self.llm
 
     def route(self, text: str) -> SkillResult:
         for skill in self.skills:
@@ -46,7 +55,11 @@ class SkillRouter:
                 if memory_config.get("enabled", True):
                     skills.append(MemoryWriteSkill(self.settings, memory_config, embeddings, qdrant))
                 if rag_config.get("enabled", True):
-                    skills.append(RagRetrieveSkill(self.settings, rag_config, embeddings, qdrant, self.llm))
+                    skills.append(
+                        RagRetrieveSkill(
+                            self.settings, rag_config, embeddings, qdrant, self._client_for(rag_config)
+                        )
+                    )
             except Exception as exc:
                 print(f"[skills] memory disabled: {exc}", flush=True)
 
@@ -57,6 +70,8 @@ class SkillRouter:
 
             web_search_config = skills_config.get("web_search", {})
             if web_search_config.get("enabled", True):
-                skills.append(WebSearchSkill(self.settings, web_search_config, self.llm))
+                skills.append(
+                    WebSearchSkill(self.settings, web_search_config, self._client_for(web_search_config))
+                )
 
         return skills

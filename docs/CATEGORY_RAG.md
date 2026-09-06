@@ -66,15 +66,17 @@ document's first heading, otherwise the stored filename.
 
 ## How photos are indexed
 
-A photo has no text, so the configured vision model
-(`OPENCLAW_VLM_MODEL` / `OPENCLAW_VLM_BASE_URL`) is asked to produce a
-detailed description plus a verbatim transcription of any visible text.
-That text is what gets embedded; the original image is kept alongside it in
+A photo has no text, so the `vision` model is asked to produce a detailed
+description plus a verbatim transcription of any visible text. That text is
+what gets embedded; the original image is kept alongside it in
 `inbox/categories/<slug>/media/` and referenced in the chunk payload.
 
-Image indexing quality depends entirely on the vision model. See
-[the vision model section in DEPLOYMENT](DEPLOYMENT.md) and
-`.env.example` (`OPENCLAW_VLM_*`, `--profile vision`).
+Image indexing quality depends entirely on this model. Configure it in
+`models.json` (a model with role `vision` — see `app/models.example.json`),
+or with the `OPENCLAW_VLM_*` shortcut in `.env.example`. To keep a text-only
+main model, run the second vLLM: `docker compose --profile vision up -d
+openclaw-vllm-vision`. If no vision model is configured, image indexing
+falls back to the main text model, which cannot read images.
 
 ## Storage layout
 

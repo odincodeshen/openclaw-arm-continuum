@@ -68,7 +68,7 @@ llm = model_clients.get("local_default")
 vision = VisionClient(model_clients.get_or_default("vision"))
 qdrant = QdrantClient(settings)
 transcriber = TranscriptionClient(settings)
-skill_router = SkillRouter(settings, llm)
+skill_router = SkillRouter(settings, llm, model_clients)
 task_history = TaskHistory(settings.task_history_path)
 runtime_agents = [SkillAgent(skill) for skill in skill_router.skills]
 try:

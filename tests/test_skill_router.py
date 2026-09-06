@@ -76,5 +76,37 @@ class SkillRouterExplicitCommandPriorityTest(unittest.TestCase):
         self.assertEqual(result.skill_name, "llm")
 
 
+class SkillRouterExpertModelTest(unittest.TestCase):
+    def _router(self, model_clients=None) -> SkillRouter:
+        router = SkillRouter.__new__(SkillRouter)
+        router.settings = None
+        router.llm = FakeLlm()
+        router.model_clients = model_clients
+        router.config = {"skills": {}}
+        return router
+
+    def test_no_model_policy_uses_default_client(self) -> None:
+        router = self._router(model_clients=None)
+        self.assertIs(router._client_for({}), router.llm)
+
+    def test_model_policy_resolves_through_catalog(self) -> None:
+        class FakeFactory:
+            def __init__(self):
+                self.asked = None
+
+            def get_or_default(self, policy):
+                self.asked = policy
+                return f"client:{policy}"
+
+        factory = FakeFactory()
+        router = self._router(model_clients=factory)
+        self.assertEqual(router._client_for({"model_policy": "local_reasoner"}), "client:local_reasoner")
+        self.assertEqual(factory.asked, "local_reasoner")
+
+    def test_model_policy_ignored_without_factory(self) -> None:
+        router = self._router(model_clients=None)
+        self.assertIs(router._client_for({"model_policy": "local_reasoner"}), router.llm)
+
+
 if __name__ == "__main__":
     unittest.main()

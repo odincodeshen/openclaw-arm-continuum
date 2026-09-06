@@ -93,6 +93,11 @@ class RagRetrieveSkill:
         self.embeddings = embeddings
         self.qdrant = qdrant
         self.llm = llm
+        self.model_policy = str(config.get("model_policy") or "").strip() or "local_default"
+
+    @property
+    def endpoint_id(self):
+        return getattr(self.llm, "endpoint_id", None)
 
     def can_handle(self, text: str) -> bool:
         return any(keyword in text for keyword in self.keywords)

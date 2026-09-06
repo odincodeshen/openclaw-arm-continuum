@@ -10,7 +10,8 @@
       "enabled": true,
       "network": false,
       "provider": "ollama_qdrant",
-      "keywords": ["/rag", "rag:"]
+      "keywords": ["/rag", "rag:"],
+      "model_policy": "local_default"
     },
     "weather": {
       "enabled": true,
@@ -49,7 +50,8 @@
       "network": true,
       "provider": "duckduckgo_html",
       "limit": 5,
-      "keywords": ["搜尋", "查詢", "查一下", "最新", "新聞", "現在", "今天", "明天", "web:", "/search"]
+      "keywords": ["搜尋", "查詢", "查一下", "最新", "新聞", "現在", "今天", "明天", "web:", "/search"],
+      "model_policy": "local_default"
     }
   }
 }

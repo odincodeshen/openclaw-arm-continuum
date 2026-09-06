@@ -18,6 +18,11 @@ class WebSearchSkill:
             config.get("keywords", ["搜尋", "查詢", "查一下", "最新", "新聞", "現在", "今天", "明天", "web:", "/search"])
         )
         self.limit = int(config.get("limit", 5))
+        self.model_policy = str(config.get("model_policy") or "").strip() or "local_default"
+
+    @property
+    def endpoint_id(self):
+        return getattr(self.llm, "endpoint_id", None)
 
     def can_handle(self, text: str) -> bool:
         return any(keyword in text for keyword in self.keywords)
