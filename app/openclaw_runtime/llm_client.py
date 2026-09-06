@@ -32,11 +32,11 @@ class LlmClient:
     def is_reachable(self) -> bool:
         return is_reachable(f"{self.settings.vllm_base_url}/models", timeout=3)
 
-    def _chat_completion(self, payload: dict) -> dict:
+    def _chat_completion(self, payload: dict, *, base_url: str | None = None) -> dict:
         try:
             return request_json(
                 "POST",
-                f"{self.settings.vllm_base_url}/chat/completions",
+                f"{base_url or self.settings.vllm_base_url}/chat/completions",
                 payload,
                 timeout=self.settings.request_timeout,
             )
@@ -74,7 +74,7 @@ class LlmClient:
         mime_type = mimetypes.guess_type(str(image_path))[0] or "image/jpeg"
         image_b64 = base64.b64encode(image_path.read_bytes()).decode("ascii")
         payload = {
-            "model": self.settings.vllm_model,
+            "model": self.settings.vlm_model,
             "messages": [
                 {"role": "system", "content": self.settings.system_prompt},
                 {
@@ -89,10 +89,10 @@ class LlmClient:
                 },
             ],
             "temperature": 0.2,
-            "max_tokens": max_tokens or self.settings.vision_max_tokens,
+            "max_tokens": max_tokens or self.settings.vlm_max_tokens,
             "chat_template_kwargs": {"enable_thinking": False},
         }
-        response = self._chat_completion(payload)
+        response = self._chat_completion(payload, base_url=self.settings.vlm_base_url)
         message = response["choices"][0]["message"]
         content = message.get("content") or ""
         if not content and message.get("reasoning"):

@@ -40,6 +40,44 @@ services:
         --enable-prefix-caching
     restart: unless-stopped
 
+  # Optional dedicated vision model, so the main vLLM can stay a text-only model.
+  # Enable with:  docker compose --profile vision up -d openclaw-vllm-vision
+  # then set in .env:  OPENCLAW_VLM_BASE_URL=http://openclaw-vllm-vision:8000/v1
+  openclaw-vllm-vision:
+    profiles: ["vision"]
+    image: nvcr.io/nvidia/vllm:26.03.post1-py3
+    container_name: openclaw-vllm-vision
+    ipc: host
+    gpus: all
+    ports:
+      - "127.0.0.1:8001:8000"
+    volumes:
+      - ${HF_CACHE_DIR:-./.cache/huggingface}:/root/.cache/huggingface
+      - ${VLLM_CACHE_DIR:-./.cache/vllm}:/root/.cache/vllm
+    environment:
+      HF_HOME: /root/.cache/huggingface
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - bash
+      - -lc
+      - >
+        vllm serve ${OPENCLAW_VLM_VISION_MODEL:-Qwen/Qwen2.5-VL-7B-Instruct}
+        --host 0.0.0.0
+        --port 8000
+        --gpu-memory-utilization ${OPENCLAW_VLM_VISION_GPU_MEMORY_UTILIZATION:-0.20}
+        --trust-remote-code
+        --max-model-len ${OPENCLAW_VLM_VISION_MAX_MODEL_LEN:-32768}
+        --enable-prefix-caching
+    restart: unless-stopped
+
   openclaw-telegram:
     image: python:3.12-slim
     container_name: openclaw-telegram
@@ -50,6 +88,7 @@ services:
         required: false
     environment:
       OPENCLAW_VLLM_BASE_URL: ${OPENCLAW_VLLM_BASE_URL:-http://openclaw-vllm:8000/v1}
+      OPENCLAW_VLM_BASE_URL: ${OPENCLAW_VLM_BASE_URL:-http://openclaw-vllm:8000/v1}
       OPENCLAW_OLLAMA_BASE_URL: ${OPENCLAW_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OPENCLAW_QDRANT_BASE_URL: ${OPENCLAW_QDRANT_BASE_URL:-http://host.docker.internal:6333}
       OPENCLAW_WHISPER_BASE_URL: http://openclaw-whisper:8765
