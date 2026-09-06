@@ -45,5 +45,34 @@ class LlmClientModelSpecTest(unittest.TestCase):
         self.assertEqual(payload["response_format"]["json_schema"]["schema"], schema)
 
 
+class ReplyLanguageTest(unittest.TestCase):
+    @patch("openclaw_runtime.llm_client.request_json")
+    def test_no_language_keeps_plain_directive(self, request_json) -> None:
+        request_json.return_value = {"choices": [{"message": {"content": "ok"}}]}
+        LlmClient(build_settings(reply_language="")).chat("hi")
+        user_msg = request_json.call_args.args[2]["messages"][-1]["content"]
+        self.assertIn("Answer directly", user_msg)
+        self.assertNotIn("Reply in", user_msg)
+
+    @patch("openclaw_runtime.llm_client.request_json")
+    def test_language_is_injected_into_chat_and_image_prompts(self, request_json) -> None:
+        request_json.return_value = {"choices": [{"message": {"content": "ok"}}]}
+        client = LlmClient(build_settings(reply_language="Traditional Chinese"))
+
+        client.chat("hi")
+        chat_msg = request_json.call_args.args[2]["messages"][-1]["content"]
+        self.assertIn("Reply in Traditional Chinese by default", chat_msg)
+        self.assertIn("explicitly asks", chat_msg)
+
+    @patch("openclaw_runtime.llm_client.request_json")
+    def test_history_turns_are_not_rewritten(self, request_json) -> None:
+        request_json.return_value = {"choices": [{"message": {"content": "ok"}}]}
+        client = LlmClient(build_settings(reply_language="Traditional Chinese"))
+        client.chat("now", history=[{"role": "user", "content": "before"}, {"role": "assistant", "content": "reply"}])
+        messages = request_json.call_args.args[2]["messages"]
+        self.assertEqual(messages[1], {"role": "user", "content": "before"})
+        self.assertIn("Reply in Traditional Chinese", messages[-1]["content"])
+
+
 if __name__ == "__main__":
     unittest.main()

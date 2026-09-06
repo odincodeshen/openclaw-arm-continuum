@@ -16,6 +16,7 @@ def build_settings(**overrides) -> Settings:
         vllm_model="x",
         model_catalog_path=Path("models.json"),
         system_prompt="x",
+        reply_language="",
         max_tokens=1,
         request_timeout=1,
         vlm_base_url=UNREACHABLE_URL,

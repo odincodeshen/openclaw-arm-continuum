@@ -68,6 +68,16 @@ class LlmClient:
                 raise RuntimeError(VLLM_NOT_READY_MESSAGE) from exc
             raise
 
+    def _answer_instruction(self) -> str:
+        directive = "Answer directly and do not output your reasoning process."
+        language = getattr(self.settings, "reply_language", "") or ""
+        if language:
+            return (
+                f"Reply in {language} by default. Use another language only if the user "
+                f"explicitly asks for it or writes their message in that language. {directive}"
+            )
+        return directive
+
     def chat(
         self,
         user_text: str,
@@ -75,7 +85,7 @@ class LlmClient:
         max_tokens: int | None = None,
         history: list[dict] | None = None,
     ) -> str:
-        final_answer_prompt = f"{user_text}\n\nAnswer directly and do not output your reasoning process."
+        final_answer_prompt = f"{user_text}\n\n{self._answer_instruction()}"
         messages = [{"role": "system", "content": self.settings.system_prompt}]
         for turn in history or []:
             role = turn.get("role")
@@ -129,7 +139,7 @@ class LlmClient:
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": f"{prompt}\n\nAnswer directly and do not output your reasoning process."},
+                        {"type": "text", "text": f"{prompt}\n\n{self._answer_instruction()}"},
                         {
                             "type": "image_url",
                             "image_url": {"url": f"data:{mime_type};base64,{image_b64}"},

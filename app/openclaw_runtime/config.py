@@ -37,6 +37,7 @@ class Settings:
     vllm_model: str
     model_catalog_path: Path
     system_prompt: str
+    reply_language: str
     max_tokens: int
     request_timeout: int
 
@@ -132,6 +133,7 @@ def load_settings() -> Settings:
             "OPENCLAW_SYSTEM_PROMPT",
             "You are OpenClaw, a local-first personal AI assistant running on the user's Arm Continuum runtime. Answer clearly, practically, and stay actionable. Give the final answer directly and do not output your reasoning process.",
         ),
+        reply_language=os.environ.get("OPENCLAW_REPLY_LANGUAGE", "").strip(),
         max_tokens=env_int("OPENCLAW_MAX_TOKENS", 160),
         request_timeout=env_int("OPENCLAW_REQUEST_TIMEOUT", 60),
         vlm_base_url=os.environ.get("OPENCLAW_VLM_BASE_URL", vllm_base_url).rstrip("/"),
