@@ -83,6 +83,47 @@ class ParseDocUrlArgsTest(unittest.TestCase):
             gateway.parse_doc_url_args("   ")
 
 
+class NewConversationCommandTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.sent = []
+        self._orig_send = gateway.send_message
+        gateway.send_message = lambda chat_id, text: self.sent.append((chat_id, text))
+        self.addCleanup(setattr, gateway, "send_message", self._orig_send)
+
+        self._orig_mem = gateway.conversation_memory
+        self.addCleanup(setattr, gateway, "conversation_memory", self._orig_mem)
+
+    def _install(self, *, enabled=True, cleared=True):
+        class FakeMemory:
+            def __init__(self):
+                self.enabled = enabled
+                self.calls = []
+
+            def clear(self, chat_id):
+                self.calls.append(chat_id)
+                return cleared
+
+        fake = FakeMemory()
+        gateway.conversation_memory = fake
+        return fake
+
+    def test_new_clears_conversation(self):
+        fake = self._install(cleared=True)
+        gateway.handle_message({"chat": {"id": 7}, "text": "/new"})
+        self.assertEqual(fake.calls, [7])
+        self.assertTrue(any("new conversation" in t.lower() for _, t in self.sent))
+
+    def test_reset_alias_with_nothing_to_clear(self):
+        self._install(cleared=False)
+        gateway.handle_message({"chat": {"id": 7}, "text": "/reset"})
+        self.assertTrue(any("starts fresh" in t.lower() for _, t in self.sent))
+
+    def test_new_when_memory_disabled(self):
+        self._install(enabled=False)
+        gateway.handle_message({"chat": {"id": 7}, "text": "/new"})
+        self.assertTrue(any("disabled" in t.lower() for _, t in self.sent))
+
+
 class AckMessageTest(unittest.TestCase):
     def setUp(self) -> None:
         # ack_message() reads the module-level agent_registry directly to

@@ -199,9 +199,13 @@ Main commands:
 /doc      import public Google Docs
 /search   browse with local Playwright worker
 /cron     create and manage proactive push tasks
+/new      start a new chat conversation (clear context)
 /agents   list the active local agents
 /tasks    inspect recent task history
 ```
+
+Plain chat keeps the last few turns as context (see
+`docs/CONVERSATION_MEMORY.md`); `/new` clears it.
 
 Currently implemented help commands:
 

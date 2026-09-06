@@ -34,8 +34,13 @@ v1.2 baseline. What has actually shipped since then:
 
 Still open from the original list, re-baselined against v1.6:
 
-- Telegram conversational memory — **not started** (chat is still
-  single-turn; no `/new` or `/reset`).
+- Telegram conversational memory — **done (post-v1.6)**. `ChatAgent` now
+  replays the last few user/assistant turns per `chat_id`
+  (`app/openclaw_runtime/conversation_memory.py`); `/new` (alias `/reset`)
+  clears it; `OPENCLAW_CONVERSATION_*` configure the window, char budget,
+  retention, and a disabled single-turn mode. `/rag`, `/search`, `/mem`
+  stay single-shot; nothing is promoted to Qdrant. See
+  `docs/CONVERSATION_MEMORY.md`.
 - Platform-aware multimodal analysis — **partially unblocked**: the
   `VisionClient` seam (v1.4) and the model catalog (v1.5) are the seams
   this design asked for; the backend workers (`mnn-omni`, `vllm-vlm`,
@@ -55,40 +60,25 @@ Still open from the original list, re-baselined against v1.6:
   multi-model configs and catalog examples (shipped in v1.4); the
   remaining profiles and per-platform smoke tests are not done.
 
-## Candidate milestone: Telegram conversational memory
+## Delivered milestone: Telegram conversational memory
 
-A runtime enhancement, not a rewrite of the published local-first
-assistant tutorial. Good next milestone: it is the most-requested gap in
-ordinary chat and does not depend on any of the multimodal work.
+Shipped post-v1.6. See `docs/CONVERSATION_MEMORY.md`.
 
-The existing `/mem` and `/rag` workflow is explicit persistent memory. The user
-chooses what to save and when to retrieve it. Ordinary Telegram chat is
-currently single-turn: task history records bounded summaries for observability,
-but previous user and assistant turns are not supplied to the next model
-request.
+- `app/openclaw_runtime/conversation_memory.py` -- one JSON file per `chat_id`
+  under `OPENCLAW_CONVERSATION_STORE_PATH`, atomic write, isolated per chat.
+- `ChatAgent.run` replays the recent window via `LlmClient.chat(history=...)`;
+  `OPENCLAW_CONVERSATION_HISTORY_TURNS` bounds the count,
+  `OPENCLAW_CONVERSATION_CONTEXT_CHARS` the size (trimmed front-first in pairs).
+- `/new` (alias `/reset`) deletes the chat's file.
+- `OPENCLAW_CONVERSATION_RETENTION_HOURS` ages entries out on read + via
+  `ConversationMemory.sweep()`; `OPENCLAW_CONVERSATION_MEMORY_ENABLED=false`
+  restores strict single-turn.
+- Only `ChatAgent` uses it. `/rag`, `/search`, `/mem` stay single-shot; the
+  history lives in the request payload so a model fallback sees the same
+  context; nothing is written to task history or Qdrant.
 
-Minimum implementation:
-
-- Persist complete user/assistant turns locally and isolate them by `chat_id`.
-- Load only the most recent configured number of turns within a token budget.
-- Add `/new` or `/reset` to clear the active conversation context.
-- Support a configurable retention period and a disabled mode.
-- Keep conversation data separate from task-history metadata and Qdrant.
-- Do not promote ordinary conversation into Qdrant automatically; preserve the
-  existing explicit `/mem` and `/rag` semantics.
-- Preserve the same context contract across normal chat and configured model
-  fallback.
-
-Required validation:
-
-- chat isolation;
-- persistence across gateway restart;
-- deterministic context truncation;
-- reset and retention behavior;
-- disabled-mode single-turn behavior;
-- no secrets or complete conversation bodies in task-history output; and
-- full regression coverage of the existing command, RAG, routing, and cron
-  test suites.
+Possible follow-ups: per-chat `/history` preview; summarise-and-compact old
+turns instead of hard truncation.
 
 ## v2.0 Candidate: Platform-Aware MultimodalAnalysisAgent
 

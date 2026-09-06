@@ -47,6 +47,7 @@ from openclaw_runtime.gateway_cron import (
     update_gateway_job_state,
     update_gateway_job_state_sqlite,
 )
+from openclaw_runtime.conversation_memory import ConversationMemory
 from openclaw_runtime.file_ingest import SUPPORTED_SUFFIXES
 from openclaw_runtime.engineering_review import EngineeringReviewAgent
 from openclaw_runtime.http_client import request_json
@@ -67,6 +68,7 @@ llm = model_clients.get("local_default")
 vision = VisionClient(model_clients.get_or_default("vision"))
 qdrant = QdrantClient(settings)
 transcriber = TranscriptionClient(settings)
+conversation_memory = ConversationMemory(settings)
 skill_router = SkillRouter(settings, llm, model_clients)
 task_history = TaskHistory(settings.task_history_path)
 runtime_agents = [SkillAgent(skill) for skill in skill_router.skills]
@@ -77,7 +79,7 @@ except LookupError:
     pass
 else:
     runtime_agents.append(EngineeringReviewAgent(model_clients, task_history))
-runtime_agents.append(ChatAgent(llm))
+runtime_agents.append(ChatAgent(llm, conversation_memory))
 agent_registry = AgentRegistry(runtime_agents)
 task_dispatcher = TaskDispatcher(agent_registry, task_history)
 
@@ -137,6 +139,11 @@ List current OpenClaw agents and their model policy.
 /tasks last
 View the 5 most recent task history entries and their status.
 
+/new  (or /reset)
+Start a new chat conversation. Plain chat remembers the last few
+turns per chat; this clears that context. Commands like /rag and
+/search are always independent.
+
 /review <sanitized engineering request>
 Run the bounded code and architecture review workflow. This command is
 available when the multi-model catalog is configured.
@@ -150,6 +157,8 @@ Example: /doc url https://docs.google.com/document/d/.../edit tracker
 Natural language
 You can ask general questions or about the weather directly.
 Example: What's the weather like in Taiwan tomorrow?
+Plain chat keeps the last few turns as context, so you can follow up
+without repeating yourself. Send /new to start over.
 
 Document RAG
 Upload .pdf / .md / .txt / .log / .json / .csv / .tsv directly to
@@ -1110,6 +1119,7 @@ def setup_bot_commands() -> None:
         {"command": "cat", "description": "List category knowledge bases (see /cat help)"},
         {"command": "search", "description": "Search the web"},
         {"command": "cron", "description": "Configure proactive push schedules"},
+        {"command": "new", "description": "Start a new chat conversation (clear context)"},
         {"command": "agents", "description": "List OpenClaw agents"},
         {"command": "tasks", "description": "View recent task history"},
         {"command": "review", "description": "Run a bounded private engineering review"},
@@ -1197,6 +1207,15 @@ def handle_message(message: dict) -> None:
 
     if text in {"/start", "/help"}:
         send_message(chat_id, HELP_TEXT)
+        return
+
+    if text.lower() in {"/new", "/reset"}:
+        if not conversation_memory.enabled:
+            send_message(chat_id, "Conversation memory is disabled, so every chat message is already independent.")
+        elif conversation_memory.clear(chat_id):
+            send_message(chat_id, "Started a new conversation. Earlier chat turns will not be used as context.")
+        else:
+            send_message(chat_id, "No active conversation to clear -- the next message starts fresh.")
         return
 
     if settings.category_rag_enabled:

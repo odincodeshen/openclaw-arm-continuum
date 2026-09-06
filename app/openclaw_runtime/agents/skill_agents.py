@@ -48,8 +48,9 @@ class ChatAgent:
     model_policy = "local_default"
     capabilities = ("chat",)
 
-    def __init__(self, llm: LlmClient) -> None:
+    def __init__(self, llm: LlmClient, memory=None) -> None:
         self.llm = llm
+        self.memory = memory
 
     def can_handle(self, task: Task) -> bool:
         return True
@@ -62,4 +63,8 @@ class ChatAgent:
         return "ready" if self.llm.is_reachable() else "error: vLLM unreachable"
 
     def run(self, task: Task) -> SkillResult:
-        return SkillResult(self.name, self.llm.chat(task.text))
+        history = self.memory.load(task.chat_id) if self.memory else None
+        answer = self.llm.chat(task.text, history=history)
+        if self.memory and answer:
+            self.memory.record(task.chat_id, task.text, answer)
+        return SkillResult(self.name, answer)

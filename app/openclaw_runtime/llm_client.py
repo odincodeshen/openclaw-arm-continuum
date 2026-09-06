@@ -68,14 +68,24 @@ class LlmClient:
                 raise RuntimeError(VLLM_NOT_READY_MESSAGE) from exc
             raise
 
-    def chat(self, user_text: str, *, max_tokens: int | None = None) -> str:
+    def chat(
+        self,
+        user_text: str,
+        *,
+        max_tokens: int | None = None,
+        history: list[dict] | None = None,
+    ) -> str:
         final_answer_prompt = f"{user_text}\n\nAnswer directly and do not output your reasoning process."
+        messages = [{"role": "system", "content": self.settings.system_prompt}]
+        for turn in history or []:
+            role = turn.get("role")
+            content = turn.get("content")
+            if role in ("user", "assistant") and content:
+                messages.append({"role": role, "content": content})
+        messages.append({"role": "user", "content": final_answer_prompt})
         payload = {
             "model": self.model,
-            "messages": [
-                {"role": "system", "content": self.settings.system_prompt},
-                {"role": "user", "content": final_answer_prompt},
-            ],
+            "messages": messages,
             "temperature": 0.2,
             "max_tokens": max_tokens or self.settings.max_tokens,
             "chat_template_kwargs": {"enable_thinking": False},

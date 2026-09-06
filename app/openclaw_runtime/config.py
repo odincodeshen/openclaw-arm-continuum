@@ -93,6 +93,12 @@ class Settings:
     cron_jobs_path: Path
     cron_state_path: Path
     task_history_path: Path
+
+    conversation_memory_enabled: bool
+    conversation_store_path: Path
+    conversation_history_turns: int
+    conversation_context_chars: int
+    conversation_retention_hours: int
     gateway_rpc_url: str
     gateway_token: str
     gateway_state_db_path: Path
@@ -180,6 +186,13 @@ def load_settings() -> Settings:
         cron_jobs_path=Path(os.environ.get("OPENCLAW_CRON_JOBS_PATH", "/workspace/.openclaw/cron_jobs.json")),
         cron_state_path=Path(os.environ.get("OPENCLAW_CRON_STATE_PATH", "/workspace/.openclaw/cron_state.json")),
         task_history_path=Path(os.environ.get("OPENCLAW_TASK_HISTORY_PATH", "/workspace/.openclaw/task_history.jsonl")),
+        conversation_memory_enabled=env_bool("OPENCLAW_CONVERSATION_MEMORY_ENABLED", True),
+        conversation_store_path=Path(
+            os.environ.get("OPENCLAW_CONVERSATION_STORE_PATH", "/workspace/.openclaw/conversations")
+        ),
+        conversation_history_turns=env_int("OPENCLAW_CONVERSATION_HISTORY_TURNS", 6),
+        conversation_context_chars=env_int("OPENCLAW_CONVERSATION_CONTEXT_CHARS", 6000),
+        conversation_retention_hours=env_int("OPENCLAW_CONVERSATION_RETENTION_HOURS", 72),
         gateway_rpc_url=os.environ.get("OPENCLAW_GATEWAY_RPC_URL", "http://openclaw-gateway:18789/api/v1/admin/rpc").rstrip("/"),
         gateway_token=os.environ.get("OPENCLAW_GATEWAY_TOKEN", "").strip(),
         gateway_state_db_path=Path(os.environ.get("OPENCLAW_GATEWAY_STATE_DB", "/gateway-state/openclaw.sqlite")),
