@@ -1,6 +1,6 @@
 # OpenClaw Arm Continuum
 
-Version: `v1.5`
+Version: `v1.6`
 
 License: Apache-2.0
 
