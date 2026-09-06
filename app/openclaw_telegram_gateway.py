@@ -101,8 +101,10 @@ Save a piece of personal memory or working context.
 Example: /mem OpenClaw preference: use /mem for memory writes.
 
 /rag <question>
-Query local memory and document knowledge base.
+Query local memory and the document knowledge base.
 Example: /rag Which modules is OpenClaw connected to?
+Add #<category> to search one category, or #all for every category.
+Example: /rag #work-notes What are the open action items?
 
 /search <keywords>
 Browse and scrape the web with the local Playwright worker, convert to
@@ -164,12 +166,17 @@ tracker memory instead.
 
 Category RAG
 Keep different kinds of material in separate, non-overlapping
-knowledge bases. Upload a photo or document, then either:
-- caption it #<name> (e.g. #工作筆記 or #[Work Notes]), or
+knowledge bases (one Qdrant collection per category). Upload a photo
+or document, then name a category one of two ways:
+- caption the upload #<name> (e.g. #work-notes or #[Work Notes]), or
 - send the file first, then reply with the category name.
 Query one category:  /rag #<name> <question>
 Query every category: /rag #all <question>
-/cat list shows your categories. /cancel drops a waiting file.
+/cat list shows your categories and their sizes.
+/cancel drops a file that is waiting for a category name.
+
+Every /rag answer ends with a "Sources:" line naming the documents
+it used.
 
 Photos and voice
 Upload a photo directly and OpenClaw will save it to the
@@ -449,7 +456,7 @@ def _ingest_caption_category(
         send_message(chat_id, f"That category name will not work: {exc}")
         return
     entry = upsert_registry_entry(settings, display)
-    send_message(chat_id, f"Filing this into category 「{entry['display']}」.")
+    send_message(chat_id, f"Filing this into category \"{entry['display']}\".")
     worker = threading.Thread(
         target=_run_category_ingest,
         args=(chat_id, [{"path": str(source_path), "kind": kind, "note": note, "original_name": original_name}], entry),
@@ -494,7 +501,7 @@ def _run_category_ingest(chat_id: int, items: list[dict], entry: dict) -> None:
             log(f"[category] ingest failed chat_id={chat_id} path={path}: {exc}")
             failed.append(f"{path.name} ({exc})")
 
-    lines = [f"Category 「{entry['display']}」 (collection: {entry['collection']})"]
+    lines = [f"Category \"{entry['display']}\" (collection: {entry['collection']})"]
     if done:
         lines.append("Queued for indexing: " + ", ".join(done))
         lines.append(f"In a few seconds: /rag #{entry['display']} <your question>")

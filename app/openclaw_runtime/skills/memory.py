@@ -143,11 +143,11 @@ class RagRetrieveSkill:
     def _run_single_category(self, token: str, query: str) -> SkillResult:
         entry = resolve_category(self.settings, token)
         if not entry or not entry.get("known"):
-            names = "、".join(item["display"] for item in registry_entries(self.settings)) or "（尚無任何類別）"
+            names = ", ".join(item["display"] for item in registry_entries(self.settings)) or "(none yet)"
             return SkillResult(
                 self.name,
-                f"找不到類別「{token}」。目前的類別：{names}\n"
-                "（用 /rag #<類別> 查詢，或上傳檔案時用 #<類別> 建立。）",
+                f"No category named \"{token}\". Existing categories: {names}\n"
+                "Query with /rag #<category>, or create one by captioning an upload #<category>.",
             )
         collection = entry["collection"]
         vector = self.embeddings.embed(query)
@@ -162,8 +162,8 @@ class RagRetrieveSkill:
         if answer is None:
             return SkillResult(
                 self.name,
-                f"類別「{entry['display']}」目前還沒有可檢索的內容"
-                "（剛上傳的話等 10 秒左右讓索引器處理）。",
+                f"Category \"{entry['display']}\" has no indexed content yet "
+                "(if you just uploaded, give the indexer ~10 seconds).",
             )
         return SkillResult(self.name, answer)
 
@@ -199,7 +199,7 @@ class RagRetrieveSkill:
         answer = self.llm.chat(prompt, max_tokens=360)
         sources = self._collect_sources(labelled_hits)
         if sources:
-            answer = f"{answer}\n\n來源：{'、'.join(sources)}"
+            answer = f"{answer}\n\nSources: {', '.join(sources)}"
         return answer
 
     @staticmethod

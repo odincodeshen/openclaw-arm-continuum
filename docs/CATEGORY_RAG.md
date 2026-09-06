@@ -52,8 +52,8 @@ id such as `oc_cat_work-notes_1a2b3c4d`.
   `personal_tracker_memory` + `personal_knowledge_base` collections and
   does **not** touch category collections.
 
-Every `/rag` answer ends with a `來源：` line naming the source documents the
-answer drew from. The name shown is the uploader's original filename when
+Every `/rag` answer ends with a `Sources:` line naming the source documents
+the answer drew from. The name shown is the uploader's original filename when
 known (recorded in the `.meta.json` sidecar at upload), otherwise the
 document's first heading, otherwise the stored filename.
 

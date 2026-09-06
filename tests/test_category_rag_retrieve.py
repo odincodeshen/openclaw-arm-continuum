@@ -94,7 +94,7 @@ class CategoryRagRetrieveTest(unittest.TestCase):
         qdrant = FakeQdrant({})
         skill = self._skill(qdrant)
         result = skill.run("/rag #尚未建立 問題")
-        self.assertIn("找不到類別", result.answer)
+        self.assertIn("No category named", result.answer)
         self.assertIn("工作筆記", result.answer)  # the one registered in setUp
         self.assertEqual(qdrant.searched, [])
 
@@ -102,7 +102,7 @@ class CategoryRagRetrieveTest(unittest.TestCase):
         qdrant = FakeQdrant({})  # entry collection has no hits
         skill = self._skill(qdrant)
         result = skill.run("/rag #工作筆記 問題")
-        self.assertIn("目前還沒有可檢索的內容", result.answer)
+        self.assertIn("no indexed content yet", result.answer)
         self.assertEqual(qdrant.searched, [self.entry["collection"]])
 
     def test_fullwidth_hash_query_hits_the_category(self) -> None:
@@ -150,7 +150,7 @@ class CategoryRagRetrieveTest(unittest.TestCase):
         )
         skill = self._skill(qdrant)
         result = skill.run("/rag #工作筆記 重點")
-        self.assertIn("來源：", result.answer)
+        self.assertIn("Sources:", result.answer)
         self.assertIn("第一季報告.pdf", result.answer)
         self.assertIn("Arm V3 Notes", result.answer)
         # de-duplicated
