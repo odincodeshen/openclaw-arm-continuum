@@ -17,6 +17,10 @@ class FakeEmbeddingClient:
 class FakeQdrantClient:
     def __init__(self) -> None:
         self.upserts: list[tuple] = []
+        self.ensured: list[str] = []
+
+    def ensure_collection(self, collection) -> None:
+        self.ensured.append(collection)
 
     def upsert_text(self, collection, text, vector, metadata) -> str:
         self.upserts.append((collection, text, metadata))
@@ -36,6 +40,7 @@ class InboxIngestorFingerprintTest(unittest.TestCase):
             web_enabled=False,
             inbox_path=self.inbox,
             watcher_state_path=self.state_path,
+            category_registry_path=root / ".openclaw" / "categories.json",
         )
 
     def new_ingestor(self) -> InboxIngestor:
@@ -113,6 +118,71 @@ class InboxIngestorFingerprintTest(unittest.TestCase):
 
         ingestor = self.new_ingestor()
         result = ingestor.ingest_file(photo)
+        self.assertTrue(result.skipped)
+        self.assertEqual(result.reason, "unsupported_suffix")
+
+
+class InboxIngestorCategoryTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.inbox = self.root / "inbox"
+        (self.inbox / "categories").mkdir(parents=True)
+        self.settings = build_settings(
+            web_enabled=False,
+            inbox_path=self.inbox,
+            watcher_state_path=self.root / "watcher_state.json",
+            category_registry_path=self.root / ".openclaw" / "categories.json",
+            category_collection_prefix="oc_cat_",
+        )
+
+    def new_ingestor(self) -> tuple[InboxIngestor, "FakeQdrantClient"]:
+        qdrant = FakeQdrantClient()
+        return InboxIngestor(self.settings, FakeEmbeddingClient(), qdrant), qdrant
+
+    def test_file_under_category_dir_routes_to_category_collection(self) -> None:
+        category_dir = self.inbox / "categories" / "work-notes_deadbeef"
+        category_dir.mkdir(parents=True)
+        note = category_dir / "spec.md"
+        note.write_text("category isolation spec, keep this separate.", encoding="utf-8")
+
+        ingestor, qdrant = self.new_ingestor()
+        result = ingestor.ingest_file(note)
+
+        self.assertFalse(result.skipped)
+        self.assertEqual(result.collection, "oc_cat_work-notes_deadbeef")
+        self.assertIn("oc_cat_work-notes_deadbeef", qdrant.ensured)
+        _, _, metadata = qdrant.upserts[0]
+        self.assertEqual(metadata["category_slug"], "work-notes_deadbeef")
+
+    def test_meta_sidecar_supplies_display_name_and_is_not_ingested(self) -> None:
+        category_dir = self.inbox / "categories" / "x_12ab34cd"
+        category_dir.mkdir(parents=True)
+        (category_dir / "photo.jpg.md").write_text("A photo of a server rack.", encoding="utf-8")
+        (category_dir / "photo.jpg.md.meta.json").write_text(
+            '{"category": "機櫃照片", "image_path": "/workspace/inbox/categories/x_12ab34cd/photo.jpg"}',
+            encoding="utf-8",
+        )
+
+        ingestor, qdrant = self.new_ingestor()
+        results = ingestor.scan_once()
+
+        ingested = [r for r in results if not r.skipped]
+        self.assertEqual(len(ingested), 1)
+        _, _, metadata = qdrant.upserts[0]
+        self.assertEqual(metadata["category"], "機櫃照片")
+        self.assertEqual(metadata["image_path"], "/workspace/inbox/categories/x_12ab34cd/photo.jpg")
+        skipped_reasons = {r.reason for r in results if r.skipped}
+        self.assertIn("sidecar_meta", skipped_reasons)
+
+    def test_bare_image_in_category_dir_is_skipped_without_error(self) -> None:
+        category_dir = self.inbox / "categories" / "x_12ab34cd"
+        category_dir.mkdir(parents=True)
+        (category_dir / "photo.jpg").write_bytes(b"\xff\xd8\xff")
+
+        ingestor, _ = self.new_ingestor()
+        result = ingestor.ingest_file(category_dir / "photo.jpg")
         self.assertTrue(result.skipped)
         self.assertEqual(result.reason, "unsupported_suffix")
 

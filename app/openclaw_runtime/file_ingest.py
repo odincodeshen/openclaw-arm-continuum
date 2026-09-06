@@ -5,12 +5,18 @@ import traceback
 from dataclasses import dataclass
 from pathlib import Path
 
+from openclaw_runtime.categories import (
+    category_collection_name,
+    ensure_registry_entry_for_slug,
+    is_category_collection,
+)
 from openclaw_runtime.config import Settings
 from openclaw_runtime.embedding_client import EmbeddingClient
 from openclaw_runtime.qdrant_client import QdrantClient
 
 
 SUPPORTED_SUFFIXES = {".md", ".txt", ".log", ".json", ".csv", ".tsv", ".pdf"}
+META_SIDECAR_SUFFIX = ".meta.json"
 
 
 @dataclass(frozen=True)
@@ -28,14 +34,16 @@ class InboxIngestor:
         self.embeddings = embeddings
         self.qdrant = qdrant
         self.state = self._load_state()
+        self._ensured_collections: set[str] = set()
 
     def scan_once(self) -> list[IngestResult]:
         self.settings.inbox_path.mkdir(parents=True, exist_ok=True)
         (self.settings.inbox_path / "knowledge").mkdir(parents=True, exist_ok=True)
         (self.settings.inbox_path / "tracker").mkdir(parents=True, exist_ok=True)
+        (self.settings.inbox_path / self.settings.category_inbox_dirname).mkdir(parents=True, exist_ok=True)
         results = []
         for path in sorted(self.settings.inbox_path.rglob("*")):
-            if path.is_file():
+            if path.is_file() and not self._is_hidden(path):
                 try:
                     results.append(self.ingest_file(path))
                 except Exception as exc:
@@ -61,6 +69,8 @@ class InboxIngestor:
         return results
 
     def ingest_file(self, path: Path) -> IngestResult:
+        if path.name.endswith(META_SIDECAR_SUFFIX):
+            return IngestResult(path, "", 0, skipped=True, reason="sidecar_meta")
         if path.suffix.lower() not in SUPPORTED_SUFFIXES:
             return IngestResult(path, "", 0, skipped=True, reason="unsupported_suffix")
 
@@ -86,6 +96,8 @@ class InboxIngestor:
             return IngestResult(path, self._collection_for(path), 0, skipped=True, reason="empty")
 
         collection = self._collection_for(path)
+        self._ensure_collection(collection, path)
+        extra_metadata = self._category_metadata(path, collection)
         chunks = self._chunk_text(text)
         for index, chunk in enumerate(chunks):
             vector = self.embeddings.embed(chunk)
@@ -101,6 +113,7 @@ class InboxIngestor:
                     "file_sha256": fingerprint,
                     "chunk_index": index,
                     "chunk_count": len(chunks),
+                    **extra_metadata,
                 },
             )
 
@@ -113,11 +126,68 @@ class InboxIngestor:
         }
         return IngestResult(path, collection, len(chunks))
 
+    def _is_hidden(self, path: Path) -> bool:
+        # Skip dotfiles and dot-directories under the inbox: the category
+        # registry (inbox/.openclaw/) and the two-step upload staging area
+        # (inbox/.staging/) live there and must never be ingested.
+        try:
+            parts = path.relative_to(self.settings.inbox_path).parts
+        except ValueError:
+            return False
+        return any(part.startswith(".") for part in parts)
+
     def _collection_for(self, path: Path) -> str:
         relative_parts = path.relative_to(self.settings.inbox_path).parts
-        if relative_parts and relative_parts[0] == "tracker":
-            return self.settings.tracker_collection
+        if relative_parts:
+            if (
+                self.settings.category_rag_enabled
+                and relative_parts[0] == self.settings.category_inbox_dirname
+                and len(relative_parts) >= 3
+            ):
+                return category_collection_name(self.settings, relative_parts[1])
+            if relative_parts[0] == "tracker":
+                return self.settings.tracker_collection
         return self.settings.knowledge_collection
+
+    def _category_slug_for(self, path: Path) -> str | None:
+        relative_parts = path.relative_to(self.settings.inbox_path).parts
+        if (
+            self.settings.category_rag_enabled
+            and len(relative_parts) >= 3
+            and relative_parts[0] == self.settings.category_inbox_dirname
+        ):
+            return relative_parts[1]
+        return None
+
+    def _ensure_collection(self, collection: str, path: Path) -> None:
+        if collection in self._ensured_collections:
+            return
+        if is_category_collection(self.settings, collection):
+            self.qdrant.ensure_collection(collection)
+            slug = self._category_slug_for(path)
+            if slug:
+                try:
+                    ensure_registry_entry_for_slug(self.settings, slug)
+                except OSError:
+                    pass
+        self._ensured_collections.add(collection)
+
+    def _category_metadata(self, path: Path, collection: str) -> dict:
+        slug = self._category_slug_for(path)
+        if not slug:
+            return {}
+        metadata: dict = {"category_slug": slug, "category": slug}
+        sidecar = path.with_name(path.name + META_SIDECAR_SUFFIX)
+        if sidecar.exists():
+            try:
+                data = json.loads(sidecar.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                data = {}
+            for key in ("category", "category_slug", "image_path", "origin", "caption_note"):
+                value = data.get(key)
+                if value:
+                    metadata[key] = value
+        return metadata
 
     def _chunk_text(self, text: str) -> list[str]:
         chunk_size = max(200, self.settings.ingest_chunk_chars)
