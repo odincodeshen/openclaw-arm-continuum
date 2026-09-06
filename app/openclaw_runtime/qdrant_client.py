@@ -28,6 +28,18 @@ class QdrantClient:
             timeout=self.settings.request_timeout,
         )
 
+    def points_count(self, collection: str) -> int | None:
+        try:
+            response = get_json(
+                f"{self.settings.qdrant_base_url}/collections/{collection}",
+                timeout=self.settings.web_timeout,
+            )
+        except Exception:
+            return None
+        result = response.get("result") or {}
+        count = result.get("points_count")
+        return int(count) if isinstance(count, (int, float)) else None
+
     def upsert_text(self, collection: str, text: str, vector: list[float], metadata: dict) -> str:
         point_id = str(uuid.uuid4())
         payload_data = {

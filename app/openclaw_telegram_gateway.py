@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import mimetypes
+import shutil
 from pathlib import Path
 import re
 import signal
@@ -12,6 +13,13 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
+from openclaw_runtime.categories import (
+    parse_category_caption,
+    registry_entries,
+    resolve_category,
+    upsert_registry_entry,
+    validate_category_name,
+)
 from openclaw_runtime.config import load_settings
 from openclaw_runtime.agents import AgentRegistry, TaskDispatcher
 from openclaw_runtime.agents.base import Task
@@ -43,14 +51,18 @@ from openclaw_runtime.gateway_cron import (
 from openclaw_runtime.file_ingest import SUPPORTED_SUFFIXES
 from openclaw_runtime.http_client import request_json
 from openclaw_runtime.llm_client import LlmClient
+from openclaw_runtime.qdrant_client import QdrantClient
 from openclaw_runtime.skill_router import SkillRouter
 from openclaw_runtime.source_ingest import save_google_doc
 from openclaw_runtime.task_history import TaskHistory
 from openclaw_runtime.transcription_client import TranscriptionClient
+from openclaw_runtime.vision_client import DEFAULT_DESCRIBE_INSTRUCTION, VisionClient
 
 
 settings = load_settings()
 llm = LlmClient(settings)
+vision = VisionClient(settings)
+qdrant = QdrantClient(settings)
 transcriber = TranscriptionClient(settings)
 skill_router = SkillRouter(settings, llm)
 agent_registry = AgentRegistry([SkillAgent(skill) for skill in skill_router.skills] + [ChatAgent(llm)])
@@ -61,6 +73,12 @@ RUNNING = True
 ACTIVE_LOCK = threading.Lock()
 ACTIVE_REQUESTS = 0
 SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
+
+# chat_id -> {"items": [{"path": str, "kind": "document"|"image", "note": str}], "updated_at": int}
+# A file uploaded without a recognised category caption parks here until the
+# user's next plain-text message names the category (the two-step flow).
+PENDING_CATEGORY_LOCK = threading.Lock()
+PENDING_CATEGORY: dict[int, dict] = {}
 
 HELP_TEXT = f"""OpenClaw Arm Continuum quick reference
 
@@ -127,10 +145,19 @@ Example: /rag debugger_armv8v9.pdf Summarize the key points
 Caption a document with /mem or /tracker to save it to dynamic
 tracker memory instead.
 
+Category RAG
+Keep different kinds of material in separate, non-overlapping
+knowledge bases. Upload a photo or document, then either:
+- caption it #<name> (e.g. #工作筆記 or #[Work Notes]), or
+- send the file first, then reply with the category name.
+Query one category:  /rag #<name> <question>
+Query every category: /rag #all <question>
+/cat list shows your categories. /cancel drops a waiting file.
+
 Photos and voice
 Upload a photo directly and OpenClaw will save it to the
-{settings.runtime_label} inbox and hand it to the local vLLM/VLM for
-analysis.
+{settings.runtime_label} inbox and hand it to the local VLM for
+analysis (set OPENCLAW_VLM_MODEL to a vision model).
 
 A photo caption can double as an analysis instruction.
 Example: Read out the text in this image and summarize the key points
@@ -221,6 +248,265 @@ def document_directory(caption: str) -> Path:
     return settings.inbox_path / "knowledge" / "telegram"
 
 
+# --- category RAG -------------------------------------------------------------
+
+
+def category_staging_dir() -> Path:
+    return settings.inbox_path / ".staging" / "telegram"
+
+
+def category_dir(slug: str) -> Path:
+    return settings.inbox_path / settings.category_inbox_dirname / slug
+
+
+def is_tracker_caption(caption: str) -> bool:
+    lowered = caption.strip().lower()
+    return lowered.startswith("/tracker") or lowered.startswith("/mem")
+
+
+def _write_meta_sidecar(doc_path: Path, data: dict) -> None:
+    sidecar = doc_path.with_name(doc_path.name + ".meta.json")
+    sidecar.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def ingest_document_into_category(source_path: Path, entry: dict, note: str = "") -> Path:
+    """Place an already-downloaded document into its category inbox folder."""
+    directory = category_dir(entry["slug"])
+    target = unique_path(directory, source_path.name)
+    shutil.move(str(source_path), str(target))
+    _write_meta_sidecar(
+        target,
+        {
+            "category": entry["display"],
+            "category_slug": entry["slug"],
+            "origin": "telegram",
+            "caption_note": note,
+        },
+    )
+    return target
+
+
+def ingest_image_into_category(chat_id: int, image_path: Path, entry: dict, note: str = "") -> Path:
+    """Describe an image with the vision model and index that text under a category."""
+    directory = category_dir(entry["slug"])
+    stored_image = unique_path(directory / "media", image_path.name)
+    shutil.copy2(str(image_path), str(stored_image))
+
+    instruction = DEFAULT_DESCRIBE_INSTRUCTION
+    if note:
+        instruction = f"{instruction}\n\nThe uploader added this note, use it as context: {note}"
+    description = vision.describe_image(
+        stored_image, instruction, max_tokens=settings.category_image_max_tokens
+    )
+
+    doc = unique_path(directory, f"{stored_image.stem}.md")
+    doc.write_text(
+        "\n".join(
+            [
+                f"# {image_path.name}",
+                "",
+                f"Category: {entry['display']}",
+                "Source: telegram image",
+                f"Image: {stored_image}",
+                f"Indexed: {datetime.now(timezone.utc).replace(microsecond=0).isoformat()}",
+                f"Note: {note}" if note else "",
+                "",
+                "## Description",
+                "",
+                description,
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    _write_meta_sidecar(
+        doc,
+        {
+            "category": entry["display"],
+            "category_slug": entry["slug"],
+            "origin": "telegram",
+            "image_path": str(stored_image),
+            "caption_note": note,
+        },
+    )
+    return doc
+
+
+def set_pending_category(chat_id: int, item: dict) -> int:
+    with PENDING_CATEGORY_LOCK:
+        pending = PENDING_CATEGORY.setdefault(chat_id, {"items": [], "updated_at": 0})
+        pending["items"].append(item)
+        pending["updated_at"] = int(time.time())
+        return len(pending["items"])
+
+
+def pop_pending_category(chat_id: int) -> dict | None:
+    with PENDING_CATEGORY_LOCK:
+        return PENDING_CATEGORY.pop(chat_id, None)
+
+
+def has_pending_category(chat_id: int) -> bool:
+    with PENDING_CATEGORY_LOCK:
+        return chat_id in PENDING_CATEGORY
+
+
+def sweep_pending_items_to_default(pending: dict) -> None:
+    """Send a dropped/expired batch's staged documents to the general knowledge inbox."""
+    for item in pending.get("items", []):
+        if item.get("kind") != "document":
+            continue
+        staged = Path(item["path"])
+        if not staged.exists():
+            continue
+        fallback = unique_path(settings.inbox_path / "knowledge" / "telegram", staged.name)
+        try:
+            shutil.move(str(staged), str(fallback))
+            log(f"[category] staged doc -> knowledge {fallback.name}")
+        except OSError as exc:
+            log(f"[category] fallback move failed {staged}: {exc}")
+
+
+def sweep_expired_pending() -> None:
+    """Move staged docs from timed-out two-step uploads into the default knowledge inbox."""
+    cutoff = int(time.time()) - settings.category_pending_ttl_seconds
+    expired: list[tuple[int, dict]] = []
+    with PENDING_CATEGORY_LOCK:
+        for chat_id, pending in list(PENDING_CATEGORY.items()):
+            if pending.get("updated_at", 0) < cutoff:
+                expired.append((chat_id, PENDING_CATEGORY.pop(chat_id)))
+    for chat_id, pending in expired:
+        had_doc = any(item.get("kind") == "document" for item in pending.get("items", []))
+        sweep_pending_items_to_default(pending)
+        if had_doc:
+            send_message(
+                chat_id,
+                "No category was given in time, so the waiting document was filed "
+                "into the general knowledge base.",
+            )
+        log(f"[category] pending expired chat_id={chat_id}")
+
+
+def resolve_pending_with_category(chat_id: int, category_text: str) -> bool:
+    """Consume a chat's pending uploads into the category named by category_text."""
+    pending = pop_pending_category(chat_id)
+    if not pending or not pending.get("items"):
+        return False
+    try:
+        display = validate_category_name(settings, category_text)
+    except ValueError as exc:
+        # keep the pending items so the user can retry with a valid name
+        with PENDING_CATEGORY_LOCK:
+            PENDING_CATEGORY[chat_id] = pending
+        send_message(chat_id, f"That category name will not work: {exc}. Send another name, or /cancel.")
+        return True
+
+    entry = upsert_registry_entry(settings, display)
+    worker = threading.Thread(
+        target=_run_category_ingest,
+        args=(chat_id, pending["items"], entry),
+        daemon=True,
+    )
+    worker.start()
+    return True
+
+
+def _ingest_caption_category(
+    chat_id: int, source_path: Path, kind: str, category_name: str, note: str
+) -> None:
+    try:
+        display = validate_category_name(settings, category_name)
+    except ValueError as exc:
+        send_message(chat_id, f"That category name will not work: {exc}")
+        return
+    entry = upsert_registry_entry(settings, display)
+    send_message(chat_id, f"Filing this into category 「{entry['display']}」.")
+    worker = threading.Thread(
+        target=_run_category_ingest,
+        args=(chat_id, [{"path": str(source_path), "kind": kind, "note": note}], entry),
+        daemon=True,
+    )
+    worker.start()
+
+
+def _route_image_to_category(
+    chat_id: int, image_path: Path, category_name: str | None, note: str
+) -> None:
+    if not settings.category_rag_enabled:
+        return
+    if category_name:
+        _ingest_caption_category(chat_id, image_path, "image", category_name, note)
+        return
+    set_pending_category(chat_id, {"path": str(image_path), "kind": "image", "note": note})
+    send_message(
+        chat_id,
+        "To also index this image for retrieval, reply with a category name "
+        "(or /cancel to skip). The analysis above is sent regardless.",
+    )
+
+
+def _run_category_ingest(chat_id: int, items: list[dict], entry: dict) -> None:
+    done: list[str] = []
+    failed: list[str] = []
+    for item in items:
+        path = Path(item["path"])
+        note = item.get("note", "")
+        try:
+            if item.get("kind") == "image":
+                doc = ingest_image_into_category(chat_id, path, entry, note)
+            else:
+                doc = ingest_document_into_category(path, entry, note)
+            done.append(doc.name)
+        except Exception as exc:  # noqa: BLE001 - report back to the user
+            log(f"[category] ingest failed chat_id={chat_id} path={path}: {exc}")
+            failed.append(f"{path.name} ({exc})")
+
+    lines = [f"Category 「{entry['display']}」 (collection: {entry['collection']})"]
+    if done:
+        lines.append("Queued for indexing: " + ", ".join(done))
+        lines.append(f"In a few seconds: /rag #{entry['display']} <your question>")
+    if failed:
+        lines.append("Failed: " + "; ".join(failed))
+    send_message(chat_id, "\n".join(lines))
+    log(f"[category] ingest chat_id={chat_id} slug={entry['slug']} ok={len(done)} fail={len(failed)}")
+
+
+def category_command_text() -> str:
+    return (
+        "OpenClaw category RAG\n\n"
+        "Upload a photo or document, then either:\n"
+        "- put the category in the caption as #<name> (e.g. #工作筆記), or\n"
+        "- send the file first, then reply with the category name.\n\n"
+        "/cat list   Show categories and their document counts\n"
+        "/cancel     Drop a file that is waiting for a category\n\n"
+        "Query one category:  /rag #<name> <question>\n"
+        "Query every category: /rag #all <question>"
+    )
+
+
+def handle_category_command(chat_id: int, text: str) -> bool:
+    if text != "/cat" and not text.startswith("/cat "):
+        return False
+    parts = text.split(maxsplit=1)
+    action = parts[1].strip().lower() if len(parts) > 1 else "help"
+    if action in {"help", "?", ""}:
+        send_message(chat_id, category_command_text())
+        return True
+    if action == "list":
+        entries = registry_entries(settings)
+        if not entries:
+            send_message(chat_id, "No categories yet. Upload a file with a #<name> caption to create one.")
+            return True
+        lines = ["Categories:"]
+        for item in entries:
+            count = qdrant.points_count(item["collection"])
+            suffix = f" - {count} chunks" if count is not None else ""
+            lines.append(f"- {item['display']}{suffix}  (collection: {item['collection']})")
+        send_message(chat_id, "\n".join(lines))
+        return True
+    send_message(chat_id, category_command_text())
+    return True
+
+
 def handle_document_message(chat_id: int, message: dict, caption: str) -> bool:
     document = message.get("document")
     if not document:
@@ -241,7 +527,17 @@ def handle_document_message(chat_id: int, message: dict, caption: str) -> bool:
     )
     base_name = sanitize_filename(Path(original_name).stem, "telegram-document")
     target_name = f"{timestamp()}-{base_name}{suffix}"
-    target_directory = settings.inbox_path / "media" / "telegram" if mime_type.startswith("image/") else document_directory(caption)
+
+    category_name, category_note = parse_category_caption(caption) if settings.category_rag_enabled else (None, "")
+
+    if mime_type.startswith("image/"):
+        target_directory = settings.inbox_path / "media" / "telegram"
+    elif category_name:
+        # Land a category-captioned document in staging so the memory watcher
+        # never briefly indexes it into the default knowledge collection.
+        target_directory = category_staging_dir()
+    else:
+        target_directory = document_directory(caption)
     target_path = unique_path(target_directory, target_name)
     downloaded_path, byte_count = download_telegram_file(file_id, target_path)
 
@@ -254,14 +550,30 @@ def handle_document_message(chat_id: int, message: dict, caption: str) -> bool:
         )
         worker = threading.Thread(
             target=process_image_message,
-            args=(chat_id, downloaded_path, caption),
+            args=(chat_id, downloaded_path, category_note if category_name else caption),
             daemon=True,
         )
         worker.start()
         log(f"[telegram] saved image-document chat_id={chat_id} path={downloaded_path} bytes={byte_count}")
+        _route_image_to_category(chat_id, downloaded_path, category_name, category_note)
+        return True
+
+    if category_name:
+        _ingest_caption_category(chat_id, downloaded_path, "document", category_name, category_note)
         return True
 
     if downloaded_path.suffix.lower() in SUPPORTED_SUFFIXES:
+        if settings.category_rag_enabled and not is_tracker_caption(caption):
+            staged = unique_path(category_staging_dir(), downloaded_path.name)
+            shutil.move(str(downloaded_path), str(staged))
+            set_pending_category(chat_id, {"path": str(staged), "kind": "document", "note": ""})
+            send_message(
+                chat_id,
+                f"Got {staged.name}. Which knowledge category should it go in?\n"
+                "Reply with a category name, or /cancel to file it into the general knowledge base.",
+            )
+            log(f"[category] pending document chat_id={chat_id} staged={staged.name}")
+            return True
         collection = (
             settings.tracker_collection
             if target_directory.relative_to(settings.inbox_path).parts[0] == "tracker"
@@ -309,13 +621,16 @@ def handle_photo_message(chat_id: int, message: dict) -> bool:
         f"Size: {byte_count} bytes",
     )
     caption = (message.get("caption") or "").strip()
+    category_name, category_note = parse_category_caption(caption) if settings.category_rag_enabled else (None, "")
+    analysis_prompt = category_note if category_name else caption
     worker = threading.Thread(
         target=process_image_message,
-        args=(chat_id, downloaded_path, caption),
+        args=(chat_id, downloaded_path, analysis_prompt),
         daemon=True,
     )
     worker.start()
     log(f"[telegram] saved photo chat_id={chat_id} path={downloaded_path} bytes={byte_count}")
+    _route_image_to_category(chat_id, downloaded_path, category_name, category_note)
     return True
 
 
@@ -746,6 +1061,7 @@ def setup_bot_commands() -> None:
         {"command": "mem", "description": "Write to local memory"},
         {"command": "rag", "description": "Query local memory and knowledge base"},
         {"command": "doc", "description": "Import a public Google Doc or document source"},
+        {"command": "cat", "description": "List category knowledge bases (see /cat help)"},
         {"command": "search", "description": "Search the web"},
         {"command": "cron", "description": "Configure proactive push schedules"},
         {"command": "agents", "description": "List OpenClaw agents"},
@@ -809,6 +1125,12 @@ def handle_message(message: dict) -> None:
 
     text = (message.get("text") or message.get("caption") or "").strip()
 
+    if settings.category_rag_enabled:
+        try:
+            sweep_expired_pending()
+        except Exception as exc:  # noqa: BLE001 - never let housekeeping drop a message
+            log(f"[category] sweep error: {exc}")
+
     try:
         if handle_document_message(chat_id, message, text):
             return
@@ -828,6 +1150,21 @@ def handle_message(message: dict) -> None:
     if text in {"/start", "/help"}:
         send_message(chat_id, HELP_TEXT)
         return
+
+    if settings.category_rag_enabled:
+        if text.lower() in {"/cancel", "/skip"}:
+            dropped = pop_pending_category(chat_id)
+            if dropped:
+                sweep_pending_items_to_default(dropped)
+                send_message(chat_id, "Okay, cancelled. Any waiting document goes to the general knowledge base.")
+            else:
+                send_message(chat_id, "Nothing was waiting for a category.")
+            return
+        if handle_category_command(chat_id, text):
+            return
+        if not text.startswith("/") and has_pending_category(chat_id):
+            if resolve_pending_with_category(chat_id, text):
+                return
 
     if text == "/agents":
         send_message(chat_id, agents_text())
