@@ -1,17 +1,65 @@
 # Future TODO List
 
-This document tracks post-v1.2 ideas and candidate work items for
-`openclaw-arm-continuum`.
+This document tracks candidate work items for `openclaw-arm-continuum`.
+Current release: **v1.6**.
 
-The v1.2 release is intentionally stable and text-first. The items below are
+The runtime is intentionally stable and text-first. The items below are
 future-facing and should be implemented incrementally without breaking the
 existing Telegram, memory, RAG, search, cron, and Gateway workflows.
 
-## Required pre-v1.4 milestone: Telegram conversational memory
+## Delivered since v1.2
 
-Schedule this after the v1.3 multi-agent release is complete and before the
-v1.4 multimodal implementation starts. This is a runtime enhancement, not a
-rewrite of the published local-first assistant tutorial.
+The scheduling language in the sections below was written against a
+v1.2 baseline. What has actually shipped since then:
+
+- **v1.3 (branch, no release tag) — multi-model deployment configs.**
+  Bounded multi-model engineering-review workflow; O6 and DGX multi-model
+  deployment configurations; `models.*.example.json` catalog examples.
+  These commits merged forward and shipped as part of v1.4.
+- **v1.4 — Category RAG + vision decoupling.** `/rag #<category>` and
+  `/rag #all` retrieval, per-category Qdrant collections, two-step
+  caption/pending upload flow, `/cat` command, full-width `＃` support,
+  and a `Sources:` citation line on every `/rag` answer. Introduced the
+  `VisionClient` seam (`app/openclaw_runtime/vision_client.py`) that
+  decouples the Telegram image path from any specific model or endpoint.
+- **v1.5 — multi-model catalog + expert routing.** `models.json` catalog
+  (`OPENCLAW_MODEL_CATALOG`), per-skill routing to an expert model, and an
+  optional LLM intent classifier for plain-language messages that match no
+  command or keyword (`OPENCLAW_INTENT_ROUTER_ENABLED`). See
+  `docs/MODEL_ROUTING.md`.
+- **v1.6 — English-only user-facing strings.** Finished the i18n pass:
+  Category RAG replies, ingest confirmations, and `/help` are English;
+  Chinese-only test-step docs removed. Input recognition (full-width `＃`,
+  Chinese category names and queries) is unchanged.
+
+Still open from the original list, re-baselined against v1.6:
+
+- Telegram conversational memory — **not started** (chat is still
+  single-turn; no `/new` or `/reset`).
+- Platform-aware multimodal analysis — **partially unblocked**: the
+  `VisionClient` seam (v1.4) and the model catalog (v1.5) are the seams
+  this design asked for; the backend workers (`mnn-omni`, `vllm-vlm`,
+  `remote-vlm`) and the registered agent are not built.
+- OCR extractor for Category RAG — **not started** (Category RAG itself
+  shipped in v1.4; `ingest_image_into_category` takes an extractor list,
+  today only `vlm_description`).
+- Richer multi-agent runtime — **partially advanced**: v1.5 catalog
+  routing + intent classifier cover part of "task routing policies";
+  `AgentRegistry` / `TaskDispatcher` are still thin.
+- Personal memory deepening — the "more precise `/rag` scope filters"
+  item is **partially done** via Category RAG (`#<category>` / `#all`);
+  the rest is not started.
+- Runtime lifecycle / `openclawctl` / `OPENCLAW_BOOT_MODE` — **not
+  started**.
+- Platform presets — **partially done**: the v1.3 branch added O6 and DGX
+  multi-model configs and catalog examples (shipped in v1.4); the
+  remaining profiles and per-platform smoke tests are not done.
+
+## Candidate milestone: Telegram conversational memory
+
+A runtime enhancement, not a rewrite of the published local-first
+assistant tutorial. Good next milestone: it is the most-requested gap in
+ordinary chat and does not depend on any of the multimodal work.
 
 The existing `/mem` and `/rag` workflow is explicit persistent memory. The user
 chooses what to save and when to retrieve it. Ordinary Telegram chat is
@@ -39,12 +87,18 @@ Required validation:
 - reset and retention behavior;
 - disabled-mode single-turn behavior;
 - no secrets or complete conversation bodies in task-history output; and
-- full v1.2 and v1.3 regression coverage.
+- full regression coverage of the existing command, RAG, routing, and cron
+  test suites.
 
 ## v2.0 Candidate: Platform-Aware MultimodalAnalysisAgent
 
 Goal: add a reusable multimodal analysis agent that can select the best local
 backend for each Arm Continuum deployment profile.
+
+Groundwork already in place (see "Delivered since v1.2"): the `VisionClient`
+seam (v1.4) already hides the image backend from callers, and the v1.5 model
+catalog already routes each skill to a chosen model. What remains is the
+backend workers, the registered agent, and dispatcher integration below.
 
 Recommended architecture:
 
@@ -360,7 +414,12 @@ Expected work:
 ## Future: Richer Multi-Agent Runtime
 
 Goal: evolve the current thin AgentRegistry / TaskDispatcher into a richer
-multi-agent runtime while keeping the v1.2 skill architecture stable.
+multi-agent runtime while keeping the skill architecture stable.
+
+Partially addressed by v1.5: the model catalog routes each skill to an
+expert model and the optional intent classifier already picks a skill for
+plain-language messages. "Task routing policies" below now means extending
+that, not starting from scratch.
 
 Candidate agents:
 
@@ -389,7 +448,9 @@ Candidate work:
 - Task deadline review.
 - Todo completion and snooze controls.
 - Better metadata parsing for `/mem`.
-- More precise `/rag` scope filters.
+- More precise `/rag` scope filters. Category RAG (`/rag #<category>` and
+  `/rag #all`, shipped v1.4) covers collection-level scoping; remaining
+  work is finer filters within a collection (date, source, tag).
 - Memory aging, archival, and explicit user review.
 
 ## Future: Runtime Lifecycle and Resource Control
