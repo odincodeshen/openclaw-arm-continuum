@@ -1,0 +1,47 @@
+name: integration
+
+# L2: the real ingest -> Qdrant -> retrieve -> format pipeline, with a fake
+# in-process model/embedding server (no GPU). The unit lane (ci.yml) runs the
+# same test file but skips the Qdrant-backed cases; this lane provides Qdrant so
+# they actually execute.
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scenarios:
+    runs-on: ubuntu-latest
+    services:
+      qdrant:
+        image: qdrant/qdrant:v1.12.4
+        ports:
+          - 6333:6333
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet pytest pypdf
+      - name: Wait for Qdrant
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:6333/readyz && exit 0
+            sleep 1
+          done
+          echo "Qdrant did not become ready" >&2
+          exit 1
+      - name: L2 integration scenarios
+        env:
+          OPENCLAW_TEST_QDRANT_URL: http://127.0.0.1:6333
+        run: pytest -q tests/test_scenarios_integration.py

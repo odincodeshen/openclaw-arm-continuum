@@ -47,12 +47,22 @@ syntax). Import sorting (`I`) and line length (`E501`) are left for a
 separate formatting pass so this stays reviewable; tighten
 `[tool.ruff.lint] select` in `pyproject.toml` when ready.
 
-## Not covered here (needs GPU + model endpoints)
+## Integration layer (`integration.yml`)
 
-End-to-end behaviour that depends on vLLM / Qdrant / Ollama — category
-isolation against a real index, `Sources:` output, intent-router
-classification, the `/review` workflow — is not run in hosted CI. That is
-the second CI layer (a self-hosted runner on the GB10 box, or a
-`workflow_dispatch` job) and is tracked separately. The manual procedure
-lives in `docs/CATEGORY_RAG_MANUAL_TEST.md` and
+`.github/workflows/integration.yml` runs `tests/test_scenarios_integration.py`
+against a real Qdrant service container, with an in-process fake model /
+embedding server (`tests/fake_inference.py`) so there is still no GPU. It
+covers the ingest -> Qdrant -> retrieve -> format pipeline: category
+isolation, `Sources:` output, knowledge-doc indexing, `/mem` round trip, and
+conversational memory. See `docs/TESTING.md`.
+
+The unit `test` job above runs the same file but its Qdrant-backed cases skip
+(no service), so a plain `pytest` stays green.
+
+## Not covered in hosted CI (needs GPU + real models)
+
+Model-quality behaviour — intent-router accuracy, the `/review` workflow, a
+real VLM reading an image — is the L3 layer: same scenarios, real vLLM /
+Ollama on the GB10 self-hosted runner. Tracked in `docs/TESTING.md`; manual
+procedures in `docs/CATEGORY_RAG_MANUAL_TEST.md` and
 `docs/DGX_V13_VALIDATION.md`.

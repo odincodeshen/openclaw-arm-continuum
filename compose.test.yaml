@@ -1,0 +1,18 @@
+# Integration-test dependencies (L2). Just Qdrant -- the fake OpenAI / Ollama
+# inference server runs in-process inside pytest (tests/fake_inference.py), so
+# no GPU and no model containers are involved.
+#
+#   docker compose -f compose.test.yaml up -d
+#   OPENCLAW_TEST_QDRANT_URL=http://127.0.0.1:6333 pytest tests/test_scenarios_integration.py
+#   docker compose -f compose.test.yaml down -v
+#
+# The scenarios create and delete their own uniquely-named collections
+# (t_know_*, t_track_*, t_cat_*), so pointing this at a shared Qdrant is safe.
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: openclaw-test-qdrant
+    ports:
+      - "127.0.0.1:6333:6333"
+    tmpfs:
+      - /qdrant/storage
