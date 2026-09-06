@@ -172,3 +172,56 @@ Other:
 Note: an independent v1.3 line of work (multi-model catalog / engineering
 review) lives on its own branch and is not part of this release.
 ```
+
+## Suggested Release Title (v1.5)
+
+```text
+OpenClaw Arm Continuum v1.5 - Multi-model catalog and expert routing
+```
+
+## Suggested Release Notes (v1.5)
+
+```text
+v1.5 merges the v1.3 multi-model catalog line onto v1.4 and unifies it, then
+adds per-skill expert-model routing and an optional LLM intent classifier.
+With no models.json present, behaviour is identical to v1.4.
+
+Merged from the v1.3 line:
+- Model catalog (app/models.json, OPENCLAW_MODEL_CATALOG): named endpoints
+  with roles (general, vision, classification, code_review,
+  architecture_review, synthesis), per-model timeout, and fallback chains.
+  ModelClientFactory hands each consumer the right client.
+- LlmClient is bound to a ModelSpec; chat_json() returns JSON-schema
+  structured output.
+- Bounded private engineering review: /review runs a small router model ->
+  code_review + architecture_review specialists -> synthesis, with
+  per-subtask history, degraded handling, and automatic fallback. Available
+  only when local_router / local_coder / local_reasoner are configured.
+  See docs/DGX_V13_VALIDATION.md, docs/O6_MULTIMODEL.md.
+
+Unification (v1.4 <-> v1.3):
+- The v1.4 VisionClient is now backed by the catalog's "vision" model.
+  models.json with a "vision" role is the preferred config; OPENCLAW_VLM_*
+  still works as a shortcut (synthesises a vision entry). No vision model ->
+  falls back to the text model, which cannot read images.
+
+New: per-skill expert models
+- skills.json gains an optional "model_policy" per skill (a catalog model
+  id). SkillRouter resolves it through the catalog; unknown -> local_default.
+  /agents shows the endpoint each skill resolved to. Handler routing itself
+  stays deterministic keyword/prefix matching.
+
+New: optional LLM intent classifier
+- intent_router.py classifies a plain-language message (knowledge_base /
+  web_search / chat) via the local_router model and routes it to the RAG or
+  web-search skill.
+- Runs ONLY after deterministic slash-command and keyword routing have both
+  missed, and ONLY when a local_router model exists. Any error, low
+  confidence, or "chat" -> falls through to the chat model as before. It
+  never overrides an explicit command.
+- OPENCLAW_INTENT_ROUTER_ENABLED (default true, inert without local_router),
+  OPENCLAW_INTENT_ROUTER_MIN_CONFIDENCE (default 0.6).
+- docs/MODEL_ROUTING.md documents both routing layers.
+
+216 tests pass.
+```
