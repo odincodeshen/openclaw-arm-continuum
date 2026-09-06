@@ -21,6 +21,8 @@ def build_settings(**overrides) -> Settings:
         vlm_base_url=UNREACHABLE_URL,
         vlm_model="x-vl",
         vlm_max_tokens=1,
+        intent_router_enabled=False,
+        intent_router_min_confidence=0.6,
         web_enabled=True,
         web_timeout=1,
         scraper_base_url=UNREACHABLE_URL,

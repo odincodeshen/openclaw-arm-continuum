@@ -2,6 +2,7 @@ import json
 
 from openclaw_runtime.config import Settings
 from openclaw_runtime.embedding_client import EmbeddingClient
+from openclaw_runtime.intent_router import IntentRouter
 from openclaw_runtime.llm_client import LlmClient
 from openclaw_runtime.qdrant_client import QdrantClient
 from openclaw_runtime.skills.base import SkillResult, has_explicit_command_prefix
@@ -17,6 +18,11 @@ class SkillRouter:
         self.model_clients = model_clients
         self.config = self._load_config()
         self.skills = self._load_skills()
+        self.intent_router = IntentRouter.build(
+            model_clients,
+            enabled=getattr(settings, "intent_router_enabled", False),
+            min_confidence=getattr(settings, "intent_router_min_confidence", 0.6),
+        )
 
     def _client_for(self, skill_config: dict) -> LlmClient:
         """Pick the expert model for a skill: its configured model_policy from
@@ -33,7 +39,22 @@ class SkillRouter:
         for skill in self.skills:
             if skill.can_handle(text):
                 return skill.run(text)
+        routed = self._route_by_intent(text)
+        if routed is not None:
+            return routed
         return SkillResult("llm", self.llm.chat(text))
+
+    def _route_by_intent(self, text: str) -> SkillResult | None:
+        if self.intent_router is None:
+            return None
+        intent = self.intent_router.classify(text)
+        target = {"knowledge_base": "rag_retrieve", "web_search": "web_search"}.get(intent)
+        if not target:
+            return None
+        for skill in self.skills:
+            if getattr(skill, "name", None) == target:
+                return skill.run(text)
+        return None
 
     def _load_config(self) -> dict:
         if not self.settings.skills_config_path.exists():

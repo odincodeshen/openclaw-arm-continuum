@@ -17,6 +17,13 @@ def env_int(name: str, default: int) -> int:
     return int(value)
 
 
+def env_float(name: str, default: float) -> float:
+    value = os.environ.get(name)
+    if value is None or value == "":
+        return default
+    return float(value)
+
+
 @dataclass(frozen=True)
 class Settings:
     runtime_label: str
@@ -36,6 +43,9 @@ class Settings:
     vlm_base_url: str
     vlm_model: str
     vlm_max_tokens: int
+
+    intent_router_enabled: bool
+    intent_router_min_confidence: float
 
     web_enabled: bool
     web_timeout: int
@@ -121,6 +131,8 @@ def load_settings() -> Settings:
         vlm_base_url=os.environ.get("OPENCLAW_VLM_BASE_URL", vllm_base_url).rstrip("/"),
         vlm_model=os.environ.get("OPENCLAW_VLM_MODEL", vllm_model),
         vlm_max_tokens=env_int("OPENCLAW_VLM_MAX_TOKENS", vision_max_tokens),
+        intent_router_enabled=env_bool("OPENCLAW_INTENT_ROUTER_ENABLED", True),
+        intent_router_min_confidence=env_float("OPENCLAW_INTENT_ROUTER_MIN_CONFIDENCE", 0.6),
         web_enabled=env_bool("OPENCLAW_WEB_ENABLED", True),
         web_timeout=env_int("OPENCLAW_WEB_TIMEOUT", 20),
         scraper_base_url=os.environ.get("OPENCLAW_SCRAPER_BASE_URL", "http://openclaw-browser-scraper:8787").rstrip("/"),

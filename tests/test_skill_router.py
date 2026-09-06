@@ -21,12 +21,14 @@ class FakeLlm:
         return f"llm answer: {text}"
 
 
-def make_router(skills: list) -> SkillRouter:
+def make_router(skills: list, intent_router=None) -> SkillRouter:
     router = SkillRouter.__new__(SkillRouter)
     router.settings = None
     router.llm = FakeLlm()
+    router.model_clients = None
     router.config = {"skills": {}}
     router.skills = skills
+    router.intent_router = intent_router
     return router
 
 
@@ -76,6 +78,50 @@ class SkillRouterExplicitCommandPriorityTest(unittest.TestCase):
         self.assertEqual(result.skill_name, "llm")
 
 
+class FakeIntentRouter:
+    def __init__(self, intent):
+        self.intent = intent
+        self.seen = None
+
+    def classify(self, text):
+        self.seen = text
+        return self.intent
+
+
+class SkillRouterIntentFallbackTest(unittest.TestCase):
+    def test_explicit_command_never_reaches_intent_router(self) -> None:
+        rag = FakeSkill("rag_retrieve", ["/rag"])
+        intent = FakeIntentRouter("web_search")
+        router = make_router([rag], intent_router=intent)
+        result = router.route("/rag what did I save")
+        self.assertEqual(result.skill_name, "rag_retrieve")
+        self.assertIsNone(intent.seen)
+
+    def test_keyword_match_never_reaches_intent_router(self) -> None:
+        weather = FakeSkill("weather", ["天氣"])
+        intent = FakeIntentRouter("chat")
+        router = make_router([weather], intent_router=intent)
+        router.route("明天天氣如何")
+        self.assertIsNone(intent.seen)
+
+    def test_intent_knowledge_base_routes_residual_to_rag(self) -> None:
+        rag = FakeSkill("rag_retrieve", ["/rag"])
+        router = make_router([rag], intent_router=FakeIntentRouter("knowledge_base"))
+        result = router.route("我上週存的那份筆記重點是什麼")
+        self.assertEqual(result.skill_name, "rag_retrieve")
+
+    def test_intent_chat_falls_through_to_llm(self) -> None:
+        rag = FakeSkill("rag_retrieve", ["/rag"])
+        router = make_router([rag], intent_router=FakeIntentRouter("chat"))
+        result = router.route("跟我聊聊天")
+        self.assertEqual(result.skill_name, "llm")
+
+    def test_no_intent_router_keeps_llm_fallback(self) -> None:
+        router = make_router([FakeSkill("weather", ["天氣"])], intent_router=None)
+        result = router.route("something unroutable")
+        self.assertEqual(result.skill_name, "llm")
+
+
 class SkillRouterExpertModelTest(unittest.TestCase):
     def _router(self, model_clients=None) -> SkillRouter:
         router = SkillRouter.__new__(SkillRouter)
@@ -83,6 +129,7 @@ class SkillRouterExpertModelTest(unittest.TestCase):
         router.llm = FakeLlm()
         router.model_clients = model_clients
         router.config = {"skills": {}}
+        router.intent_router = None
         return router
 
     def test_no_model_policy_uses_default_client(self) -> None:
