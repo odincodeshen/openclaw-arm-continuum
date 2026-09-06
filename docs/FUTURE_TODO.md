@@ -286,6 +286,25 @@ making text-only OpenClaw flows slower or less reliable.
 - `/search` still works.
 - Cron jobs still run and push results.
 
+## Future: OCR extractor for Category RAG image indexing
+
+Category RAG (see `docs/CATEGORY_RAG.md`) currently indexes an image by
+embedding the vision model's description + its verbatim text transcription.
+That is enough for photos and light text, but dense scanned documents,
+spreadsheets-as-images, and multi-column layouts lose fidelity.
+
+`ingest_image_into_category` builds the embedded text from a list of
+extractors (today only `vlm_description`). Add an optional `ocr_text`
+extractor behind an env toggle:
+
+- Candidate engines: PaddleOCR, docTR, Tesseract (CJK packs).
+- Run as a small local HTTP worker with a `/ocr` endpoint, same pattern as
+  the whisper/scraper workers.
+- Merge OCR output with the VLM description before chunking; keep both in
+  the payload for debugging.
+- Only worth doing if "photos of documents" turns out to be a common
+  input. Until then, a stronger `OPENCLAW_VLM_MODEL` is the better lever.
+
 ## Future: GB10 Formal VLM Runtime
 
 Goal: replace the current text-first GB10 model with a production-grade VLM for

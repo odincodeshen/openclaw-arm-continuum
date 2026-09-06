@@ -245,6 +245,22 @@ The review-first document workflow is planned, but not yet implemented in the
 Telegram gateway. Current file uploads are indexed directly after they are
 saved into the local inbox.
 
+## Category RAG
+
+Keep unrelated material in separate, non-overlapping knowledge bases (one
+Qdrant collection per category). Upload a photo or document, then name a
+category with a `#<name>` caption or by replying with the name; query it
+with `/rag #<name> <question>` or `/rag #all <question>`. Photos are indexed
+via the configured vision model (`OPENCLAW_VLM_MODEL`). See
+[docs/CATEGORY_RAG.md](docs/CATEGORY_RAG.md).
+
+```text
+#工作筆記                     (caption on the upload)
+/rag #工作筆記 open action items?
+/rag #all where is the rack diagram
+/cat list
+```
+
 ## Cron
 
 Create dynamic Telegram cron tasks with `name :: prompt` (the `::` separator
