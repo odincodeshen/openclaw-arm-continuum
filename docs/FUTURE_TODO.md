@@ -1,7 +1,7 @@
 # Future TODO List
 
 This document tracks candidate work items for `openclaw-arm-continuum`.
-Current release: **v1.6**.
+Current release: **v1.7**.
 
 The runtime is intentionally stable and text-first. The items below are
 future-facing and should be implemented incrementally without breaking the
@@ -31,6 +31,17 @@ v1.2 baseline. What has actually shipped since then:
   Category RAG replies, ingest confirmations, and `/help` are English;
   Chinese-only test-step docs removed. Input recognition (full-width `＃`,
   Chinese category names and queries) is unchanged.
+- **v1.7 — chat continuity, ops lifecycle, CI + test layers.**
+  Per-chat conversational memory (`ChatAgent` replays recent turns; `/new`;
+  `OPENCLAW_CONVERSATION_*`; `docs/CONVERSATION_MEMORY.md`). Telegram photos
+  now go through the `VisionClient` seam (no longer bypassed to the text
+  model); `scripts/vision_smoke.py`; `docs/VISION_SETUP.md`.
+  `bin/openclawctl` + `OPENCLAW_BOOT_MODE` split core services from the model
+  engine, with graceful Telegram degradation when the engine is down
+  (`docs/RUNTIME_LIFECYCLE.md`). `OPENCLAW_REPLY_LANGUAGE` sets the default
+  answer language. CI: `.github/workflows/ci.yml` (lint + unit + static) and
+  `integration.yml` (L2 scenarios against real Qdrant with an in-process
+  fake model server); `docs/TESTING.md`, `docs/CI.md`.
 
 Still open from the original list, re-baselined against v1.6:
 

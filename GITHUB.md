@@ -225,3 +225,62 @@ New: optional LLM intent classifier
 
 216 tests pass.
 ```
+
+## Suggested Release Title (v1.7)
+
+```text
+OpenClaw Arm Continuum v1.7 - Chat continuity, ops lifecycle, CI + test layers
+```
+
+## Suggested Release Notes (v1.7)
+
+```text
+v1.7 makes ordinary chat multi-turn, splits the runtime so the GPU is
+reclaimable, forces the answer language when you want it, and adds the first
+automated CI + integration test layers. With defaults unchanged, existing
+single-box behaviour is the same.
+
+Conversational memory
+- Ordinary Telegram chat now replays the recent user/assistant turns per
+  chat_id, so follow-up questions resolve ("and its population?").
+- /new (alias /reset) clears the context. /rag, /search, /mem stay
+  single-shot; nothing is promoted to Qdrant.
+- OPENCLAW_CONVERSATION_MEMORY_ENABLED / _HISTORY_TURNS / _CONTEXT_CHARS /
+  _RETENTION_HOURS. Stored locally, isolated per chat. See
+  docs/CONVERSATION_MEMORY.md.
+
+Vision seam fix
+- Telegram photo analysis (process_image_message) was calling the text model
+  directly, bypassing the catalog "vision" role. It now goes through the
+  VisionClient seam like the Category RAG image path.
+- scripts/vision_smoke.py: live endpoint check, run in-container before
+  enabling vision. docs/VISION_SETUP.md.
+
+Runtime lifecycle
+- bin/openclawctl status | start | stop | restart {core|model|full} and
+  boot (OPENCLAW_BOOT_MODE=core|full|manual) over docker compose, no compose
+  restructuring.
+- Telegram plain-chat and voice replies degrade gracefully when the model
+  engine is stopped, listing what still works. See docs/RUNTIME_LIFECYCLE.md.
+
+Answer language
+- OPENCLAW_REPLY_LANGUAGE sets the default language for model-generated
+  answers (chat, /rag, image analysis, web summaries, cron). Empty = follow
+  the user. The user can still ask for another language per message.
+  OpenClaw's own fixed UI strings stay English.
+
+CI + tests
+- .github/workflows/ci.yml: ruff lint + full unit suite + scripts/ci_validate.py
+  (import smoke, skills.json, model catalogs, sh -n bin/*) + docker compose
+  config. docs/CI.md.
+- L1 golden tests (tests/test_golden.py): command menu, slug vectors,
+  message contracts, English-only UI strings.
+- L2 integration scenarios (tests/test_scenarios_integration.py +
+  tests/fake_inference.py + integration.yml): the real ingest -> Qdrant ->
+  retrieve -> format pipeline with an in-process fake model/embedding server,
+  no GPU. Category isolation, Sources attribution, /mem round trip,
+  conversation memory.
+- docs/TESTING.md: layer overview + feature -> layer coverage matrix.
+
+266 tests pass.
+```
