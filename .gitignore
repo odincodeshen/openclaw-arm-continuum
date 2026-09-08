@@ -48,3 +48,7 @@ scripts/*.exp
 
 *.swp
 *.swo
+
+# Local Chinese test walkthroughs (kept out of the repo, same as docs/ policy)
+/*使用者測試*.md
+/*測試步驟*.md
