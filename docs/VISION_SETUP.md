@@ -6,11 +6,35 @@ the catalog model with role `vision`:
 - Telegram photo messages (`process_image_message`) -> interactive analysis.
 - Category RAG image uploads (`ingest_image_into_category`) -> indexed description.
 
-Both call the same resolved endpoint. If no dedicated vision model is
-configured, `vision` falls back to `local_default` (the main text model), and
-image quality is poor or unusable.
+Both call the same resolved endpoint. If nothing else is configured, `vision`
+falls back to `local_default`.
 
-## 1. Pick how to point `vision` at a VLM
+## Is a dedicated VLM even needed?
+
+Not always. Many current models are multimodal, including the GB10 default
+(Qwen3.x) and the Qwen2.5-VL / Qwen3-VL families. If your main model reads
+images, the simplest setup is to point `vision` at that same endpoint on
+purpose:
+
+```env
+OPENCLAW_VLM_BASE_URL=http://openclaw-vllm:8000/v1
+OPENCLAW_VLM_MODEL=<your main model>
+```
+
+Then verify:
+
+```bash
+docker compose exec openclaw-telegram python scripts/vision_smoke.py
+```
+
+It sends a red/green/blue test image and checks the description mentions the
+colours. `verdict: vision OK` means you are done -- skip the rest of this doc.
+
+Configure a **dedicated VLM** (below) only when: the main model is text-only,
+or `vision_smoke.py` on your real images shows a weakness (tiny text, dense
+charts, non-CJK OCR, bounding boxes).
+
+## 1. Pick how to point `vision` at a dedicated VLM
 
 ### Option A -- `models.json` (preferred, same catalog as routing)
 
@@ -68,9 +92,10 @@ docker compose exec openclaw-telegram python scripts/vision_smoke.py /path/to/ph
 ```
 
 The script builds `VisionClient` exactly as the gateway does and prints the
-resolved endpoint, whether it is reachable, and the description it got back. It
-warns loudly if `vision` still resolves to the text model, and exits non-zero
-if the call fails.
+resolved endpoint, whether it is reachable, and the description it got back.
+With no image argument it sends the bundled test image and checks the reply
+mentions its colours -- `verdict: vision OK` if so, a `WARNING` and non-zero
+exit if the model answered without reading the image.
 
 ## 3. Enable and restart
 
@@ -96,7 +121,7 @@ start, so a restart is required even though `./app` is mounted live.
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| `vision_smoke.py` prints the "resolves to the same endpoint" warning | No dedicated VLM configured | Do step 1 |
+| `vision_smoke.py` WARNING: model answered but did not describe the test image | Main model is text-only | Configure a dedicated VLM (step 1) |
 | `FAIL: ... returned an empty description` | Text-only model can't accept images, or returned only reasoning | Use a real VLM; check `chat_template_kwargs` support |
 | Telegram: "OPENCLAW_VISION_ENABLED=false" | Vision disabled | Step 3 |
 | Telegram: "the vision model failed to process the image input" | Endpoint unreachable or rejected the request | Re-run `vision_smoke.py`, check the vLLM logs |

@@ -55,7 +55,9 @@ Still open from the original list, re-baselined against v1.6:
 - Platform-aware multimodal analysis — **partially unblocked**: the
   `VisionClient` seam (v1.4) and the model catalog (v1.5) are the seams
   this design asked for; the backend workers (`mnn-omni`, `vllm-vlm`,
-  `remote-vlm`) and the registered agent are not built.
+  `remote-vlm`) and the registered agent are not built. On GB10 the main
+  model already covers vision (see "dedicated VLM" section below), so this
+  matters most for the Arm CPU-only profile.
 - OCR extractor for Category RAG — **not started** (Category RAG itself
   shipped in v1.4; `ingest_image_into_category` takes an extractor list,
   today only `vlm_description`).
@@ -400,36 +402,35 @@ extractor behind an env toggle:
 - Only worth doing if "photos of documents" turns out to be a common
   input. Until then, a stronger `OPENCLAW_VLM_MODEL` is the better lever.
 
-## Future: GB10 Formal VLM Runtime
+## Future: dedicated VLM (only if the main model needs it)
 
-Goal: replace the current text-first GB10 model with a production-grade VLM for
-image, PDF, screenshot, and diagram reasoning.
+The v1.5-era assumption was "the GB10 model is text-first". As of 2026-09 it
+is **not**: the production model (Qwen3.x) reads images, OCRs dense tables and
+screenshots, and describes layout well -- verified with `scripts/vision_smoke.py`
+against real Telegram photos. So `vision` deliberately shares the main model
+endpoint (`OPENCLAW_VLM_BASE_URL` / `OPENCLAW_VLM_MODEL` in `.env`), and a
+separate VLM server is **not** planned.
 
-Candidate model families:
-
-- Qwen2.5-VL
-- Qwen3-VL
-- Llama Vision family
-
-Done (post-v1.6):
+Done:
 
 - Both image paths (Telegram photo analysis and Category RAG image indexing)
-  now go through the `VisionClient` seam / catalog `vision` role -- the plain
-  photo path no longer bypasses it to `local_default`.
-- `scripts/vision_smoke.py` -- live endpoint check, run in-container before
-  enabling vision for users; warns when `vision` still resolves to the text
-  model.
-- `docs/VISION_SETUP.md` -- the three ways to point `vision` at a VLM
-  (`models.json`, `OPENCLAW_VLM_*`, `--profile vision`), verification, and
-  troubleshooting. `/help` points at it.
-- `compose.yaml` `vision` profile + `models.example.json` `vision` entry.
+  go through the `VisionClient` seam / catalog `vision` role.
+- `scripts/vision_smoke.py` -- capability probe: sends a red/green/blue test
+  image and checks the description names the colours (`verdict: vision OK`),
+  rather than assuming a shared endpoint means poor quality.
+- `docs/VISION_SETUP.md` leads with "is a dedicated VLM even needed?" and only
+  then covers `models.json` / `OPENCLAW_VLM_*` / `--profile vision`.
+- `compose.yaml` `vision` profile + `models.example.json` `vision` entry stay
+  available for the dedicated-VLM case.
 
-Remaining (hardware / ops):
+Revisit a dedicated VLM only when a concrete weakness shows up (tiny text,
+dense charts, non-CJK OCR, bounding boxes) or the main model is swapped for a
+text-only one. GPU-budget lever at that point: the main model's
+`--max-model-len` (currently 262144) dominates the KV-cache reservation;
+dropping it frees room for a second 7B VLM on the same GB10.
 
-- Stand up an actual VLM endpoint on GB10 and confirm `vision_smoke.py` passes
-  against it with a real photo.
-- Image/PDF smoke tests in the GPU e2e layer (CI Tier 2), not just the manual
-  script.
+Still open: image/PDF smoke tests in the GPU e2e layer (L3), not just the
+manual script.
 
 ## Future: Richer Multi-Agent Runtime
 
