@@ -184,6 +184,48 @@ class KnowledgeAndMemoryScenario(QdrantScenarioBase):
         self.assertIn("read only", answer.lower())
 
 
+class TrackerMemoryManagementScenario(QdrantScenarioBase):
+    """/mem list|done|rm against a real Qdrant -- proves the scroll filter,
+    set_payload, and delete endpoints behave the way the fakes assume."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.writer = MemoryWriteSkill(self.settings, {}, self.embeddings, self.qdrant)
+
+    def test_write_list_done_rm_round_trip_against_real_qdrant(self) -> None:
+        self.writer.run("/mem renew passport due:2026-12-01 tag:admin")
+        self.writer.run("/mem water the plants")
+
+        active = self.writer.run("/mem list").answer
+        self.assertIn("Active memory (2):", active)
+        self.assertIn("renew passport", active)
+        self.assertIn("due 2026-12-01", active)
+        self.assertIn("water the plants", active)
+
+        short_id = self._short_id_for("water the plants")
+        done = self.writer.run(f"/mem done {short_id}").answer
+        self.assertIn(f"Marked #{short_id} as done", done)
+
+        active_after = self.writer.run("/mem list").answer
+        self.assertNotIn("water the plants", active_after)
+        self.assertIn("Active memory (1):", active_after)
+
+        done_list = self.writer.run("/mem list done").answer
+        self.assertIn("water the plants", done_list)
+
+        passport_id = self._short_id_for("renew passport")
+        removed = self.writer.run(f"/mem rm {passport_id}").answer
+        self.assertIn(f"Deleted #{passport_id}", removed)
+        self.assertNotIn("renew passport", self.writer.run("/mem list").answer)
+
+    def _short_id_for(self, needle: str) -> str:
+        hits = self.qdrant.scroll_by_filters(self.tracker, {"kind": "tracker_memory"}, limit=50)
+        for hit in hits:
+            if needle in (hit.get("payload") or {}).get("text", ""):
+                return hit["payload"]["short_id"]
+        raise AssertionError(f"no tracker memory point contains {needle!r}")
+
+
 class ChatMemoryScenario(unittest.TestCase):
     """Needs only the in-process fake server -- always runs."""
 

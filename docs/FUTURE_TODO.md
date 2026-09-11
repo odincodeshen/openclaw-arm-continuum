@@ -463,16 +463,27 @@ Expected work:
 
 Goal: make OpenClaw more useful as a long-running personal AI system.
 
-Candidate work:
+**Done:** `/mem` metadata parsing (`due:YYYY-MM-DD`, `tag:<word>`), explicit
+user review (`/mem list [done]`), and todo completion / removal
+(`/mem done <id>`, `/mem rm <id>`). See `docs/TRACKER_MEMORY.md`. This is the
+data model (`status`, `due`, `tags`, `short_id` payload fields on
+`personal_tracker_memory`) the next item below builds on.
 
+Candidate work still open:
+
+- **Proactive reminders**: cron scans tracker memory for `status=active` items
+  with `due` in the coming week, or `updated_at` stale for N days, and pushes
+  a digest without being asked. Needs: a cron job type that queries Qdrant
+  directly (today's cron jobs run a text prompt through the router), and
+  de-duplication so the same reminder isn't repeated every run.
 - Profile show/set flows.
-- Task deadline review.
-- Todo completion and snooze controls.
-- Better metadata parsing for `/mem`.
+- Snooze controls (push `due` out without marking done).
 - More precise `/rag` scope filters. Category RAG (`/rag #<category>` and
-  `/rag #all`, shipped v1.4) covers collection-level scoping; remaining
-  work is finer filters within a collection (date, source, tag).
-- Memory aging, archival, and explicit user review.
+  `/rag #all`, shipped v1.4) covers collection-level scoping; `/mem list`
+  (shipped here) covers status/due filtering for tracker memory specifically;
+  remaining work is filtering *within* a `/rag` query by date/source/tag.
+- Memory aging / archival for items with no `due` that have sat untouched a
+  long time.
 
 ## Future: Runtime Lifecycle and Resource Control
 

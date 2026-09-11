@@ -1,4 +1,7 @@
 import re
+import time
+import uuid
+from datetime import date
 
 from openclaw_runtime.categories import registry_entries, resolve_category
 from openclaw_runtime.config import Settings
@@ -18,6 +21,46 @@ _CATEGORY_PREFIX_RE = re.compile(
     re.DOTALL,
 )
 _ALL_CATEGORIES_TOKEN = "\x00all\x00"
+
+# due:YYYY-MM-DD / tag:<word> anywhere in a /mem write, as standalone tokens
+# (bounded by whitespace or string edges, so they don't match mid-word).
+_DUE_TOKEN_RE = re.compile(r"(?<!\S)due:(\S+)(?!\S)", re.IGNORECASE)
+_TAG_TOKEN_RE = re.compile(r"(?<!\S)tag:(\S+)(?!\S)", re.IGNORECASE)
+
+
+def parse_memory_metadata(content: str) -> tuple[str, str | None, list[str]]:
+    """Pull ``due:YYYY-MM-DD`` and ``tag:<word>`` tokens out of free text.
+
+    Returns ``(clean_text, due_or_None, tags)``. Every ``tag:`` token is
+    consumed. Only the first ``due:`` token that parses as a real ISO date is
+    consumed as the due date; anything that doesn't parse (or a second due:)
+    is left in the text untouched -- it likely wasn't meant as metadata.
+    """
+    tags: list[str] = []
+
+    def _take_tag(match: re.Match) -> str:
+        tags.append(match.group(1))
+        return ""
+
+    working = _TAG_TOKEN_RE.sub(_take_tag, content)
+
+    due: str | None = None
+
+    def _take_due(match: re.Match) -> str:
+        nonlocal due
+        if due is not None:
+            return match.group(0)
+        value = match.group(1)
+        try:
+            date.fromisoformat(value)
+        except ValueError:
+            return match.group(0)
+        due = value
+        return ""
+
+    working = _DUE_TOKEN_RE.sub(_take_due, working)
+    clean = " ".join(working.split())
+    return clean, due, tags
 
 
 def split_category_prefix(query: str) -> tuple[str | None, str]:
@@ -56,16 +99,119 @@ class MemoryWriteSkill:
     def run(self, text: str) -> SkillResult:
         content = self._strip_command(text)
         if not content:
-            return SkillResult(self.name, "Add the content to save after /mem.")
-        vector = self.embeddings.embed(content)
-        point_id = self.qdrant.upsert_text(
-            self.settings.tracker_collection,
-            content,
-            vector,
-            {"source": "telegram", "kind": "tracker_memory"},
-        )
+            return SkillResult(
+                self.name,
+                "Add the content to save after /mem, or use:\n"
+                "/mem list [done]\n/mem done <id>\n/mem rm <id>\n"
+                "Add due:YYYY-MM-DD and/or tag:<word> anywhere in the text to save them.",
+            )
+        stripped = content.strip()
+        first_word, _, rest = stripped.partition(" ")
+        keyword = first_word.lower()
+        if keyword == "list":
+            return self._list(rest.strip())
+        if keyword == "done":
+            return self._mark_done(rest.strip())
+        if keyword in ("rm", "delete"):
+            return self._remove(rest.strip())
+        return self._write(content)
+
+    def _write(self, content: str) -> SkillResult:
+        clean_text, due, tags = parse_memory_metadata(content)
+        if not clean_text:
+            return SkillResult(self.name, "Add some content to remember, not just due:/tag: metadata.")
+
+        point_id = str(uuid.uuid4())
         short_id = point_id.split("-")[0]
-        return SkillResult(self.name, f"Saved to {self.settings.tracker_collection}. Memory ID: {short_id}")
+        now = int(time.time())
+        metadata = {
+            "source": "telegram",
+            "kind": "tracker_memory",
+            "short_id": short_id,
+            "status": "active",
+            "created_at": now,
+            "updated_at": now,
+        }
+        if due:
+            metadata["due"] = due
+        if tags:
+            metadata["tags"] = tags
+
+        vector = self.embeddings.embed(clean_text)
+        self.qdrant.upsert_text(
+            self.settings.tracker_collection, clean_text, vector, metadata, point_id=point_id
+        )
+
+        bits = []
+        if due:
+            bits.append(f"due {due}")
+        if tags:
+            bits.append("tags: " + ", ".join(tags))
+        suffix = f" ({'; '.join(bits)})" if bits else ""
+        return SkillResult(self.name, f"Saved to {self.settings.tracker_collection}. Memory ID: {short_id}{suffix}")
+
+    def _list(self, arg: str) -> SkillResult:
+        status = "done" if arg.strip().lower() == "done" else "active"
+        hits = self.qdrant.scroll_by_filters(
+            self.settings.tracker_collection,
+            {"kind": "tracker_memory", "status": status},
+            limit=200,
+        )
+        if not hits:
+            return SkillResult(self.name, f"No {'completed' if status == 'done' else 'active'} memory items.")
+
+        def sort_key(hit: dict) -> tuple:
+            payload = hit.get("payload") or {}
+            return (payload.get("due") or "9999-99-99", -(payload.get("created_at") or 0))
+
+        hits.sort(key=sort_key)
+        label = "Completed" if status == "done" else "Active"
+        lines = [f"{label} memory ({len(hits)}):"]
+        for hit in hits[:50]:
+            payload = hit.get("payload") or {}
+            short_id = payload.get("short_id", "?")
+            item_text = str(payload.get("text") or "").strip()
+            bits = []
+            if payload.get("due"):
+                bits.append(f"due {payload['due']}")
+            tags = payload.get("tags") or []
+            if tags:
+                bits.append("tags: " + ", ".join(tags))
+            suffix = f" ({'; '.join(bits)})" if bits else ""
+            lines.append(f"#{short_id} {item_text}{suffix}")
+        if len(hits) > 50:
+            lines.append(f"... and {len(hits) - 50} more.")
+        return SkillResult(self.name, "\n".join(lines))
+
+    def _mark_done(self, short_id: str) -> SkillResult:
+        if not short_id:
+            return SkillResult(self.name, "Usage: /mem done <id>")
+        point = self._find_by_short_id(short_id)
+        if not point:
+            return SkillResult(self.name, f'No memory item with ID "{short_id}".')
+        self.qdrant.set_payload(
+            self.settings.tracker_collection,
+            point["id"],
+            {"status": "done", "updated_at": int(time.time())},
+        )
+        return SkillResult(self.name, f"Marked #{short_id} as done.")
+
+    def _remove(self, short_id: str) -> SkillResult:
+        if not short_id:
+            return SkillResult(self.name, "Usage: /mem rm <id>")
+        point = self._find_by_short_id(short_id)
+        if not point:
+            return SkillResult(self.name, f'No memory item with ID "{short_id}".')
+        self.qdrant.delete_points(self.settings.tracker_collection, [point["id"]])
+        return SkillResult(self.name, f"Deleted #{short_id}.")
+
+    def _find_by_short_id(self, short_id: str) -> dict | None:
+        hits = self.qdrant.scroll_by_filters(
+            self.settings.tracker_collection,
+            {"kind": "tracker_memory", "short_id": short_id},
+            limit=1,
+        )
+        return hits[0] if hits else None
 
     @staticmethod
     def _strip_command(text: str) -> str:

@@ -244,11 +244,14 @@ can override these names, for example demo deployments may use
 Examples:
 
 ```text
-/mem #todo due:2026-07-05 Check the cron dashboard
-/rag memory: What OpenClaw settings did I ask you to remember?
-/rag knowledge: Summarize the uploaded architecture manual
-/rag doc:260702_01 What is this file about?
+/mem Check the cron dashboard due:2026-07-05 tag:ops
+/mem list
+/rag What OpenClaw settings did I ask you to remember?
+/rag #<category> Summarize the uploaded architecture manual
 ```
+
+See `docs/TRACKER_MEMORY.md` for `/mem list` / `done` / `rm` and the
+`due:` / `tag:` metadata syntax, and `docs/CATEGORY_RAG.md` for `/rag #<category>`.
 
 ## Document Intake
 

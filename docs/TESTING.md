@@ -56,6 +56,7 @@ Scenarios drive the real runtime components against real Qdrant.
 | `CategoryRagScenario.test_unknown_category_lists_existing_ones` | `/rag #<unknown>` explains and lists real categories |
 | `KnowledgeAndMemoryScenario.test_knowledge_doc_is_indexed_and_retrievable_with_source` | inbox `knowledge/` file is chunked, embedded, upserted, retrieved with a `Sources:` line |
 | `KnowledgeAndMemoryScenario.test_mem_write_then_default_rag_reads_it_back` | `/mem` write lands in the tracker collection and a later `/rag` retrieves it |
+| `TrackerMemoryManagementScenario.test_write_list_done_rm_round_trip_against_real_qdrant` | `/mem list`/`done`/`rm` against real Qdrant: `scroll_by_filters`, `set_payload`, `delete_points` behave as the unit fakes assume |
 | `ChatMemoryScenario.test_second_turn_carries_the_first_exchange` | `ChatAgent` replays the prior user+assistant turn on the next request |
 | `ChatMemoryScenario.test_new_conversation_drops_history` | `/new` clears the replayed window |
 | `ChatMemoryScenario.test_other_chat_is_isolated` | conversation memory does not leak across `chat_id` |
@@ -72,6 +73,7 @@ one layer that fails if it breaks.
 | `Sources:` attribution | `test_category_rag_retrieve` | `CategoryRagScenario`, `KnowledgeAndMemoryScenario` | — |
 | Document / knowledge ingest | `test_file_ingest` | `KnowledgeAndMemoryScenario` | — |
 | `/mem` write + default `/rag` | `test_*` unit | `KnowledgeAndMemoryScenario` | — |
+| `/mem list` / `done` / `rm` + `due:`/`tag:` metadata | `test_memory_write`, `test_qdrant_client` | `TrackerMemoryManagementScenario` | — |
 | Conversational memory + `/new` | `test_conversation_memory`, `test_telegram_gateway` | `ChatMemoryScenario` | multi-turn with a real model |
 | Vision / image analysis | `test_vision_client`, `test_category_gateway` | — | `scripts/vision_smoke.py` on a real VLM |
 | Intent router | `test_intent_router` | — | classification accuracy |

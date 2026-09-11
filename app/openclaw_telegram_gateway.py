@@ -99,8 +99,17 @@ HELP_TEXT = f"""OpenClaw Arm Continuum quick reference
 
 Common commands
 /mem <content>
-Save a piece of personal memory or working context.
+Save a piece of personal memory or working context. Add due:YYYY-MM-DD
+and/or tag:<word> anywhere in the text to attach them.
 Example: /mem OpenClaw preference: use /mem for memory writes.
+Example: /mem renew passport due:2026-12-01 tag:admin
+
+/mem list [done]
+List active memory items (or completed ones), soonest due date first.
+
+/mem done <id>
+Mark a memory item done. /mem rm <id> deletes it. Both take the short
+ID shown by /mem list or after a /mem save.
 
 /rag <question>
 Query local memory and the document knowledge base.
@@ -1117,7 +1126,7 @@ def handle_cron_command(chat_id: int, text: str) -> bool:
 def setup_bot_commands() -> None:
     commands = [
         {"command": "help", "description": "Show the OpenClaw quick reference"},
-        {"command": "mem", "description": "Write to local memory"},
+        {"command": "mem", "description": "Save, list, or complete memory items (see /mem list)"},
         {"command": "rag", "description": "Query local memory and knowledge base"},
         {"command": "doc", "description": "Import a public Google Doc or document source"},
         {"command": "cat", "description": "List category knowledge bases (see /cat help)"},

@@ -40,8 +40,16 @@ class QdrantClient:
         count = result.get("points_count")
         return int(count) if isinstance(count, (int, float)) else None
 
-    def upsert_text(self, collection: str, text: str, vector: list[float], metadata: dict) -> str:
-        point_id = str(uuid.uuid4())
+    def upsert_text(
+        self,
+        collection: str,
+        text: str,
+        vector: list[float],
+        metadata: dict,
+        *,
+        point_id: str | None = None,
+    ) -> str:
+        point_id = point_id or str(uuid.uuid4())
         payload_data = {
             "text": text,
             "source": metadata.get("source", "telegram"),
@@ -78,12 +86,16 @@ class QdrantClient:
         )
         return list(response.get("result") or [])
 
-    def scroll_by_file_name(self, collection: str, file_name: str, limit: int = 12) -> list[dict]:
+    def scroll_by_filters(self, collection: str, filters: dict, limit: int = 64) -> list[dict]:
+        """Scroll every point whose payload matches all ``field: value`` pairs
+        in ``filters`` (AND). Paginates until exhausted or a 512-point safety
+        cap; returns in Qdrant's scroll order, capped to ``limit``."""
+        must = [{"key": key, "match": {"value": value}} for key, value in filters.items()]
         points: list[dict] = []
         offset = None
         while len(points) < 512:
             payload = {
-                "filter": {"must": [{"key": "file_name", "match": {"value": file_name}}]},
+                "filter": {"must": must},
                 "limit": 128,
                 "with_payload": True,
                 "with_vector": False,
@@ -102,5 +114,28 @@ class QdrantClient:
             offset = result.get("next_page_offset")
             if not batch or offset is None:
                 break
+        return points[:limit]
+
+    def scroll_by_file_name(self, collection: str, file_name: str, limit: int = 12) -> list[dict]:
+        points = self.scroll_by_filters(collection, {"file_name": file_name}, limit=512)
         ordered = sorted(points, key=lambda point: (point.get("payload") or {}).get("chunk_index", 0))
         return ordered[:limit]
+
+    def set_payload(self, collection: str, point_id: str, payload: dict) -> None:
+        """Merge fields into an existing point's payload without touching its vector."""
+        request_json(
+            "POST",
+            f"{self.settings.qdrant_base_url}/collections/{collection}/points/payload?wait=true",
+            {"payload": payload, "points": [point_id]},
+            timeout=self.settings.request_timeout,
+        )
+
+    def delete_points(self, collection: str, point_ids: list[str]) -> None:
+        if not point_ids:
+            return
+        request_json(
+            "POST",
+            f"{self.settings.qdrant_base_url}/collections/{collection}/points/delete?wait=true",
+            {"points": list(point_ids)},
+            timeout=self.settings.request_timeout,
+        )
