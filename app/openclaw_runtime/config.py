@@ -83,6 +83,10 @@ class Settings:
     category_max_name_chars: int
     category_image_max_tokens: int
 
+    mem_digest_due_soon_days: int
+    mem_digest_stale_days: int
+    mem_digest_remind_cooldown_days: int
+
     cron_enabled: bool
     cron_timezone: str
     cron_daily_report_time: str
@@ -177,6 +181,9 @@ def load_settings() -> Settings:
         category_pending_ttl_seconds=env_int("OPENCLAW_CATEGORY_PENDING_TTL_SECONDS", 600),
         category_max_name_chars=env_int("OPENCLAW_CATEGORY_MAX_NAME_CHARS", 40),
         category_image_max_tokens=env_int("OPENCLAW_CATEGORY_IMAGE_MAX_TOKENS", 600),
+        mem_digest_due_soon_days=env_int("OPENCLAW_MEM_DIGEST_DUE_SOON_DAYS", 7),
+        mem_digest_stale_days=env_int("OPENCLAW_MEM_DIGEST_STALE_DAYS", 14),
+        mem_digest_remind_cooldown_days=env_int("OPENCLAW_MEM_DIGEST_REMIND_COOLDOWN_DAYS", 7),
         cron_enabled=env_bool("OPENCLAW_CRON_ENABLED", True),
         cron_timezone=os.environ.get("OPENCLAW_CRON_TIMEZONE", "UTC"),
         cron_daily_report_time=os.environ.get("OPENCLAW_CRON_DAILY_REPORT_TIME", "07:00"),

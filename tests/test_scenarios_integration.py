@@ -16,6 +16,7 @@ import tempfile
 import unittest
 import urllib.request
 import uuid
+from datetime import date, timedelta
 from pathlib import Path
 
 from openclaw_runtime import categories
@@ -224,6 +225,35 @@ class TrackerMemoryManagementScenario(QdrantScenarioBase):
             if needle in (hit.get("payload") or {}).get("text", ""):
                 return hit["payload"]["short_id"]
         raise AssertionError(f"no tracker memory point contains {needle!r}")
+
+    def test_digest_reports_overdue_and_due_soon_against_real_qdrant(self) -> None:
+        today = date.today()
+        overdue_due = (today - timedelta(days=1)).isoformat()
+        soon_due = (today + timedelta(days=2)).isoformat()
+        far_due = (today + timedelta(days=90)).isoformat()
+
+        self.writer.run(f"/mem pay overdue invoice due:{overdue_due}")
+        self.writer.run(f"/mem book dentist due:{soon_due}")
+        self.writer.run(f"/mem plan next year due:{far_due}")
+
+        digest = self.writer.run("/mem digest")
+        self.assertFalse(digest.suppress_if_routine)
+        self.assertIn("Overdue (1):", digest.answer)
+        self.assertIn("pay overdue invoice", digest.answer)
+        self.assertIn("Due in the next 7 days (1):", digest.answer)
+        self.assertIn("book dentist", digest.answer)
+        self.assertNotIn("plan next year", digest.answer)
+
+        # Overdue/due-soon items repeat every run by design (no cooldown).
+        digest_again = self.writer.run("/mem digest")
+        self.assertFalse(digest_again.suppress_if_routine)
+        self.assertIn("pay overdue invoice", digest_again.answer)
+
+    def test_digest_is_suppressed_when_nothing_is_due_or_stale(self) -> None:
+        self.writer.run("/mem just a plain note")
+        digest = self.writer.run("/mem digest")
+        self.assertTrue(digest.suppress_if_routine)
+        self.assertIn("all caught up", digest.answer)
 
 
 class ChatMemoryScenario(unittest.TestCase):

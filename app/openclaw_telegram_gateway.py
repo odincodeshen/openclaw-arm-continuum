@@ -111,6 +111,12 @@ List active memory items (or completed ones), soonest due date first.
 Mark a memory item done. /mem rm <id> deletes it. Both take the short
 ID shown by /mem list or after a /mem save.
 
+/mem digest
+Reminder summary: overdue items, items due soon, and stale undated
+items. Add a daily cron job to get this pushed automatically:
+Example: /cron add daily 08:00 Memory digest :: /mem digest
+A day with nothing due or stale stays silent -- it is not pushed.
+
 /rag <question>
 Query local memory and the document knowledge base.
 Example: /rag Which modules is OpenClaw connected to?
@@ -834,6 +840,11 @@ Run a schedule immediately.
 
 /cron delete <job_id>
 Delete a schedule.
+
+Proactive reminders
+Example: /cron add daily 08:00 Memory digest :: /mem digest
+Pushes overdue / due-soon / stale items from /mem. A day with nothing to
+report stays silent -- see /mem digest and docs/TRACKER_MEMORY.md.
 """
 
 

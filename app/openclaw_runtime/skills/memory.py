@@ -1,7 +1,7 @@
 import re
 import time
 import uuid
-from datetime import date
+from datetime import date, timedelta
 
 from openclaw_runtime.categories import registry_entries, resolve_category
 from openclaw_runtime.config import Settings
@@ -102,7 +102,7 @@ class MemoryWriteSkill:
             return SkillResult(
                 self.name,
                 "Add the content to save after /mem, or use:\n"
-                "/mem list [done]\n/mem done <id>\n/mem rm <id>\n"
+                "/mem list [done]\n/mem done <id>\n/mem rm <id>\n/mem digest\n"
                 "Add due:YYYY-MM-DD and/or tag:<word> anywhere in the text to save them.",
             )
         stripped = content.strip()
@@ -114,6 +114,8 @@ class MemoryWriteSkill:
             return self._mark_done(rest.strip())
         if keyword in ("rm", "delete"):
             return self._remove(rest.strip())
+        if keyword == "digest":
+            return self._digest()
         return self._write(content)
 
     def _write(self, content: str) -> SkillResult:
@@ -212,6 +214,103 @@ class MemoryWriteSkill:
             limit=1,
         )
         return hits[0] if hits else None
+
+    def _digest(self) -> SkillResult:
+        """A proactive-reminder summary: overdue items, items due soon, and
+        stale undated items. Meant to be run interactively (/mem digest) or
+        on a cron schedule -- see docs/TRACKER_MEMORY.md.
+
+        Overdue and due-soon items are repeated every call on purpose (that
+        is what a reminder is for). Stale items get a cooldown
+        (mem_digest_remind_cooldown_days) via `last_reminded_at` so an
+        undated item doesn't get nagged about on every single run.
+        """
+        hits = self.qdrant.scroll_by_filters(
+            self.settings.tracker_collection,
+            {"kind": "tracker_memory", "status": "active"},
+            limit=500,
+        )
+        today = date.today()
+        due_soon_cutoff = today + timedelta(days=self.settings.mem_digest_due_soon_days)
+        stale_cutoff = time.time() - self.settings.mem_digest_stale_days * 86400
+        cooldown_cutoff = time.time() - self.settings.mem_digest_remind_cooldown_days * 86400
+
+        overdue: list[dict] = []
+        due_soon: list[dict] = []
+        stale: list[dict] = []
+        remind_ids: list[str] = []
+
+        for hit in hits:
+            payload = hit.get("payload") or {}
+            due_value = payload.get("due")
+            due_date = self._parse_due(due_value)
+            if due_date is not None:
+                if due_date < today:
+                    overdue.append(hit)
+                elif due_date <= due_soon_cutoff:
+                    due_soon.append(hit)
+                continue
+            updated_at = payload.get("updated_at") or payload.get("created_at") or 0
+            if updated_at > stale_cutoff:
+                continue
+            last_reminded_at = payload.get("last_reminded_at") or 0
+            if last_reminded_at > cooldown_cutoff:
+                continue
+            stale.append(hit)
+            remind_ids.append(hit["id"])
+
+        overdue.sort(key=lambda h: h["payload"]["due"])
+        due_soon.sort(key=lambda h: h["payload"]["due"])
+
+        if not overdue and not due_soon and not stale:
+            return SkillResult(
+                self.name,
+                "You're all caught up -- nothing overdue, due soon, or stale.",
+                suppress_if_routine=True,
+            )
+
+        if remind_ids:
+            now = int(time.time())
+            for point_id in remind_ids:
+                self.qdrant.set_payload(
+                    self.settings.tracker_collection, point_id, {"last_reminded_at": now}
+                )
+
+        sections = []
+        if overdue:
+            sections.append(self._digest_section("Overdue", overdue))
+        if due_soon:
+            sections.append(
+                self._digest_section(f"Due in the next {self.settings.mem_digest_due_soon_days} days", due_soon)
+            )
+        if stale:
+            sections.append(
+                self._digest_section(
+                    f"Stale (untouched {self.settings.mem_digest_stale_days}+ days, no due date)", stale
+                )
+            )
+        return SkillResult(self.name, "\n\n".join(sections))
+
+    @staticmethod
+    def _digest_section(title: str, hits: list[dict]) -> str:
+        lines = [f"{title} ({len(hits)}):"]
+        for hit in hits:
+            payload = hit.get("payload") or {}
+            short_id = payload.get("short_id", "?")
+            text = str(payload.get("text") or "").strip()
+            due = payload.get("due")
+            suffix = f" (due {due})" if due else ""
+            lines.append(f"#{short_id} {text}{suffix}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _parse_due(value) -> date | None:
+        if not value:
+            return None
+        try:
+            return date.fromisoformat(str(value))
+        except ValueError:
+            return None
 
     @staticmethod
     def _strip_command(text: str) -> str:

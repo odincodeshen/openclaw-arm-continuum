@@ -216,10 +216,12 @@ def run_dynamic_job(settings: Settings, router: SkillRouter, now: datetime, job:
 
     status = "ok"
     error = None
+    suppressed = False
     try:
         result = router.route(prompt)
         answer = result.answer or "The OpenClaw runtime returned an empty reply."
         skill_name = result.skill_name
+        suppressed = bool(getattr(result, "suppress_if_routine", False))
     except Exception as exc:
         status = "error"
         error = str(exc)
@@ -238,12 +240,18 @@ def run_dynamic_job(settings: Settings, router: SkillRouter, now: datetime, job:
     )
     path = save_job_report(settings, now, job, report)
     delivered = False
-    try:
-        send_message(settings, int(job.get("chat_id") or recipients(settings)[0]), report)
-        delivered = True
-    except Exception as exc:
-        status = "error"
-        error = f"{error}; Telegram delivery failed: {exc}" if error else f"Telegram delivery failed: {exc}"
+    if suppressed:
+        # A routine "nothing new" result (e.g. a reminder digest with
+        # nothing due) -- record the run, but don't push a notification
+        # nobody needs to see.
+        status = "skipped"
+    else:
+        try:
+            send_message(settings, int(job.get("chat_id") or recipients(settings)[0]), report)
+            delivered = True
+        except Exception as exc:
+            status = "error"
+            error = f"{error}; Telegram delivery failed: {exc}" if error else f"Telegram delivery failed: {exc}"
     return {
         "path": path,
         "status": status,
@@ -260,18 +268,30 @@ def write_gateway_runback(settings: Settings, job: dict, now: datetime, result: 
         return
     current_state = dict(job.get("gateway_state") or {})
     previous_errors = int(current_state.get("consecutiveErrors") or 0)
+    previous_skipped = int(current_state.get("consecutiveSkipped") or 0)
     status = result.get("status") or "ok"
     run_at_ms = int(now.timestamp() * 1000)
+    if status == "skipped":
+        delivery_status = "skipped"
+    elif result.get("delivered"):
+        delivery_status = "delivered"
+    else:
+        delivery_status = "not-delivered"
     state = {
         **current_state,
         "lastRunAtMs": run_at_ms,
         "lastRunStatus": status,
         "lastStatus": status,
         "lastDurationMs": int(result.get("duration_ms") or 0),
-        "lastDeliveryStatus": "delivered" if result.get("delivered") else "not-delivered",
+        "lastDeliveryStatus": delivery_status,
         "lastDelivered": bool(result.get("delivered")),
-        "consecutiveErrors": 0 if status == "ok" else previous_errors + 1,
-        "consecutiveSkipped": 0,
+        # Three-way status: "skipped" (a routine no-op, e.g. an empty
+        # reminder digest) is not an error and must not count toward
+        # consecutiveErrors; only "error" does. Each counter resets when
+        # its status doesn't apply, so a run alternating error/skipped/ok
+        # never double-counts.
+        "consecutiveErrors": previous_errors + 1 if status == "error" else 0,
+        "consecutiveSkipped": previous_skipped + 1 if status == "skipped" else 0,
     }
     if result.get("error"):
         state["lastError"] = str(result["error"])

@@ -1,4 +1,6 @@
+import time
 import unittest
+from datetime import date, timedelta
 
 from openclaw_runtime.skills.memory import MemoryWriteSkill, parse_memory_metadata
 
@@ -184,6 +186,102 @@ class MemoryWriteSkillTest(unittest.TestCase):
         self.assertIn("Saved to tracker_coll", result.answer)
         payload = next(iter(self.qdrant.collections["tracker_coll"].values()))["payload"]
         self.assertEqual(payload["text"], "listen to the new podcast episode")
+
+
+class MemoryDigestTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.settings = build_settings(
+            tracker_collection="tracker_coll",
+            mem_digest_due_soon_days=7,
+            mem_digest_stale_days=14,
+            mem_digest_remind_cooldown_days=7,
+        )
+        self.qdrant = FakeQdrant()
+        self.skill = MemoryWriteSkill(self.settings, {}, FakeEmbeddings(), self.qdrant)
+
+    def _seed(self, text: str, **overrides) -> str:
+        point_id = f"seed-{len(self.qdrant.collections.get('tracker_coll', {}))}"
+        payload = {
+            "text": text,
+            "source": "telegram",
+            "kind": "tracker_memory",
+            "status": "active",
+            "short_id": point_id,
+            "created_at": int(time.time()),
+            "updated_at": int(time.time()),
+        }
+        payload.update(overrides)
+        self.qdrant.collections.setdefault("tracker_coll", {})[point_id] = {
+            "id": point_id,
+            "payload": payload,
+            "vector": [0.0],
+        }
+        return point_id
+
+    def test_empty_is_all_caught_up_and_suppressed(self) -> None:
+        result = self.skill.run("/mem digest")
+        self.assertTrue(result.suppress_if_routine)
+        self.assertIn("all caught up", result.answer)
+
+    def test_overdue_item_is_reported_and_not_suppressed(self) -> None:
+        self._seed("renew passport", due="2000-01-01")
+        result = self.skill.run("/mem digest")
+        self.assertFalse(result.suppress_if_routine)
+        self.assertIn("Overdue (1):", result.answer)
+        self.assertIn("renew passport", result.answer)
+
+    def test_due_soon_item_is_reported(self) -> None:
+        due = (date.today() + timedelta(days=3)).isoformat()
+        self._seed("book flight", due=due)
+        result = self.skill.run("/mem digest")
+        self.assertIn("Due in the next 7 days (1):", result.answer)
+        self.assertIn("book flight", result.answer)
+        self.assertFalse(result.suppress_if_routine)
+
+    def test_far_future_due_item_is_not_reported_yet(self) -> None:
+        due = (date.today() + timedelta(days=60)).isoformat()
+        self._seed("future thing", due=due)
+        result = self.skill.run("/mem digest")
+        self.assertTrue(result.suppress_if_routine)
+
+    def test_stale_undated_item_is_reported_and_cooldown_is_set(self) -> None:
+        old = int(time.time()) - 20 * 86400
+        point_id = self._seed("clean the garage", updated_at=old)
+        result = self.skill.run("/mem digest")
+        self.assertFalse(result.suppress_if_routine)
+        self.assertIn("Stale", result.answer)
+        self.assertIn("clean the garage", result.answer)
+        payload = self.qdrant.collections["tracker_coll"][point_id]["payload"]
+        self.assertGreater(payload.get("last_reminded_at", 0), 0)
+
+    def test_stale_item_within_cooldown_is_not_repeated(self) -> None:
+        old = int(time.time()) - 20 * 86400
+        recent_reminder = int(time.time()) - 1 * 86400
+        self._seed("clean the garage", updated_at=old, last_reminded_at=recent_reminder)
+        result = self.skill.run("/mem digest")
+        self.assertTrue(result.suppress_if_routine)
+
+    def test_recently_touched_undated_item_is_not_stale(self) -> None:
+        self._seed("ongoing project note")
+        result = self.skill.run("/mem digest")
+        self.assertTrue(result.suppress_if_routine)
+
+    def test_done_items_are_excluded(self) -> None:
+        self._seed("old finished task", due="2000-01-01", status="done")
+        result = self.skill.run("/mem digest")
+        self.assertTrue(result.suppress_if_routine)
+
+    def test_mixed_sections_are_all_present_in_priority_order(self) -> None:
+        self._seed("overdue thing", due="2000-01-01")
+        due_soon = (date.today() + timedelta(days=2)).isoformat()
+        self._seed("soon thing", due=due_soon)
+        self._seed("stale thing", updated_at=int(time.time()) - 30 * 86400)
+
+        result = self.skill.run("/mem digest")
+        answer = result.answer
+        self.assertFalse(result.suppress_if_routine)
+        self.assertLess(answer.index("Overdue"), answer.index("Due in the next"))
+        self.assertLess(answer.index("Due in the next"), answer.index("Stale"))
 
 
 if __name__ == "__main__":

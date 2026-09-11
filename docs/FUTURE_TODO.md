@@ -64,9 +64,11 @@ Still open from the original list, re-baselined against v1.6:
 - Richer multi-agent runtime — **partially advanced**: v1.5 catalog
   routing + intent classifier cover part of "task routing policies";
   `AgentRegistry` / `TaskDispatcher` are still thin.
-- Personal memory deepening — the "more precise `/rag` scope filters"
-  item is **partially done** via Category RAG (`#<category>` / `#all`);
-  the rest is not started.
+- Personal memory deepening — **structured `/mem` + proactive reminders
+  done** (`/mem list`/`done`/`rm`/`digest`, cron-pushed daily digest); the
+  "more precise `/rag` scope filters" item is **partially done** via
+  Category RAG (`#<category>` / `#all`); filtering *within* a `/rag` query
+  by date/source/tag is not started. See `docs/TRACKER_MEMORY.md`.
 - Runtime lifecycle / `openclawctl` / `OPENCLAW_BOOT_MODE` — **first cut
   done (post-v1.6)**. `bin/openclawctl status|start|stop|restart
   core|model|full` + `boot` (honours `OPENCLAW_BOOT_MODE=core|full|manual`)
@@ -464,18 +466,22 @@ Expected work:
 Goal: make OpenClaw more useful as a long-running personal AI system.
 
 **Done:** `/mem` metadata parsing (`due:YYYY-MM-DD`, `tag:<word>`), explicit
-user review (`/mem list [done]`), and todo completion / removal
-(`/mem done <id>`, `/mem rm <id>`). See `docs/TRACKER_MEMORY.md`. This is the
-data model (`status`, `due`, `tags`, `short_id` payload fields on
-`personal_tracker_memory`) the next item below builds on.
+user review (`/mem list [done]`), todo completion / removal (`/mem done
+<id>`, `/mem rm <id>`), and **proactive reminders** (`/mem digest`, wired to
+cron via `/cron add daily 08:00 Memory digest :: /mem digest`). See
+`docs/TRACKER_MEMORY.md`.
+
+`/mem digest` didn't need a new cron job type -- it's a normal dynamic job
+whose prompt happens to be `/mem digest`. What it did need: a generic
+"routine, nothing new" signal a skill can set
+(`SkillResult.suppress_if_routine`) so the cron worker skips the Telegram
+push (but still records the run) instead of pinging "nothing due" every
+morning. Overdue / due-soon items repeat every run on purpose; only stale
+undated items get a cooldown (`last_reminded_at` +
+`OPENCLAW_MEM_DIGEST_REMIND_COOLDOWN_DAYS`) so they aren't nagged about daily.
 
 Candidate work still open:
 
-- **Proactive reminders**: cron scans tracker memory for `status=active` items
-  with `due` in the coming week, or `updated_at` stale for N days, and pushes
-  a digest without being asked. Needs: a cron job type that queries Qdrant
-  directly (today's cron jobs run a text prompt through the router), and
-  de-duplication so the same reminder isn't repeated every run.
 - Profile show/set flows.
 - Snooze controls (push `due` out without marking done).
 - More precise `/rag` scope filters. Category RAG (`/rag #<category>` and
