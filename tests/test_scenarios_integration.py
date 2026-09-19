@@ -184,6 +184,19 @@ class KnowledgeAndMemoryScenario(QdrantScenarioBase):
         answer = self.rag.run("/rag what does the gateway container mount?").answer
         self.assertIn("read only", answer.lower())
 
+    def test_rag_tag_prefix_scopes_to_tracker_items_with_that_tag_against_real_qdrant(self) -> None:
+        writer = MemoryWriteSkill(self.settings, {}, self.embeddings, self.qdrant)
+        writer.run("/mem deploy note about the gateway mount tag:work")
+        writer.run("/mem pick up the dry cleaning tag:home")
+
+        work_answer = self.rag.run("/rag tag:work what does the gateway container mount?").answer
+        self.assertIn("gateway", work_answer.lower())
+        self.assertNotIn("dry cleaning", work_answer.lower())
+
+        home_answer = self.rag.run("/rag tag:home what needs picking up?").answer
+        self.assertIn("dry cleaning", home_answer.lower())
+        self.assertNotIn("gateway", home_answer.lower())
+
 
 class TrackerMemoryManagementScenario(QdrantScenarioBase):
     """/mem list|done|rm against a real Qdrant -- proves the scroll filter,

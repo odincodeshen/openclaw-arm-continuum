@@ -57,6 +57,10 @@ id such as `oc_cat_work-notes_1a2b3c4d`.
 - `/rag <question>` with no `#` is unchanged: it searches the default
   `personal_tracker_memory` + `personal_knowledge_base` collections and
   does **not** touch category collections.
+- `/rag tag:<word> <question>` is a separate, unrelated prefix: it scopes
+  the *default* (no `#`) search to `/mem` items carrying that exact tag,
+  and does not apply to `#<category>` collections (they have no `tags`
+  field). See `docs/TRACKER_MEMORY.md`.
 
 Every `/rag` answer ends with a `Sources:` line naming the source documents
 the answer drew from. The name shown is the uploader's original filename when

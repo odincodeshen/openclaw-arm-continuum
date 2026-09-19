@@ -22,6 +22,9 @@ _CATEGORY_PREFIX_RE = re.compile(
 )
 _ALL_CATEGORIES_TOKEN = "\x00all\x00"
 
+# A leading tag:<word> prefix on a /rag query, e.g. "tag:work how much...".
+_RAG_TAG_PREFIX_RE = re.compile(r"^tag:(\S+)\s+(.*)$", re.IGNORECASE | re.DOTALL)
+
 # due:YYYY-MM-DD / tag:<word> anywhere in a /mem write, as standalone tokens
 # (bounded by whitespace or string edges, so they don't match mid-word).
 _DUE_TOKEN_RE = re.compile(r"(?<!\S)due:(\S+)(?!\S)", re.IGNORECASE)
@@ -99,6 +102,19 @@ def split_category_prefix(query: str) -> tuple[str | None, str]:
     if token.casefold() in {"all", "*", "全部", "所有"}:
         return _ALL_CATEGORIES_TOKEN, rest
     return token, rest
+
+
+def split_tag_prefix(query: str) -> tuple[str | None, str]:
+    """Pull a leading ``tag:<word>`` off a /rag query, e.g.
+    ``tag:work what did I save about the deadline?``. Only recognized
+    before any ``#<category>`` prefix -- tags only exist on tracker_memory
+    items (from /mem due:/tag:), so this only affects the default
+    (no-category) search path; see ``RagRetrieveSkill._run_default``.
+    """
+    match = _RAG_TAG_PREFIX_RE.match(query)
+    if not match:
+        return None, query
+    return match.group(1), match.group(2).strip()
 
 
 class MemoryWriteSkill:
@@ -471,6 +487,7 @@ class RagRetrieveSkill:
 
     def run(self, text: str) -> SkillResult:
         raw_query = self._strip_command(text)
+        tag, raw_query = split_tag_prefix(raw_query)
         category_token, query = split_category_prefix(raw_query)
         if not query:
             return SkillResult(self.name, "Add the question to look up after /rag.")
@@ -479,25 +496,26 @@ class RagRetrieveSkill:
             return self._run_all_categories(query)
         if self.settings.category_rag_enabled and category_token:
             return self._run_single_category(category_token, query)
-        return self._run_default(query)
+        return self._run_default(query, tag)
 
-    def _run_default(self, query: str) -> SkillResult:
+    def _run_default(self, query: str, tag: str | None = None) -> SkillResult:
         file_hits = self._file_hits(
             query, [self.settings.knowledge_collection, self.settings.tracker_collection]
         )
         vector = self.embeddings.embed(query)
-        tracker_hits = self.qdrant.search(self.settings.tracker_collection, vector)
-        knowledge_hits = self.qdrant.search(self.settings.knowledge_collection, vector)
-        answer = self._answer_from(
-            query,
-            [
-                ("filename_match", file_hits),
-                (self.settings.tracker_collection, tracker_hits),
-                (self.settings.knowledge_collection, knowledge_hits),
-            ],
-        )
+        # tags only ever live on tracker_memory items (from /mem due:/tag:),
+        # so a tag filter scopes tracker search and skips knowledge search
+        # entirely rather than returning knowledge hits no filter applies to.
+        tracker_filters = {"tags": tag} if tag else None
+        tracker_hits = self.qdrant.search(self.settings.tracker_collection, vector, filters=tracker_filters)
+        sections = [("filename_match", file_hits), (self.settings.tracker_collection, tracker_hits)]
+        if not tag:
+            knowledge_hits = self.qdrant.search(self.settings.knowledge_collection, vector)
+            sections.append((self.settings.knowledge_collection, knowledge_hits))
+        answer = self._answer_from(query, sections)
         if answer is None:
-            return SkillResult(self.name, "No relevant memory was found in either Qdrant collection.")
+            tag_suffix = f' tagged "{tag}"' if tag else ""
+            return SkillResult(self.name, f"No relevant memory was found in either Qdrant collection{tag_suffix}.")
         return SkillResult(self.name, answer)
 
     def _run_single_category(self, token: str, query: str) -> SkillResult:

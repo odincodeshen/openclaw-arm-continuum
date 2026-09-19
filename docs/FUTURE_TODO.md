@@ -89,10 +89,12 @@ Still open from the original list, re-baselined against v1.6:
   routing + intent classifier cover part of "task routing policies";
   `AgentRegistry` / `TaskDispatcher` are still thin.
 - Personal memory deepening — **structured `/mem` + proactive reminders
-  done** (`/mem list`/`done`/`rm`/`digest`, cron-pushed daily digest); the
-  "more precise `/rag` scope filters" item is **partially done** via
-  Category RAG (`#<category>` / `#all`); filtering *within* a `/rag` query
-  by date/source/tag is not started. See `docs/TRACKER_MEMORY.md`.
+  done** (`/mem list`/`done`/`rm`/`digest`/`snooze`/`edit`, cron-pushed
+  daily digest); "more precise `/rag` scope filters" is **done for
+  category and tag** -- Category RAG (`#<category>` / `#all`) plus
+  `/rag tag:<word>` (tracker-only, added alongside `/mem list`/`digest`
+  tag scoping); filtering by date/source within a `/rag` query is not
+  started. See `docs/TRACKER_MEMORY.md`.
 - Runtime lifecycle / `openclawctl` / `OPENCLAW_BOOT_MODE` — **first cut
   done (post-v1.6)**. `bin/openclawctl status|start|stop|restart
   core|model|full` + `boot` (honours `OPENCLAW_BOOT_MODE=core|full|manual`)
@@ -496,10 +498,13 @@ Expected work:
 Goal: make OpenClaw more useful as a long-running personal AI system.
 
 **Done:** `/mem` metadata parsing (`due:YYYY-MM-DD`, `tag:<word>`), explicit
-user review (`/mem list [done]`), todo completion / removal (`/mem done
-<id>`, `/mem rm <id>`), and **proactive reminders** (`/mem digest`, wired to
-cron via `/cron add daily 08:00 Memory digest :: /mem digest`). See
-`docs/TRACKER_MEMORY.md`.
+user review (`/mem list [done] [tag:<word>]`), todo completion / removal
+(`/mem done <id>`, `/mem rm <id>`), editing (`/mem edit <id> <new text>`),
+snoozing (`/mem snooze <id> <3d|1w|YYYY-MM-DD>`, also reactivates a done
+item), and **proactive reminders** (`/mem digest [tag:<word>]`, wired to
+cron via `/cron add daily 08:00 Memory digest :: /mem digest`). Tag
+scoping extends to semantic search too: `/rag tag:<word> <question>`.
+See `docs/TRACKER_MEMORY.md`.
 
 `/mem digest` didn't need a new cron job type -- it's a normal dynamic job
 whose prompt happens to be `/mem digest`. What it did need: a generic
@@ -513,11 +518,11 @@ undated items get a cooldown (`last_reminded_at` +
 Candidate work still open:
 
 - Profile show/set flows.
-- Snooze controls (push `due` out without marking done).
 - More precise `/rag` scope filters. Category RAG (`/rag #<category>` and
   `/rag #all`, shipped v1.4) covers collection-level scoping; `/mem list`
-  (shipped here) covers status/due filtering for tracker memory specifically;
-  remaining work is filtering *within* a `/rag` query by date/source/tag.
+  and `/rag tag:<word>` (shipped v1.9) cover tag scoping for tracker
+  memory specifically; remaining work is filtering *within* a `/rag`
+  query by date or source.
 - Memory aging / archival for items with no `due` that have sat untouched a
   long time.
 

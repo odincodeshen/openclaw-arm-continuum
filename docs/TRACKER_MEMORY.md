@@ -71,6 +71,20 @@ Example: /mem digest tag:work
 `<id>` is the short ID shown by `/mem list` and after every `/mem` save (the
 first 8 hex characters of the underlying Qdrant point ID).
 
+The same tag scoping works on semantic search too:
+
+```text
+/rag tag:<word> <question>
+```
+
+Scopes the *default* `/rag` search (no `#<category>`) to tracker items
+carrying that exact tag, and skips the knowledge-base collection entirely
+(it has no `tags` field, so there is nothing there a tag filter could
+match). `/rag #<category> ...` is unrelated and unaffected -- category
+collections don't carry tags either. See `docs/CATEGORY_RAG.md`.
+
+Example: `/rag tag:work what did I save about the deadline?`
+
 ## Metadata syntax
 
 - `due:YYYY-MM-DD` -- only the **first** token that parses as a real ISO date
@@ -186,13 +200,24 @@ cooldown -- see `docs/FUTURE_TODO.md` "Personal Memory Deepening".
   stale categorization, cooldown, suppression). Unit-level with an
   in-memory fake Qdrant.
 - `tests/test_qdrant_client.py` -- the new `scroll_by_filters` / `set_payload`
-  / `delete_points` / `upsert_text(point_id=...)` methods, HTTP-call level
+  / `delete_points` / `upsert_text(point_id=...)` methods, and `search`'s
+  optional `filters` param (omitted vs. a `must` clause), HTTP-call level
   with a mocked `request_json`.
+- `tests/test_category_rag_retrieve.py` -- `split_tag_prefix` parsing
+  (including "not a prefix mid-sentence"), and `/rag tag:<word>` only
+  searching the tracker collection with the filter applied, skipping
+  knowledge entirely, unit-level with a `FakeQdrant` that records the
+  filter each collection was searched with.
 - `tests/test_scenarios_integration.py::TrackerMemoryManagementScenario` --
   the full write/list/done/rm round trip, the digest overdue/due-soon
   categorization, and `test_list_and_digest_tag_filter_against_real_qdrant`
   (proves Qdrant's list-payload match -- "the tag is one of the item's
   tags" -- against a real server, not just the fake), against a real
+  Qdrant (L2).
+- `tests/test_scenarios_integration.py::KnowledgeAndMemoryScenario::
+  test_rag_tag_prefix_scopes_to_tracker_items_with_that_tag_against_real_qdrant`
+  -- two differently-tagged `/mem` items, `/rag tag:work ...` and
+  `/rag tag:home ...` each only surface their own item, against a real
   Qdrant (L2).
 - `tests/test_cron_worker.py::RunDynamicJobTest` /
   `WriteGatewayRunbackTest` -- a `suppress_if_routine` result is recorded but

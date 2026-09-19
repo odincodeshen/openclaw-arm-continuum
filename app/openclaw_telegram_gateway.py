@@ -136,6 +136,8 @@ Query local memory and the document knowledge base.
 Example: /rag Which modules is OpenClaw connected to?
 Add #<category> to search one category, or #all for every category.
 Example: /rag #work-notes What are the open action items?
+Add tag:<word> to scope to /mem items with that tag (tracker only).
+Example: /rag tag:work what did I save about the deadline?
 
 /search <keywords>
 Browse and scrape the web with the local Playwright worker, convert to

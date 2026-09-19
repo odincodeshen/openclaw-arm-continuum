@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from openclaw_runtime import categories
-from openclaw_runtime.skills.memory import RagRetrieveSkill, split_category_prefix
+from openclaw_runtime.skills.memory import RagRetrieveSkill, split_category_prefix, split_tag_prefix
 
 from tests.support import build_settings
 
@@ -33,6 +33,28 @@ class SplitCategoryPrefixTest(unittest.TestCase):
         self.assertEqual(split_category_prefix("# 工作筆記 問題"), ("工作筆記", "問題"))
 
 
+class SplitTagPrefixTest(unittest.TestCase):
+    def test_no_prefix(self) -> None:
+        self.assertEqual(split_tag_prefix("what did I save"), (None, "what did I save"))
+
+    def test_tag_prefix(self) -> None:
+        self.assertEqual(split_tag_prefix("tag:work what's due this week"), ("work", "what's due this week"))
+
+    def test_case_insensitive_keyword(self) -> None:
+        self.assertEqual(split_tag_prefix("TAG:work anything"), ("work", "anything"))
+
+    def test_tag_with_no_question_leaves_rest_empty(self) -> None:
+        self.assertEqual(split_tag_prefix("tag:work "), ("work", ""))
+
+    def test_tag_without_trailing_space_is_not_recognized(self) -> None:
+        # No question follows, so this falls through untouched rather than
+        # being (mis)parsed as an empty-question tag filter.
+        self.assertEqual(split_tag_prefix("tag:work"), (None, "tag:work"))
+
+    def test_mid_sentence_tag_looking_text_is_not_a_prefix(self) -> None:
+        self.assertEqual(split_tag_prefix("what does tag:work mean"), (None, "what does tag:work mean"))
+
+
 class FakeEmbeddings:
     def embed(self, text: str) -> list[float]:
         return [0.1]
@@ -42,9 +64,11 @@ class FakeQdrant:
     def __init__(self, hits_by_collection: dict) -> None:
         self.hits_by_collection = hits_by_collection
         self.searched: list[str] = []
+        self.filters_by_collection: dict = {}
 
-    def search(self, collection, vector, limit=None):
+    def search(self, collection, vector, limit=None, filters=None):
         self.searched.append(collection)
+        self.filters_by_collection[collection] = filters
         return self.hits_by_collection.get(collection, [])
 
     def scroll_by_file_name(self, collection, file_name, limit=12):
@@ -122,6 +146,34 @@ class CategoryRagRetrieveTest(unittest.TestCase):
         skill = self._skill(qdrant)
         skill.run("/rag 一般問題")
         self.assertEqual(set(qdrant.searched), {"tracker_coll", "knowledge_coll"})
+
+    def test_tag_prefix_only_searches_tracker_with_filter_applied(self) -> None:
+        qdrant = FakeQdrant({"tracker_coll": [_hit("work item")]})
+        skill = self._skill(qdrant)
+        result = skill.run("/rag tag:work what's due")
+        self.assertEqual(result.answer, "answer-from-context")
+        self.assertEqual(qdrant.searched, ["tracker_coll"])
+        self.assertEqual(qdrant.filters_by_collection["tracker_coll"], {"tags": "work"})
+
+    def test_tag_prefix_skips_knowledge_collection_entirely(self) -> None:
+        qdrant = FakeQdrant(
+            {"tracker_coll": [_hit("work item")], "knowledge_coll": [_hit("unrelated doc")]}
+        )
+        skill = self._skill(qdrant)
+        skill.run("/rag tag:work what's due")
+        self.assertNotIn("knowledge_coll", qdrant.searched)
+
+    def test_query_without_tag_prefix_passes_no_filter(self) -> None:
+        qdrant = FakeQdrant({"tracker_coll": [_hit("t")], "knowledge_coll": [_hit("k")]})
+        skill = self._skill(qdrant)
+        skill.run("/rag 一般問題")
+        self.assertIsNone(qdrant.filters_by_collection["tracker_coll"])
+
+    def test_tag_prefix_with_no_hits_mentions_the_tag(self) -> None:
+        qdrant = FakeQdrant({})
+        skill = self._skill(qdrant)
+        result = skill.run("/rag tag:missing anything")
+        self.assertIn('tagged "missing"', result.answer)
 
     def test_all_categories_fans_out_over_registry(self) -> None:
         second = categories.upsert_registry_entry(self.settings, "讀書心得")

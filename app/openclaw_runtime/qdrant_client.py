@@ -84,8 +84,18 @@ class QdrantClient:
         )
         return point_id
 
-    def search(self, collection: str, vector: list[float], limit: int | None = None) -> list[dict]:
+    def search(
+        self,
+        collection: str,
+        vector: list[float],
+        limit: int | None = None,
+        filters: dict | None = None,
+    ) -> list[dict]:
         payload = {"vector": vector, "limit": limit or self.settings.retrieval_limit, "with_payload": True}
+        if filters:
+            payload["filter"] = {
+                "must": [{"key": key, "match": {"value": value}} for key, value in filters.items()]
+            }
         response = request_json(
             "POST",
             f"{self.settings.qdrant_base_url}/collections/{collection}/points/search",

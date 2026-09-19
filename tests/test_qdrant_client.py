@@ -19,6 +19,22 @@ class QdrantClientTest(unittest.TestCase):
         self.assertIsNone(payload)
 
     @patch("openclaw_runtime.qdrant_client.request_json")
+    def test_search_without_filters_omits_filter_key(self, request_json) -> None:
+        request_json.return_value = {"result": []}
+        self.client.search("coll", [0.1])
+        payload = request_json.call_args.args[2]
+        self.assertNotIn("filter", payload)
+
+    @patch("openclaw_runtime.qdrant_client.request_json")
+    def test_search_with_filters_sends_must_clause(self, request_json) -> None:
+        request_json.return_value = {"result": []}
+        self.client.search("coll", [0.1], filters={"tags": "work"})
+        method, url, payload = request_json.call_args.args
+        self.assertEqual(method, "POST")
+        self.assertIn("/collections/coll/points/search", url)
+        self.assertEqual(payload["filter"]["must"], [{"key": "tags", "match": {"value": "work"}}])
+
+    @patch("openclaw_runtime.qdrant_client.request_json")
     def test_upsert_text_uses_caller_supplied_point_id(self, request_json) -> None:
         request_json.return_value = {}
         returned = self.client.upsert_text(
