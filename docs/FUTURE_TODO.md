@@ -629,13 +629,12 @@ Expected work:
 
 Goal: run several independent OpenClaw "personas" at once on one host, each
 with its own Telegram bot identity and its own memory scope, sharing one
-model engine and one Qdrant server. Real use case (confirmed 2026-09-19):
-2-3 human users, topics that split cleanly, e.g.
+model engine and one Qdrant server. Illustrative shape (generic, not any
+specific deployment's real personas or user count):
 
 ```text
-bot1 "daily life"      -- shared RAG + cron -- talks to user1 AND user2
-bot2 "user1's 2nd brain" -- own RAG + cron  -- talks to user1 only
-bot3 "investing"         -- own RAG + cron  -- talks to whoever is allowed
+bot-a "topic A"  -- own RAG + cron -- allowlist can hold 1 or more chat IDs
+bot-b "topic B"  -- own RAG + cron -- a different allowlist
 ...
 ```
 
@@ -675,17 +674,25 @@ What needs building (the concurrency gap `docs/PROFILES.md` names):
 - `openclawctl --profile <name>` (or equivalent) so `start`/`stop`/`status`
   act on one persona's containers instead of everything.
 
-Open question, not yet answered -- **`openclaw-gateway` (the cron
-dashboard) is the one piece that actually binds a host port**
-(`127.0.0.1:18789:18789`) and owns a single sqlite job store
-(`OPENCLAW_GATEWAY_STATE_DB`). Two options, need investigation before
-committing to one:
-1. One dashboard container per bot (own port + own `gateway-data` dir) --
-   simple, matches the rest of the model, costs N ports and N containers.
-2. One shared dashboard serving all bots' cron jobs -- cheaper, but
-   `list_gateway_jobs` / the RPC do not currently appear to filter jobs by
-   which bot/chat_id owns them, so `openclaw-cron` for bot A would need a
-   way to fetch only bot A's jobs, not everyone's.
+Resolved -- **`openclaw-gateway` (the cron dashboard) must be one
+container per bot, not shared.** It is the one piece that binds a host
+port (`127.0.0.1:18789:18789`) and owns a single sqlite job store
+(`OPENCLAW_GATEWAY_STATE_DB`). Traced `gateway_cron.py`:
+`list_gateway_jobs()` calls `cron.list` with no bot/chat-id scope
+parameter, and `load_dynamic_jobs()` does not filter the result -- an
+`openclaw-cron` worker treats every job the RPC returns as its own. Two
+bots sharing one dashboard would double-run every job and could deliver
+bot B's job through bot A's Telegram token. So: own port + own
+`gateway-data` dir per bot, no way around it with the current dashboard.
+
+Privacy / upstream note: this repo is public. Bot persona names, topics,
+and how many exist are private facts about a given deployment, not
+project structure -- keep them out of anything committed. Concretely: any
+compose file or `profiles/<name>/.env.example` that ends up tracked must
+use generic placeholder names (`bot-a`, `personal`, `demo`), never a real
+person, relationship, or topic; real per-bot compose files and `.env`s
+stay local/gitignored, same as `profiles/*/.env` already is. See
+`docs/PROFILES.md` and `docs/PUBLISH_CHECKLIST.md`.
 
 Validation (extends `docs/PROFILES.md`'s existing checklist):
 - Two+ bots run at the same time without container-name or port conflicts.

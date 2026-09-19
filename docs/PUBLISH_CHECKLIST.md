@@ -8,6 +8,7 @@ Before publishing `openclaw-arm-continuum` to GitHub:
 - Confirm no backup archives are present.
 - Confirm no SQLite, database, JSONL, log, or pyc files are present.
 - Confirm no private SSH host, user, password, IP, Telegram chat id, or token is present.
+- Confirm no tracked profile directory name, `.env.example`, or `compose.persona.*.yaml` is named after a real person, household relationship, or private topic (see `docs/PROFILES.md` "Naming and privacy").
 - Confirm README says `OpenClaw Arm Continuum`.
 - Confirm license is Apache-2.0.
 - Confirm `docs/PLATFORMS.md` marks non-DGX profiles as planned/experimental until verified.

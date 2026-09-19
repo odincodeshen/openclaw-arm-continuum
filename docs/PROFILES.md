@@ -25,6 +25,17 @@ Each profile should have its own:
 
 The source code remains shared.
 
+## Naming and privacy
+
+This repository is public. A profile directory name, and any `.env.example`
+or compose file you add for it, ends up tracked in git if you commit it --
+unlike `.env` itself, a filename is not secret-scanned or gitignored by
+default. Keep profile names generic (`personal`, `demo`, `bot-a`) rather than
+a real person's name, a household relationship, or a private topic. Real,
+identifying profile configuration (the `.env` itself, and any per-profile
+compose file -- see `compose.persona.*.yaml` in `.gitignore`) stays local.
+See `docs/PUBLISH_CHECKLIST.md`.
+
 ## Directory Layout
 
 ```text
