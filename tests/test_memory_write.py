@@ -188,6 +188,93 @@ class MemoryWriteSkillTest(unittest.TestCase):
         self.assertEqual(payload["text"], "listen to the new podcast episode")
 
 
+class MemorySnoozeTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.settings = build_settings(tracker_collection="tracker_coll")
+        self.qdrant = FakeQdrant()
+        self.skill = MemoryWriteSkill(self.settings, {}, FakeEmbeddings(), self.qdrant)
+
+    def _first_short_id(self) -> str:
+        payload = next(iter(self.qdrant.collections["tracker_coll"].values()))["payload"]
+        return payload["short_id"]
+
+    def _payload(self, short_id: str) -> dict:
+        for point in self.qdrant.collections["tracker_coll"].values():
+            if point["payload"]["short_id"] == short_id:
+                return point["payload"]
+        raise AssertionError(f"no point with short_id {short_id}")
+
+    def test_snooze_relative_days(self) -> None:
+        self.skill.run("/mem renew passport due:2026-01-01")
+        short_id = self._first_short_id()
+        result = self.skill.run(f"/mem snooze {short_id} 3d")
+        expected = (date.today() + timedelta(days=3)).isoformat()
+        self.assertIn(f"Snoozed #{short_id} to {expected}", result.answer)
+        payload = self._payload(short_id)
+        self.assertEqual(payload["due"], expected)
+        self.assertEqual(payload["status"], "active")
+
+    def test_snooze_relative_weeks(self) -> None:
+        self.skill.run("/mem book flight")
+        short_id = self._first_short_id()
+        result = self.skill.run(f"/mem snooze {short_id} 1w")
+        expected = (date.today() + timedelta(days=7)).isoformat()
+        self.assertIn(expected, result.answer)
+        payload = self._payload(short_id)
+        self.assertEqual(payload["due"], expected)
+
+    def test_snooze_absolute_date(self) -> None:
+        self.skill.run("/mem call dentist")
+        short_id = self._first_short_id()
+        result = self.skill.run(f"/mem snooze {short_id} 2026-12-25")
+        self.assertIn("Snoozed", result.answer)
+        payload = self._payload(short_id)
+        self.assertEqual(payload["due"], "2026-12-25")
+
+    def test_snooze_reactivates_a_done_item(self) -> None:
+        self.skill.run("/mem finish report")
+        short_id = self._first_short_id()
+        self.skill.run(f"/mem done {short_id}")
+        result = self.skill.run(f"/mem snooze {short_id} 3d")
+        self.assertIn("Snoozed", result.answer)
+        payload = self._payload(short_id)
+        self.assertEqual(payload["status"], "active")
+
+    def test_snooze_undated_item_gains_a_due_date(self) -> None:
+        self.skill.run("/mem no due task")
+        short_id = self._first_short_id()
+        result = self.skill.run(f"/mem snooze {short_id} 2d")
+        self.assertIn("Snoozed", result.answer)
+        payload = self._payload(short_id)
+        self.assertIn("due", payload)
+
+    def test_snooze_unknown_id(self) -> None:
+        result = self.skill.run("/mem snooze deadbeef 3d")
+        self.assertIn("No memory item", result.answer)
+
+    def test_snooze_invalid_target_is_rejected(self) -> None:
+        self.skill.run("/mem call dentist")
+        short_id = self._first_short_id()
+        result = self.skill.run(f"/mem snooze {short_id} tomorrow")
+        self.assertIn("Could not parse", result.answer)
+
+    def test_snooze_missing_args_shows_usage(self) -> None:
+        result = self.skill.run("/mem snooze")
+        self.assertIn("Usage: /mem snooze", result.answer)
+
+    def test_snooze_missing_amount_shows_usage(self) -> None:
+        self.skill.run("/mem call dentist")
+        short_id = self._first_short_id()
+        result = self.skill.run(f"/mem snooze {short_id}")
+        self.assertIn("Usage: /mem snooze", result.answer)
+
+    def test_snooze_includes_item_text_in_confirmation(self) -> None:
+        self.skill.run("/mem renew passport")
+        short_id = self._first_short_id()
+        result = self.skill.run(f"/mem snooze {short_id} 3d")
+        self.assertIn("renew passport", result.answer)
+
+
 class MemoryDigestTest(unittest.TestCase):
     def setUp(self) -> None:
         self.settings = build_settings(

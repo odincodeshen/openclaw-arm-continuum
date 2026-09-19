@@ -115,6 +115,10 @@ List active memory items (or completed ones), soonest due date first.
 Mark a memory item done. /mem rm <id> deletes it. Both take the short
 ID shown by /mem list or after a /mem save.
 
+/mem snooze <id> <3d|1w|YYYY-MM-DD>
+Push an item's due date out (relative or absolute). Also works on items
+with no due date yet, and reactivates a done item.
+
 /mem digest
 Reminder summary: overdue items, items due soon, and stale undated
 items. Add a daily cron job to get this pushed automatically:

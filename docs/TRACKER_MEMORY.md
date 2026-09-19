@@ -30,6 +30,15 @@ Mark an item done (moves it from the active list to the done list).
 /mem delete <id>
 Delete an item permanently.
 
+/mem snooze <id> <3d|1w|YYYY-MM-DD>
+Push an item's due date out. Accepts a relative amount (3d = 3 days,
+1w = 1 week) or an absolute YYYY-MM-DD date. Works on items with no due
+date yet (gives them one), and reactivates a done item back to active --
+no need to /mem done then re-save to push something out.
+
+Example: /mem snooze a1b2c3d4 3d
+Example: /mem snooze a1b2c3d4 2026-10-01
+
 /mem digest
 A reminder summary: overdue items, items due soon, and stale undated
 items. Meant to be run on a schedule (see "Proactive reminders" below),
@@ -54,9 +63,9 @@ first 8 hex characters of the underlying Qdrant point ID).
 
 ## Reserved sub-commands
 
-`list`, `done`, and `rm` / `delete` are reserved only as the exact first
-whitespace-delimited word of the content. `/mem listen to the new episode`
-still saves normally -- `listen` is not `list`.
+`list`, `done`, `rm` / `delete`, and `snooze` are reserved only as the exact
+first whitespace-delimited word of the content. `/mem listen to the new
+episode` still saves normally -- `listen` is not `list`.
 
 ## Data model
 
@@ -72,11 +81,12 @@ same collection `/mem` always used. New payload fields on top of the existing
 | `tags` | list of strings, or absent | |
 | `updated_at` | epoch seconds | set on write and on `/mem done` |
 
-`/mem list` / `done` / `rm` never touch the vector -- listing is a payload
-`scroll` filter (`kind=tracker_memory`, `status=...`), done is a payload merge
-(`QdrantClient.set_payload`), delete is `QdrantClient.delete_points`. Plain
-`/rag` (no category) still vector-searches this collection as before, so
-saved items remain findable by meaning, not just by browsing the list.
+`/mem list` / `done` / `rm` / `snooze` never touch the vector -- listing is a
+payload `scroll` filter (`kind=tracker_memory`, `status=...`), done and
+snooze are a payload merge (`QdrantClient.set_payload`), delete is
+`QdrantClient.delete_points`. Plain `/rag` (no category) still
+vector-searches this collection as before, so saved items remain findable
+by meaning, not just by browsing the list.
 
 ## Proactive reminders
 
@@ -126,9 +136,11 @@ cooldown -- see `docs/FUTURE_TODO.md` "Personal Memory Deepening".
 ## Validation
 
 - `tests/test_memory_write.py` -- metadata parsing, write/list/done/rm, the
-  reserved-word edge case, unknown-ID handling, and `MemoryDigestTest`
-  (overdue/due-soon/stale categorization, cooldown, suppression). Unit-level
-  with an in-memory fake Qdrant.
+  reserved-word edge case, unknown-ID handling, `MemorySnoozeTest`
+  (relative/absolute targets, reactivating a done item, undated items,
+  invalid input), and `MemoryDigestTest` (overdue/due-soon/stale
+  categorization, cooldown, suppression). Unit-level with an in-memory fake
+  Qdrant.
 - `tests/test_qdrant_client.py` -- the new `scroll_by_filters` / `set_payload`
   / `delete_points` / `upsert_text(point_id=...)` methods, HTTP-call level
   with a mocked `request_json`.

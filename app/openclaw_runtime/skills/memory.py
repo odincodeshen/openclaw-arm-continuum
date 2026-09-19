@@ -27,6 +27,9 @@ _ALL_CATEGORIES_TOKEN = "\x00all\x00"
 _DUE_TOKEN_RE = re.compile(r"(?<!\S)due:(\S+)(?!\S)", re.IGNORECASE)
 _TAG_TOKEN_RE = re.compile(r"(?<!\S)tag:(\S+)(?!\S)", re.IGNORECASE)
 
+# Relative snooze targets like "3d" or "1w" for /mem snooze.
+_SNOOZE_RELATIVE_RE = re.compile(r"^(\d+)([dw])$", re.IGNORECASE)
+
 
 def parse_memory_metadata(content: str) -> tuple[str, str | None, list[str]]:
     """Pull ``due:YYYY-MM-DD`` and ``tag:<word>`` tokens out of free text.
@@ -103,6 +106,7 @@ class MemoryWriteSkill:
                 self.name,
                 "Add the content to save after /mem, or use:\n"
                 "/mem list [done]\n/mem done <id>\n/mem rm <id>\n/mem digest\n"
+                "/mem snooze <id> <3d|1w|YYYY-MM-DD>\n"
                 "Add due:YYYY-MM-DD and/or tag:<word> anywhere in the text to save them.",
             )
         stripped = content.strip()
@@ -116,6 +120,8 @@ class MemoryWriteSkill:
             return self._remove(rest.strip())
         if keyword == "digest":
             return self._digest()
+        if keyword == "snooze":
+            return self._snooze(rest.strip())
         return self._write(content)
 
     def _write(self, content: str) -> SkillResult:
@@ -197,6 +203,43 @@ class MemoryWriteSkill:
             {"status": "done", "updated_at": int(time.time())},
         )
         return SkillResult(self.name, f"Marked #{short_id} as done.")
+
+    def _snooze(self, rest: str) -> SkillResult:
+        short_id, _, amount = rest.partition(" ")
+        amount = amount.strip()
+        if not short_id or not amount:
+            return SkillResult(self.name, "Usage: /mem snooze <id> <3d|1w|YYYY-MM-DD>")
+        new_due = self._parse_snooze_target(amount)
+        if new_due is None:
+            return SkillResult(
+                self.name, f'Could not parse "{amount}" as a snooze target. Use 3d, 1w, or YYYY-MM-DD.'
+            )
+        point = self._find_by_short_id(short_id)
+        if not point:
+            return SkillResult(self.name, f'No memory item with ID "{short_id}".')
+        new_due_str = new_due.isoformat()
+        self.qdrant.set_payload(
+            self.settings.tracker_collection,
+            point["id"],
+            # Snoozing implies "not done yet" -- reactivate a done item too.
+            {"due": new_due_str, "status": "active", "updated_at": int(time.time())},
+        )
+        item_text = str((point.get("payload") or {}).get("text") or "").strip()
+        suffix = f": {item_text}" if item_text else ""
+        return SkillResult(self.name, f"Snoozed #{short_id} to {new_due_str}{suffix}")
+
+    @staticmethod
+    def _parse_snooze_target(amount: str) -> date | None:
+        match = _SNOOZE_RELATIVE_RE.match(amount)
+        if match:
+            count = int(match.group(1))
+            unit = match.group(2).lower()
+            days = count if unit == "d" else count * 7
+            return date.today() + timedelta(days=days)
+        try:
+            return date.fromisoformat(amount)
+        except ValueError:
+            return None
 
     def _remove(self, short_id: str) -> SkillResult:
         if not short_id:
