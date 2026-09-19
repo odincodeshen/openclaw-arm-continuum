@@ -203,18 +203,24 @@ Use `/help` in Telegram for the mobile command card.
 Main commands:
 
 ```text
-/mem      capture personal memory
-/rag      retrieve memory or document context
+/mem      capture, list, edit, snooze, or complete personal memory
+/rag      retrieve memory or document context, optionally scoped by #<category> or tag:<word>
+/cat      manage Category RAG knowledge bases (list, rename, merge)
 /doc      import public Google Docs
 /search   browse with local Playwright worker
 /cron     create and manage proactive push tasks
 /new      start a new chat conversation (clear context)
+/keep     pin a fact so chat always remembers it this conversation
+/history  preview what the current chat has stored (read-only)
 /agents   list the active local agents
 /tasks    inspect recent task history
 ```
 
-Plain chat keeps the last few turns as context (see
-`docs/CONVERSATION_MEMORY.md`); `/new` clears it.
+Plain chat keeps the last few turns as context, folding older turns into a
+rolling summary instead of dropping them (see
+`docs/CONVERSATION_MEMORY.md`); `/new` clears it, `/keep <fact>` pins
+something that should always ride along, `/history` previews what is
+currently stored.
 
 Currently implemented help commands:
 
@@ -222,6 +228,7 @@ Currently implemented help commands:
 /help
 /doc
 /cron
+/cat
 ```
 
 Weather is not a slash command. Ask in plain language and it is routed to
@@ -246,12 +253,19 @@ Examples:
 ```text
 /mem Check the cron dashboard due:2026-07-05 tag:ops
 /mem list
+/mem list tag:ops
+/mem snooze <id> 3d
+/mem edit <id> Check the cron dashboard next sprint instead
+/mem digest
 /rag What OpenClaw settings did I ask you to remember?
+/rag tag:ops What did I save about the cron dashboard?
 /rag #<category> Summarize the uploaded architecture manual
 ```
 
-See `docs/TRACKER_MEMORY.md` for `/mem list` / `done` / `rm` and the
-`due:` / `tag:` metadata syntax, and `docs/CATEGORY_RAG.md` for `/rag #<category>`.
+See `docs/TRACKER_MEMORY.md` for the full `/mem` command set (`list` / `done`
+/ `rm` / `edit` / `snooze` / `digest`, `due:` / `tag:` metadata, and the
+`tag:<word>` scope filter shared with `/rag`), and `docs/CATEGORY_RAG.md`
+for `/rag #<category>`.
 
 ## Document Intake
 
@@ -295,7 +309,8 @@ Keep unrelated material in separate, non-overlapping knowledge bases (one
 Qdrant collection per category). Upload a photo or document, then name a
 category with a `#<name>` caption or by replying with the name; query it
 with `/rag #<name> <question>` or `/rag #all <question>`. Photos are indexed
-via the configured vision model (`OPENCLAW_VLM_MODEL`). See
+via the configured vision model (`OPENCLAW_VLM_MODEL`). Rename or merge
+categories without touching Qdrant by hand. See
 [docs/CATEGORY_RAG.md](docs/CATEGORY_RAG.md).
 
 ```text
@@ -303,6 +318,8 @@ via the configured vision model (`OPENCLAW_VLM_MODEL`). See
 /rag #工作筆記 open action items?
 /rag #all where is the rack diagram
 /cat list
+/cat rename 工作筆記 work-notes
+/cat merge work-notes archive
 ```
 
 ## Cron

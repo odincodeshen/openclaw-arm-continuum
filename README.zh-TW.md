@@ -184,14 +184,22 @@ curl -I http://127.0.0.1:18789/
 主要指令：
 
 ```text
-/mem      寫入個人記憶
-/rag      查詢本地記憶或文件
+/mem      寫入、列出、編輯、延期或完成個人記憶
+/rag      查詢本地記憶或文件，可用 #<分類> 或 tag:<字> 縮小範圍
+/cat      管理分類 RAG 知識庫（列出、改名、合併）
 /doc      匯入公開 Google Doc
 /search   使用本地 browser worker 查網頁
 /cron     建立與管理主動推播任務
+/new      開始新的對話（清空上下文）
+/keep     釘住一個事實，讓這次對話一直記得
+/history  預覽目前對話記得什麼（唯讀）
 /agents   列出目前本地 agents
 /tasks    查看最近任務紀錄
 ```
+
+一般聊天會記得最近幾輪對話，超出視窗的部分會摺進滾動摘要而不是直接丟棄
+（見 `docs/CONVERSATION_MEMORY.md`）；`/new` 清空整個對話，`/keep <事實>`
+釘住不想被摘要壓縮掉的內容，`/history` 可以隨時預覽目前記得什麼。
 
 目前已實作的 help：
 
@@ -199,6 +207,7 @@ curl -I http://127.0.0.1:18789/
 /help
 /doc
 /cron
+/cat
 ```
 
 天氣查詢不是 slash command，直接用自然語言問就會自動路由到天氣 skill，
@@ -220,11 +229,20 @@ Qdrant 預設使用兩個 collection。profile 專屬 `.env` 可以覆寫 collec
 範例：
 
 ```text
-/mem #todo due:2026-07-05 檢查 cron dashboard
-/rag memory: 最近記住了哪些 OpenClaw 設定？
-/rag knowledge: 這份架構文件的重點是什麼？
-/rag doc:260702_01 這份文件在說什麼？
+/mem 檢查 cron dashboard due:2026-07-05 tag:ops
+/mem list
+/mem list tag:ops
+/mem snooze <id> 3d
+/mem edit <id> 改成下個 sprint 再檢查
+/mem digest
+/rag 最近記住了哪些 OpenClaw 設定？
+/rag tag:ops 之前存了什麼跟 cron dashboard 有關的？
+/rag #<分類> 這份架構文件的重點是什麼？
 ```
+
+`/mem list` / `done` / `rm` / `edit` / `snooze` / `digest` 完整指令、
+`due:` / `tag:` metadata 語法、以及 `/rag` 共用的 `tag:<字>` 範圍過濾，
+見 `docs/TRACKER_MEMORY.md`；`/rag #<分類>` 見 `docs/CATEGORY_RAG.md`。
 
 ## 文件流程
 
@@ -262,6 +280,23 @@ Caption 快捷方式：
 「先審核再決定是否正式匯入」的文件流程是規劃項目，Telegram gateway
 尚未完整實作。目前上傳文件會先保存到本地 inbox，支援格式會直接由
 memory watcher 索引。
+
+## 分類 RAG
+
+把不相關的資料分開存放、互不干擾（每個分類各自一個 Qdrant collection）。
+上傳照片或文件時，用 `#<名稱>` 當 caption，或傳完檔案後直接回覆分類名稱；
+查詢時用 `/rag #<名稱> <問題>` 或 `/rag #all <問題>`。照片會用設定好的
+vision model（`OPENCLAW_VLM_MODEL`）辨識。分類可以改名或合併，不用手動
+操作 Qdrant。詳見 [docs/CATEGORY_RAG.md](docs/CATEGORY_RAG.md)。
+
+```text
+#工作筆記                     （上傳時的 caption）
+/rag #工作筆記 有哪些待辦事項？
+/rag #all 機櫃圖放在哪裡？
+/cat list
+/cat rename 工作筆記 work-notes
+/cat merge work-notes archive
+```
 
 ## Cron 主動推播
 
