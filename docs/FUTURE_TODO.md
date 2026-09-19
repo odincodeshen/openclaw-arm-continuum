@@ -624,3 +624,79 @@ Expected work:
 - Add platform-specific smoke tests.
 - Add resource and performance notes.
 - Keep secrets and runtime state out of git.
+
+## Future: Concurrent Multi-Bot Personas
+
+Goal: run several independent OpenClaw "personas" at once on one host, each
+with its own Telegram bot identity and its own memory scope, sharing one
+model engine and one Qdrant server. Real use case (confirmed 2026-09-19):
+2-3 human users, topics that split cleanly, e.g.
+
+```text
+bot1 "daily life"      -- shared RAG + cron -- talks to user1 AND user2
+bot2 "user1's 2nd brain" -- own RAG + cron  -- talks to user1 only
+bot3 "investing"         -- own RAG + cron  -- talks to whoever is allowed
+...
+```
+
+**The isolation unit is the bot, not the individual user.** Multi-user
+access within one bot is *not* a separate feature: `OPENCLAW_TELEGRAM_
+ALLOWED_CHAT_IDS` is already a set, so a bot with 2+ chat IDs already
+shares its single memory scope with all of them today, at zero new code.
+There is no per-individual auto-partitioning of Qdrant collections or the
+Category RAG registry -- access is a manually curated allowlist per bot,
+matching how a single-profile deployment already works.
+
+So this reduces to one thing: make `docs/PROFILES.md` support **running
+multiple profiles concurrently**, which it explicitly does not yet do
+("service names and host ports are still shared"). Each bot persona =
+one profile = its own bot token, allowed chat IDs, cron chat IDs, `.env`,
+`tracker`/`knowledge` collection names, Category RAG registry path,
+conversation-memory store path, task-history path, and cron job store --
+same list `docs/PROFILES.md` already defines "What A Profile Separates".
+
+What's already free (needs no new code):
+- Multi-user access per bot (`OPENCLAW_TELEGRAM_ALLOWED_CHAT_IDS`).
+- Per-bot data isolation model (proven by the personal/demo profile split).
+- Settings/QdrantClient/MemoryWriteSkill/RagRetrieveSkill already take
+  collection names from a single static `Settings` loaded once per
+  process -- running N bots is N processes, each with its own ordinary
+  Settings, not one process juggling N configs.
+
+What needs building (the concurrency gap `docs/PROFILES.md` names):
+- Parameterize `container_name` per bot in compose (`openclaw-telegram`,
+  `openclaw-memory-watcher`, `openclaw-cron` -- none of these bind a host
+  port, since Telegram bots are outbound long-polling, so this is mostly
+  a compose-authoring exercise: N service blocks or a generator, not new
+  application code).
+- `openclaw-vllm`, Qdrant, Whisper, and `openclaw-browser-scraper` are
+  shared across all bots (no GPU/DB duplication needed) -- only
+  bot-specific containers are replicated.
+- `openclawctl --profile <name>` (or equivalent) so `start`/`stop`/`status`
+  act on one persona's containers instead of everything.
+
+Open question, not yet answered -- **`openclaw-gateway` (the cron
+dashboard) is the one piece that actually binds a host port**
+(`127.0.0.1:18789:18789`) and owns a single sqlite job store
+(`OPENCLAW_GATEWAY_STATE_DB`). Two options, need investigation before
+committing to one:
+1. One dashboard container per bot (own port + own `gateway-data` dir) --
+   simple, matches the rest of the model, costs N ports and N containers.
+2. One shared dashboard serving all bots' cron jobs -- cheaper, but
+   `list_gateway_jobs` / the RPC do not currently appear to filter jobs by
+   which bot/chat_id owns them, so `openclaw-cron` for bot A would need a
+   way to fetch only bot A's jobs, not everyone's.
+
+Validation (extends `docs/PROFILES.md`'s existing checklist):
+- Two+ bots run at the same time without container-name or port conflicts.
+- A message to bot1 never appears in bot2's conversation memory, `/mem`,
+  or `/rag`, and vice versa.
+- A user on bot1's allowlist but not bot2's gets no response from bot2.
+- Cron jobs on one bot never fire against another bot's chat IDs.
+- Stopping one bot's containers does not affect another bot's, or the
+  shared vLLM/Qdrant/Whisper/browser-scraper services.
+
+Effort: medium. Mostly compose/ops and lifecycle tooling, not deep
+application-code changes, since the per-bot isolation model already
+exists and is already proven (`docs/PROFILES.md`) -- the actual gap is
+running it N times concurrently instead of one at a time.
