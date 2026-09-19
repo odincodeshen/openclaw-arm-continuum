@@ -39,6 +39,15 @@ no need to /mem done then re-save to push something out.
 Example: /mem snooze a1b2c3d4 3d
 Example: /mem snooze a1b2c3d4 2026-10-01
 
+/mem edit <id> <new text>
+Replace an item's text (and re-embed it, so /rag keeps finding it by
+meaning). due:/tag: tokens in the new text override the stored ones;
+omitting them keeps whatever was already there. status and created_at
+are untouched.
+
+Example: /mem edit a1b2c3d4 renew passport and international driving permit
+Example: /mem edit a1b2c3d4 renew passport due:2027-01-15
+
 /mem digest
 A reminder summary: overdue items, items due soon, and stale undated
 items. Meant to be run on a schedule (see "Proactive reminders" below),
@@ -63,9 +72,9 @@ first 8 hex characters of the underlying Qdrant point ID).
 
 ## Reserved sub-commands
 
-`list`, `done`, `rm` / `delete`, and `snooze` are reserved only as the exact
-first whitespace-delimited word of the content. `/mem listen to the new
-episode` still saves normally -- `listen` is not `list`.
+`list`, `done`, `rm` / `delete`, `snooze`, and `edit` are reserved only as
+the exact first whitespace-delimited word of the content. `/mem listen to
+the new episode` still saves normally -- `listen` is not `list`.
 
 ## Data model
 
@@ -84,7 +93,10 @@ same collection `/mem` always used. New payload fields on top of the existing
 `/mem list` / `done` / `rm` / `snooze` never touch the vector -- listing is a
 payload `scroll` filter (`kind=tracker_memory`, `status=...`), done and
 snooze are a payload merge (`QdrantClient.set_payload`), delete is
-`QdrantClient.delete_points`. Plain `/rag` (no category) still
+`QdrantClient.delete_points`. `/mem edit` is the one exception: it
+re-embeds the new text and does a full point replace (same point ID, via
+`QdrantClient.upsert_text(point_id=...)`), because the old vector would
+otherwise keep matching the old wording. Plain `/rag` (no category) still
 vector-searches this collection as before, so saved items remain findable
 by meaning, not just by browsing the list.
 
@@ -138,9 +150,10 @@ cooldown -- see `docs/FUTURE_TODO.md` "Personal Memory Deepening".
 - `tests/test_memory_write.py` -- metadata parsing, write/list/done/rm, the
   reserved-word edge case, unknown-ID handling, `MemorySnoozeTest`
   (relative/absolute targets, reactivating a done item, undated items,
-  invalid input), and `MemoryDigestTest` (overdue/due-soon/stale
-  categorization, cooldown, suppression). Unit-level with an in-memory fake
-  Qdrant.
+  invalid input), `MemoryEditTest` (text replacement, re-embedding,
+  preserving status/created_at, due/tag override vs. preserve), and
+  `MemoryDigestTest` (overdue/due-soon/stale categorization, cooldown,
+  suppression). Unit-level with an in-memory fake Qdrant.
 - `tests/test_qdrant_client.py` -- the new `scroll_by_filters` / `set_payload`
   / `delete_points` / `upsert_text(point_id=...)` methods, HTTP-call level
   with a mocked `request_json`.

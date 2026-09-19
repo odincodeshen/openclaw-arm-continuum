@@ -275,6 +275,90 @@ class MemorySnoozeTest(unittest.TestCase):
         self.assertIn("renew passport", result.answer)
 
 
+class MemoryEditTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.settings = build_settings(tracker_collection="tracker_coll")
+        self.qdrant = FakeQdrant()
+        self.skill = MemoryWriteSkill(self.settings, {}, FakeEmbeddings(), self.qdrant)
+
+    def _first_short_id(self) -> str:
+        payload = next(iter(self.qdrant.collections["tracker_coll"].values()))["payload"]
+        return payload["short_id"]
+
+    def _payload(self, short_id: str) -> dict:
+        for point in self.qdrant.collections["tracker_coll"].values():
+            if point["payload"]["short_id"] == short_id:
+                return point["payload"]
+        raise AssertionError(f"no point with short_id {short_id}")
+
+    def test_edit_replaces_text_and_keeps_same_short_id(self) -> None:
+        self.skill.run("/mem buy milk")
+        short_id = self._first_short_id()
+        result = self.skill.run(f"/mem edit {short_id} buy oat milk instead")
+        self.assertIn(f"Updated #{short_id}: buy oat milk instead", result.answer)
+        payload = self._payload(short_id)
+        self.assertEqual(payload["text"], "buy oat milk instead")
+        self.assertEqual(len(self.qdrant.collections["tracker_coll"]), 1)
+
+    def test_edit_re_embeds_the_new_text(self) -> None:
+        self.skill.run("/mem buy milk")
+        short_id = self._first_short_id()
+        self.skill.run(f"/mem edit {short_id} a much longer replacement sentence")
+        point = next(iter(self.qdrant.collections["tracker_coll"].values()))
+        self.assertEqual(point["vector"], FakeEmbeddings().embed("a much longer replacement sentence"))
+
+    def test_edit_preserves_status_and_created_at(self) -> None:
+        self.skill.run("/mem finish report")
+        short_id = self._first_short_id()
+        self.skill.run(f"/mem done {short_id}")
+        created_at = self._payload(short_id)["created_at"]
+
+        self.skill.run(f"/mem edit {short_id} finish the quarterly report")
+        payload = self._payload(short_id)
+        self.assertEqual(payload["status"], "done")
+        self.assertEqual(payload["created_at"], created_at)
+
+    def test_edit_without_metadata_keeps_existing_due_and_tags(self) -> None:
+        self.skill.run("/mem renew passport due:2026-12-01 tag:admin")
+        short_id = self._first_short_id()
+        result = self.skill.run(f"/mem edit {short_id} renew passport and visa")
+        payload = self._payload(short_id)
+        self.assertEqual(payload["due"], "2026-12-01")
+        self.assertEqual(payload["tags"], ["admin"])
+        self.assertIn("due 2026-12-01", result.answer)
+        self.assertIn("tags: admin", result.answer)
+
+    def test_edit_with_new_metadata_overrides_existing(self) -> None:
+        self.skill.run("/mem renew passport due:2026-12-01 tag:admin")
+        short_id = self._first_short_id()
+        self.skill.run(f"/mem edit {short_id} renew passport due:2027-01-15 tag:urgent")
+        payload = self._payload(short_id)
+        self.assertEqual(payload["due"], "2027-01-15")
+        self.assertEqual(payload["tags"], ["urgent"])
+
+    def test_edit_unknown_id(self) -> None:
+        result = self.skill.run("/mem edit deadbeef new text")
+        self.assertIn("No memory item", result.answer)
+
+    def test_edit_missing_args_shows_usage(self) -> None:
+        result = self.skill.run("/mem edit")
+        self.assertIn("Usage: /mem edit", result.answer)
+
+    def test_edit_missing_new_text_shows_usage(self) -> None:
+        self.skill.run("/mem buy milk")
+        short_id = self._first_short_id()
+        result = self.skill.run(f"/mem edit {short_id}")
+        self.assertIn("Usage: /mem edit", result.answer)
+
+    def test_edit_metadata_only_is_rejected(self) -> None:
+        self.skill.run("/mem buy milk")
+        short_id = self._first_short_id()
+        result = self.skill.run(f"/mem edit {short_id} due:2026-09-20")
+        self.assertIn("not just", result.answer)
+        payload = self._payload(short_id)
+        self.assertEqual(payload["text"], "buy milk")
+
+
 class MemoryDigestTest(unittest.TestCase):
     def setUp(self) -> None:
         self.settings = build_settings(

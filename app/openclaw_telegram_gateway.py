@@ -119,6 +119,10 @@ ID shown by /mem list or after a /mem save.
 Push an item's due date out (relative or absolute). Also works on items
 with no due date yet, and reactivates a done item.
 
+/mem edit <id> <new text>
+Replace an item's text. due:/tag: in the new text override the stored
+ones; omitting them keeps what was already there.
+
 /mem digest
 Reminder summary: overdue items, items due soon, and stale undated
 items. Add a daily cron job to get this pushed automatically:

@@ -106,7 +106,7 @@ class MemoryWriteSkill:
                 self.name,
                 "Add the content to save after /mem, or use:\n"
                 "/mem list [done]\n/mem done <id>\n/mem rm <id>\n/mem digest\n"
-                "/mem snooze <id> <3d|1w|YYYY-MM-DD>\n"
+                "/mem snooze <id> <3d|1w|YYYY-MM-DD>\n/mem edit <id> <new text>\n"
                 "Add due:YYYY-MM-DD and/or tag:<word> anywhere in the text to save them.",
             )
         stripped = content.strip()
@@ -122,6 +122,8 @@ class MemoryWriteSkill:
             return self._digest()
         if keyword == "snooze":
             return self._snooze(rest.strip())
+        if keyword == "edit":
+            return self._edit(rest.strip())
         return self._write(content)
 
     def _write(self, content: str) -> SkillResult:
@@ -157,6 +159,50 @@ class MemoryWriteSkill:
             bits.append("tags: " + ", ".join(tags))
         suffix = f" ({'; '.join(bits)})" if bits else ""
         return SkillResult(self.name, f"Saved to {self.settings.tracker_collection}. Memory ID: {short_id}{suffix}")
+
+    def _edit(self, rest: str) -> SkillResult:
+        short_id, _, new_content = rest.partition(" ")
+        new_content = new_content.strip()
+        if not short_id or not new_content:
+            return SkillResult(self.name, "Usage: /mem edit <id> <new text>")
+        point = self._find_by_short_id(short_id)
+        if not point:
+            return SkillResult(self.name, f'No memory item with ID "{short_id}".')
+
+        clean_text, due, tags = parse_memory_metadata(new_content)
+        if not clean_text:
+            return SkillResult(self.name, "Add some content to remember, not just due:/tag: metadata.")
+
+        payload = point.get("payload") or {}
+        # due:/tag: in the new text override the stored ones; omitting them
+        # keeps whatever was already there instead of wiping it out.
+        effective_due = due or payload.get("due")
+        effective_tags = tags or payload.get("tags")
+        metadata = {
+            "source": payload.get("source", "telegram"),
+            "kind": "tracker_memory",
+            "short_id": short_id,
+            "status": payload.get("status", "active"),
+            "created_at": payload.get("created_at", int(time.time())),
+            "updated_at": int(time.time()),
+        }
+        if effective_due:
+            metadata["due"] = effective_due
+        if effective_tags:
+            metadata["tags"] = effective_tags
+
+        vector = self.embeddings.embed(clean_text)
+        self.qdrant.upsert_text(
+            self.settings.tracker_collection, clean_text, vector, metadata, point_id=point["id"]
+        )
+
+        bits = []
+        if effective_due:
+            bits.append(f"due {effective_due}")
+        if effective_tags:
+            bits.append("tags: " + ", ".join(effective_tags))
+        suffix = f" ({'; '.join(bits)})" if bits else ""
+        return SkillResult(self.name, f"Updated #{short_id}: {clean_text}{suffix}")
 
     def _list(self, arg: str) -> SkillResult:
         status = "done" if arg.strip().lower() == "done" else "active"
