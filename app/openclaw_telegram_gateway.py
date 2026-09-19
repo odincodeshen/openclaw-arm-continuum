@@ -518,8 +518,8 @@ def _route_image_to_category(
     )
     send_message(
         chat_id,
-        "To also index this image for retrieval, reply with a category name "
-        "(or /cancel to skip). The analysis above is sent regardless.",
+        "To also index this image for retrieval, reply with just the category "
+        "name, e.g. trip (or /cancel to skip). The analysis above is sent regardless.",
     )
 
 
@@ -652,7 +652,9 @@ def handle_document_message(chat_id: int, message: dict, caption: str) -> bool:
             send_message(
                 chat_id,
                 f"Got {staged.name}. Which knowledge category should it go in?\n"
-                "Reply with a category name, or /cancel to file it into the general knowledge base.",
+                "Reply with just the category name, e.g. trip (no # and no extra "
+                "note -- for that, use the #<name> note caption instead), or "
+                "/cancel to file it into the general knowledge base.",
             )
             log(f"[category] pending document chat_id={chat_id} staged={staged.name}")
             return True

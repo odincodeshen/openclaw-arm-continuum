@@ -28,6 +28,12 @@ model.
 Send the file with no `#` caption. The bot replies asking for a category;
 your next plain-text message is taken as the category name.
 
+**Reply with just the name** (e.g. `trip`), not `#trip` and not `#trip <note>`.
+The two-step reply has no note field -- a reply that starts with `#`/`＃` is
+parsed leniently (the `#` is stripped, and the category is the first word) so
+`#trip <anything>` still resolves to `trip`, but the `<anything>` is dropped,
+not attached as a note. If you want a note, use the caption shortcut instead.
+
 - `/cancel` drops a waiting file (a document then goes to the general
   knowledge base).
 - If you don't answer within `OPENCLAW_CATEGORY_PENDING_TTL_SECONDS`
