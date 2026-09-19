@@ -8,16 +8,37 @@ from openclaw_runtime.conversation_memory import ConversationMemory
 from tests.support import build_settings
 
 
-def _memory(tmp: Path, **overrides) -> ConversationMemory:
+def _memory(tmp: Path, llm=None, **overrides) -> ConversationMemory:
     kwargs = dict(
         conversation_memory_enabled=True,
         conversation_store_path=tmp / "conversations",
         conversation_history_turns=3,
         conversation_context_chars=6000,
         conversation_retention_hours=72,
+        conversation_summary_enabled=True,
+        conversation_summary_max_tokens=200,
+        conversation_summary_max_chars=2000,
+        conversation_keep_max_items=20,
     )
     kwargs.update(overrides)
-    return ConversationMemory(build_settings(**kwargs))
+    return ConversationMemory(build_settings(**kwargs), llm)
+
+
+class FakeSummarizerLlm:
+    """Returns a canned/derived summary and records every prompt it saw."""
+
+    def __init__(self, answer: str | None = None, raises: Exception | None = None):
+        self.answer = answer
+        self.raises = raises
+        self.prompts: list[str] = []
+
+    def chat(self, prompt, *, max_tokens=None, history=None):
+        self.prompts.append(prompt)
+        if self.raises:
+            raise self.raises
+        if self.answer is not None:
+            return self.answer
+        return f"summary#{len(self.prompts)}"
 
 
 class ConversationMemoryTest(unittest.TestCase):
@@ -153,6 +174,154 @@ class ChatAgentMemoryTest(unittest.TestCase):
 
         result = ChatAgent(FakeLlm()).run(Task(task_id="t", source="s", text="hi", chat_id=1))
         self.assertEqual(result.answer, "ok")
+
+
+class RollingSummaryTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def test_overflow_without_llm_drops_silently_like_before(self) -> None:
+        mem = _memory(self.root, llm=None, conversation_history_turns=2)
+        for i in range(5):
+            mem.record(1, f"q{i}", f"a{i}")
+        loaded = mem.load(1)
+        self.assertEqual([t["content"] for t in loaded], ["q3", "a3", "q4", "a4"])
+        data = mem._read(1)
+        self.assertEqual(data.get("summary"), "")
+
+    def test_overflow_with_llm_folds_into_summary_and_is_replayed(self) -> None:
+        fake = FakeSummarizerLlm(answer="User asked about q0/a0 and q1/a1.")
+        mem = _memory(self.root, llm=fake, conversation_history_turns=2)
+        for i in range(3):
+            mem.record(1, f"q{i}", f"a{i}")
+
+        self.assertEqual(len(fake.prompts), 1)
+        self.assertIn("q0", fake.prompts[0])
+        self.assertIn("a0", fake.prompts[0])
+
+        loaded = mem.load(1)
+        self.assertEqual(loaded[0]["role"], "user")
+        self.assertIn("User asked about q0/a0 and q1/a1.", loaded[0]["content"])
+        self.assertEqual(loaded[1]["role"], "assistant")
+        # the raw q0/a0 pair rolled out of the window
+        self.assertNotIn("q0", [t["content"] for t in loaded[2:]])
+        self.assertEqual([t["content"] for t in loaded[2:]], ["q1", "a1", "q2", "a2"])
+
+    def test_summary_keeps_updating_across_multiple_overflows(self) -> None:
+        fake = FakeSummarizerLlm()
+        mem = _memory(self.root, llm=fake, conversation_history_turns=1)
+        for i in range(4):
+            mem.record(1, f"q{i}", f"a{i}")
+        # 3 overflow events (turns 0,1,2 each roll out one at a time once turn 3 arrives)
+        self.assertEqual(len(fake.prompts), 3)
+        # the most recent summarizer call should have been told about the *previous* summary
+        self.assertIn("Existing summary:", fake.prompts[-1])
+        data = mem._read(1)
+        self.assertTrue(data["summary"].startswith("summary#"))
+
+    def test_summarizer_failure_keeps_old_summary_and_does_not_raise(self) -> None:
+        fake = FakeSummarizerLlm(raises=RuntimeError("endpoint down"))
+        mem = _memory(self.root, llm=fake, conversation_history_turns=1)
+        for i in range(3):
+            mem.record(1, f"q{i}", f"a{i}")
+        data = mem._read(1)
+        self.assertEqual(data["summary"], "")
+        # still functions -- the raw window is intact and usable
+        loaded = mem.load(1)
+        self.assertTrue(loaded)
+
+    def test_summary_is_capped_to_max_chars(self) -> None:
+        fake = FakeSummarizerLlm(answer="x" * 5000)
+        mem = _memory(self.root, llm=fake, conversation_history_turns=1, conversation_summary_max_chars=50)
+        for i in range(3):
+            mem.record(1, f"q{i}", f"a{i}")
+        data = mem._read(1)
+        self.assertEqual(len(data["summary"]), 50)
+
+    def test_no_summary_and_no_pinned_means_no_context_pair(self) -> None:
+        mem = _memory(self.root, llm=None, conversation_history_turns=2)
+        mem.record(1, "hi", "yo")
+        loaded = mem.load(1)
+        self.assertEqual(loaded, [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "yo"}])
+
+
+class PinnedFactsTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def test_pin_appears_in_load_even_with_no_turns(self) -> None:
+        mem = _memory(self.root)
+        self.assertIsNone(mem.load(1))
+        self.assertTrue(mem.pin(1, "flight home is on the 23rd"))
+        loaded = mem.load(1)
+        self.assertEqual(loaded[0]["role"], "user")
+        self.assertIn("flight home is on the 23rd", loaded[0]["content"])
+        self.assertEqual(loaded[1]["role"], "assistant")
+
+    def test_pin_survives_alongside_real_turns(self) -> None:
+        mem = _memory(self.root)
+        mem.pin(1, "prefers metric units")
+        mem.record(1, "hi", "yo")
+        loaded = mem.load(1)
+        self.assertIn("prefers metric units", loaded[0]["content"])
+        self.assertEqual([t["content"] for t in loaded[2:]], ["hi", "yo"])
+
+    def test_pin_is_capped(self) -> None:
+        mem = _memory(self.root, conversation_keep_max_items=2)
+        mem.pin(1, "fact1")
+        mem.pin(1, "fact2")
+        mem.pin(1, "fact3")
+        data = mem._read(1)
+        self.assertEqual(data["pinned"], ["fact2", "fact3"])
+
+    def test_pin_rejects_empty_and_disabled(self) -> None:
+        mem = _memory(self.root)
+        self.assertFalse(mem.pin(1, "   "))
+        disabled = _memory(self.root, conversation_memory_enabled=False)
+        self.assertFalse(disabled.pin(1, "fact"))
+
+    def test_clear_wipes_pinned_facts_too(self) -> None:
+        mem = _memory(self.root)
+        mem.pin(1, "fact")
+        self.assertTrue(mem.clear(1))
+        self.assertIsNone(mem.load(1))
+
+
+class BackwardCompatTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def test_v1_file_with_no_summary_or_pinned_keys_still_loads(self) -> None:
+        import json
+
+        mem = _memory(self.root)
+        store = self.root / "conversations"
+        store.mkdir(parents=True)
+        (store / "9.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "turns": [
+                        {"role": "user", "content": "old hi", "ts": int(time.time())},
+                        {"role": "assistant", "content": "old yo", "ts": int(time.time())},
+                    ],
+                    "updated_at": int(time.time()),
+                }
+            ),
+            encoding="utf-8",
+        )
+        loaded = mem.load(9)
+        self.assertEqual([t["content"] for t in loaded], ["old hi", "old yo"])
+        # writing still works and upgrades the stored version
+        mem.record(9, "new q", "new a")
+        data = mem._read(9)
+        self.assertEqual(data["version"], 2)
 
 
 if __name__ == "__main__":

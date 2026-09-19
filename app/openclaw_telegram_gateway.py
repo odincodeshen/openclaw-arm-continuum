@@ -69,7 +69,7 @@ llm = model_clients.get("local_default")
 vision = VisionClient(model_clients.get_or_default("vision"))
 qdrant = QdrantClient(settings)
 transcriber = TranscriptionClient(settings)
-conversation_memory = ConversationMemory(settings)
+conversation_memory = ConversationMemory(settings, llm)
 skill_router = SkillRouter(settings, llm, model_clients)
 task_history = TaskHistory(settings.task_history_path)
 runtime_agents = [SkillAgent(skill) for skill in skill_router.skills]
@@ -157,8 +157,15 @@ View the 5 most recent task history entries and their status.
 
 /new  (or /reset)
 Start a new chat conversation. Plain chat remembers the last few
-turns per chat; this clears that context. Commands like /rag and
-/search are always independent.
+turns per chat, plus a rolling summary of anything older than that so
+context is compressed, not lost. /new clears all of it. Commands like
+/rag and /search are always independent.
+
+/keep <fact>
+Pin a fact so it always stays in context for this conversation, even
+after it would otherwise roll into the summary or drop off. Cleared by
+/new. For anything that should survive /new, use /mem instead.
+Example: /keep My flight home is on the 23rd, not the 21st.
 
 /review <sanitized engineering request>
 Run the bounded code and architecture review workflow. This command is
@@ -1160,6 +1167,7 @@ def setup_bot_commands() -> None:
         {"command": "search", "description": "Search the web"},
         {"command": "cron", "description": "Configure proactive push schedules"},
         {"command": "new", "description": "Start a new chat conversation (clear context)"},
+        {"command": "keep", "description": "Pin a fact so chat always remembers it"},
         {"command": "agents", "description": "List OpenClaw agents"},
         {"command": "tasks", "description": "View recent task history"},
         {"command": "review", "description": "Run a bounded private engineering review"},
@@ -1267,6 +1275,18 @@ def handle_message(message: dict) -> None:
             send_message(chat_id, "Started a new conversation. Earlier chat turns will not be used as context.")
         else:
             send_message(chat_id, "No active conversation to clear -- the next message starts fresh.")
+        return
+
+    if text.lower() == "/keep" or text.lower().startswith("/keep "):
+        fact = text[len("/keep") :].strip()
+        if not conversation_memory.enabled:
+            send_message(chat_id, "Conversation memory is disabled, so there's nothing to pin.")
+        elif not fact:
+            send_message(chat_id, "Usage: /keep <fact to remember for this conversation>")
+        elif conversation_memory.pin(chat_id, fact):
+            send_message(chat_id, f"Pinned: {fact}")
+        else:
+            send_message(chat_id, "Could not pin that.")
         return
 
     if settings.category_rag_enabled:

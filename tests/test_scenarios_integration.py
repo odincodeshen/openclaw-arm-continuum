@@ -307,5 +307,71 @@ class ChatMemoryScenario(unittest.TestCase):
         self.assertEqual([m["role"] for m in self.seen[1]], ["system", "user"])
 
 
+class ChatMemoryRollingSummaryScenario(unittest.TestCase):
+    """Real LlmClient.chat() round trip for the summarization prompt itself,
+    not just a fake standing in for it -- proves the prompt/response wiring
+    actually works end to end against the OpenAI-shaped fake server."""
+
+    def setUp(self) -> None:
+        self.calls: list[list[dict]] = []
+
+        def responder(messages):
+            self.calls.append(messages)
+            last_user = next(m["content"] for m in reversed(messages) if m["role"] == "user")
+            if "compressing an ongoing chat's history" in last_user:
+                return "User discussed Tokyo and asked about its population."
+            return f"ack:{len(self.calls)}"
+
+        self.fake = FakeInferenceServer(dim=DIM, chat_responder=responder)
+        self.fake.__enter__()
+        self.addCleanup(self.fake.__exit__)
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.settings = build_settings(
+            vllm_base_url=self.fake.openai_base_url,
+            request_timeout=10,
+            conversation_memory_enabled=True,
+            conversation_store_path=Path(self.tmp.name) / "conv",
+            conversation_history_turns=2,
+            conversation_summary_enabled=True,
+        )
+        self.llm = LlmClient(self.settings)
+        self.memory = ConversationMemory(self.settings, self.llm)
+        self.agent = ChatAgent(self.llm, self.memory)
+
+    def _say(self, chat_id: int, text: str) -> str:
+        return self.agent.run(Task(task_id="t", source="telegram_text", text=text, chat_id=chat_id)).answer
+
+    def test_overflow_triggers_a_real_summarization_call_and_it_is_replayed(self) -> None:
+        # window = 2 exchanges (conversation_history_turns=2); the 3rd
+        # exchange's record() call is what pushes the 1st exchange out and
+        # triggers exactly one real summarization call.
+        self._say(7, "capital of Japan?")
+        self._say(7, "and its climate?")
+        self._say(7, "anything else notable?")
+
+        summarizer_calls = [
+            c
+            for c in self.calls
+            if any("compressing an ongoing chat's history" in m["content"] for m in c if m["role"] == "user")
+        ]
+        self.assertEqual(len(summarizer_calls), 1)
+
+        data = self.memory._read(7)
+        self.assertIn("Tokyo", data["summary"])
+
+        # The *next* turn's outgoing request should carry that summary. Its
+        # own record() call may itself trigger another summarization
+        # afterwards (appended later to self.calls), so capture the request
+        # at the index it lands on, not whatever call happens last.
+        before = len(self.calls)
+        self._say(7, "one more question")
+        fourth_call = self.calls[before]
+        context_message = fourth_call[1]["content"]
+        self.assertIn("Summary of earlier conversation", context_message)
+        self.assertIn("Tokyo", context_message)
+
+
 if __name__ == "__main__":
     unittest.main()

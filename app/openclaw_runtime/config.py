@@ -104,6 +104,10 @@ class Settings:
     conversation_history_turns: int
     conversation_context_chars: int
     conversation_retention_hours: int
+    conversation_summary_enabled: bool
+    conversation_summary_max_tokens: int
+    conversation_summary_max_chars: int
+    conversation_keep_max_items: int
     gateway_rpc_url: str
     gateway_token: str
     gateway_state_db_path: Path
@@ -202,6 +206,10 @@ def load_settings() -> Settings:
         conversation_history_turns=env_int("OPENCLAW_CONVERSATION_HISTORY_TURNS", 6),
         conversation_context_chars=env_int("OPENCLAW_CONVERSATION_CONTEXT_CHARS", 6000),
         conversation_retention_hours=env_int("OPENCLAW_CONVERSATION_RETENTION_HOURS", 72),
+        conversation_summary_enabled=env_bool("OPENCLAW_CONVERSATION_SUMMARY_ENABLED", True),
+        conversation_summary_max_tokens=env_int("OPENCLAW_CONVERSATION_SUMMARY_MAX_TOKENS", 200),
+        conversation_summary_max_chars=env_int("OPENCLAW_CONVERSATION_SUMMARY_MAX_CHARS", 2000),
+        conversation_keep_max_items=env_int("OPENCLAW_CONVERSATION_KEEP_MAX_ITEMS", 20),
         gateway_rpc_url=os.environ.get("OPENCLAW_GATEWAY_RPC_URL", "http://openclaw-gateway:18789/api/v1/admin/rpc").rstrip("/"),
         gateway_token=os.environ.get("OPENCLAW_GATEWAY_TOKEN", "").strip(),
         gateway_state_db_path=Path(os.environ.get("OPENCLAW_GATEWAY_STATE_DB", "/gateway-state/openclaw.sqlite")),

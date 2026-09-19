@@ -124,6 +124,57 @@ class NewConversationCommandTest(unittest.TestCase):
         self.assertTrue(any("disabled" in t.lower() for _, t in self.sent))
 
 
+class KeepCommandTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.sent = []
+        self._orig_send = gateway.send_message
+        gateway.send_message = lambda chat_id, text: self.sent.append((chat_id, text))
+        self.addCleanup(setattr, gateway, "send_message", self._orig_send)
+
+        self._orig_mem = gateway.conversation_memory
+        self.addCleanup(setattr, gateway, "conversation_memory", self._orig_mem)
+
+    def _install(self, *, enabled=True, pin_ok=True):
+        class FakeMemory:
+            def __init__(self):
+                self.enabled = enabled
+                self.pinned = []
+
+            def pin(self, chat_id, fact):
+                self.pinned.append((chat_id, fact))
+                return pin_ok
+
+        fake = FakeMemory()
+        gateway.conversation_memory = fake
+        return fake
+
+    def test_keep_pins_the_fact(self):
+        fake = self._install()
+        gateway.handle_message({"chat": {"id": 7}, "text": "/keep flight home is on the 23rd"})
+        self.assertEqual(fake.pinned, [(7, "flight home is on the 23rd")])
+        self.assertTrue(any("Pinned: flight home is on the 23rd" in t for _, t in self.sent))
+
+    def test_keep_with_no_fact_shows_usage(self):
+        self._install()
+        gateway.handle_message({"chat": {"id": 7}, "text": "/keep"})
+        self.assertTrue(any("Usage: /keep" in t for _, t in self.sent))
+
+    def test_keep_with_only_whitespace_shows_usage(self):
+        self._install()
+        gateway.handle_message({"chat": {"id": 7}, "text": "/keep    "})
+        self.assertTrue(any("Usage: /keep" in t for _, t in self.sent))
+
+    def test_keep_when_memory_disabled(self):
+        self._install(enabled=False)
+        gateway.handle_message({"chat": {"id": 7}, "text": "/keep something"})
+        self.assertTrue(any("disabled" in t.lower() for _, t in self.sent))
+
+    def test_keep_reports_failure(self):
+        self._install(pin_ok=False)
+        gateway.handle_message({"chat": {"id": 7}, "text": "/keep something"})
+        self.assertTrue(any("Could not pin" in t for _, t in self.sent))
+
+
 class ModelPausedMessageTest(unittest.TestCase):
     def setUp(self):
         self.sent = []

@@ -105,9 +105,15 @@ Shipped post-v1.6. See `docs/CONVERSATION_MEMORY.md`.
 - Only `ChatAgent` uses it. `/rag`, `/search`, `/mem` stay single-shot; the
   history lives in the request payload so a model fallback sees the same
   context; nothing is written to task history or Qdrant.
+- **Rolling summary (post-v1.8):** turns rolling out of the window are folded
+  into a running LLM-generated summary instead of being dropped
+  (`OPENCLAW_CONVERSATION_SUMMARY_ENABLED`, default true; one `LlmClient.chat()`
+  call only when the window actually overflows; fails gracefully back to
+  drop-without-summary). `/keep <fact>` pins a fact that always rides along
+  regardless of window size (`OPENCLAW_CONVERSATION_KEEP_MAX_ITEMS`). Both
+  cleared by `/new`. See `docs/CONVERSATION_MEMORY.md`.
 
-Possible follow-ups: per-chat `/history` preview; summarise-and-compact old
-turns instead of hard truncation.
+Possible follow-ups: per-chat `/history` preview.
 
 ## v2.0 Candidate: Platform-Aware MultimodalAnalysisAgent
 

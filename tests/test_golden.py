@@ -17,7 +17,7 @@ _CJK = re.compile("[぀-ヿ㐀-鿿＀-￯]")
 
 EXPECTED_MENU = [
     "help", "mem", "rag", "doc", "cat", "search",
-    "cron", "new", "agents", "tasks", "review", "start",
+    "cron", "new", "keep", "agents", "tasks", "review", "start",
 ]
 
 

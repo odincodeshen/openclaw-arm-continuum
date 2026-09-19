@@ -62,6 +62,7 @@ Scenarios drive the real runtime components against real Qdrant.
 | `ChatMemoryScenario.test_second_turn_carries_the_first_exchange` | `ChatAgent` replays the prior user+assistant turn on the next request |
 | `ChatMemoryScenario.test_new_conversation_drops_history` | `/new` clears the replayed window |
 | `ChatMemoryScenario.test_other_chat_is_isolated` | conversation memory does not leak across `chat_id` |
+| `ChatMemoryRollingSummaryScenario.test_overflow_triggers_a_real_summarization_call_and_it_is_replayed` | a real `LlmClient.chat()` summarization call round-trips through the fake server and the result is replayed in the next turn |
 
 ## Coverage matrix -- feature -> layer
 
@@ -78,6 +79,7 @@ one layer that fails if it breaks.
 | `/mem list` / `done` / `rm` + `due:`/`tag:` metadata | `test_memory_write`, `test_qdrant_client` | `TrackerMemoryManagementScenario` | — |
 | `/mem digest` + cron `suppress_if_routine` skip | `test_memory_write::MemoryDigestTest`, `test_cron_worker::RunDynamicJobTest`/`WriteGatewayRunbackTest` | `TrackerMemoryManagementScenario` | live daily push |
 | Conversational memory + `/new` | `test_conversation_memory`, `test_telegram_gateway` | `ChatMemoryScenario` | multi-turn with a real model |
+| Rolling summary + `/keep` | `test_conversation_memory::RollingSummaryTest`/`PinnedFactsTest` | `ChatMemoryRollingSummaryScenario` | summary quality with a real model |
 | Vision / image analysis | `test_vision_client`, `test_category_gateway` | — | `scripts/vision_smoke.py` on a real VLM |
 | Intent router | `test_intent_router` | — | classification accuracy |
 | Expert-model routing / `/review` | `test_engineering_review*`, `test_skill_router` | — | `docs/DGX_V13_VALIDATION.md` |
