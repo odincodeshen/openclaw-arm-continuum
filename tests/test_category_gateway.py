@@ -71,6 +71,55 @@ class PendingStateMachineTest(CategoryGatewayTestBase):
         self.assertEqual(captured["items"][0]["path"], "/x/spec.pdf")
         self.assertFalse(gateway.has_pending_category(7))
 
+    def test_resolve_pending_strips_hash_prefix_and_note_reused_from_caption_habit(self) -> None:
+        # Regression: a user replying to "reply with a category name" with
+        # "#trip <note>" (habit from the caption syntax) used to become the
+        # literal category "#trip <note>" -- a second, unrelated category
+        # from the plain "trip" one the caption path would produce.
+        captured = {}
+
+        def fake_ingest(chat_id, items, entry):
+            captured["entry"] = entry
+
+        self._orig_run = gateway._run_category_ingest
+        gateway._run_category_ingest = fake_ingest
+        self.addCleanup(setattr, gateway, "_run_category_ingest", self._orig_run)
+
+        gateway.set_pending_category(11, {"path": "/x/train.jpg", "kind": "photo", "note": ""})
+        handled = gateway.resolve_pending_with_category(11, "#trip 週一的火車幾點發個車")
+
+        for _ in range(50):
+            if "entry" in captured:
+                break
+            import time
+
+            time.sleep(0.01)
+
+        self.assertTrue(handled)
+        self.assertEqual(captured["entry"]["display"], "trip")
+
+    def test_resolve_pending_full_width_hash_also_strips(self) -> None:
+        captured = {}
+
+        def fake_ingest(chat_id, items, entry):
+            captured["entry"] = entry
+
+        self._orig_run = gateway._run_category_ingest
+        gateway._run_category_ingest = fake_ingest
+        self.addCleanup(setattr, gateway, "_run_category_ingest", self._orig_run)
+
+        gateway.set_pending_category(12, {"path": "/x/a.jpg", "kind": "photo", "note": ""})
+        gateway.resolve_pending_with_category(12, "＃trip")
+
+        for _ in range(50):
+            if "entry" in captured:
+                break
+            import time
+
+            time.sleep(0.01)
+
+        self.assertEqual(captured["entry"]["display"], "trip")
+
     def test_resolve_pending_rejects_bad_name_and_keeps_items(self) -> None:
         gateway.set_pending_category(9, {"path": "/x/spec.pdf", "kind": "document", "note": ""})
         handled = gateway.resolve_pending_with_category(9, "/mem")

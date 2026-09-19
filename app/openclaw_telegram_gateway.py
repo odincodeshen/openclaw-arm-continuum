@@ -453,6 +453,20 @@ def resolve_pending_with_category(chat_id: int, category_text: str) -> bool:
     pending = pop_pending_category(chat_id)
     if not pending or not pending.get("items"):
         return False
+
+    # A user replying to "reply with a category name" very naturally reuses
+    # the #category caption syntax out of habit. Without this, the literal
+    # "#trip some note" text becomes the category name itself -- silently
+    # creating a second, unrelated category instead of filing into the one
+    # the caption path would have used. Be lenient: if the reply starts with
+    # # / ＃, parse it the same way a caption is parsed and use just the
+    # category part.
+    stripped = category_text.strip()
+    if stripped[:1] in ("#", "＃"):
+        parsed_name, _note = parse_category_caption(stripped)
+        if parsed_name:
+            category_text = parsed_name
+
     try:
         display = validate_category_name(settings, category_text)
     except ValueError as exc:
