@@ -55,9 +55,11 @@ scripts/*.exp
 *.swp
 *.swo
 
-# Local Chinese notes kept out of the repo (same as docs/ policy)
+# Local Chinese notes kept out of the repo (same as docs/ policy). ASCII
+# filenames used when a CJK filename hits an encoding glitch in tooling.
 /*使用者測試*.md
 /*測試步驟*.md
 /*規格*.md
+/*-test.md
 /協作觀察.md
 /下一步功能建議.md
