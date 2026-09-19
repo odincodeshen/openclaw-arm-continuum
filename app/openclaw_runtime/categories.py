@@ -31,6 +31,27 @@ _CAPTION_CATEGORY_RE = re.compile(
 )
 
 
+_TWO_NAMES_RE = re.compile(
+    r"^(?:[\[［]([^\]］]+)[\]］]|[\{｛]([^\}｝]+)[\}｝]|(\S+))"
+    r"\s+(?:[\[［]([^\]］]+)[\]］]|[\{｛]([^\}｝]+)[\}｝]|(\S+))$",
+    re.DOTALL,
+)
+
+
+def parse_two_category_names(text: str) -> tuple[str, str] | None:
+    """Parse ``<name1> <name2>`` for ``/cat rename`` / ``/cat merge``, where
+    either name may be a single word or a ``[bracketed]``/``{braced}``
+    multi-word name. Returns ``None`` if it doesn't look like two names."""
+    match = _TWO_NAMES_RE.match((text or "").strip())
+    if not match:
+        return None
+    first = (match.group(1) or match.group(2) or match.group(3) or "").strip()
+    second = (match.group(4) or match.group(5) or match.group(6) or "").strip()
+    if not first or not second:
+        return None
+    return first, second
+
+
 def parse_category_caption(caption: str) -> tuple[str | None, str]:
     """Parse a Telegram caption of the form ``#category optional note``.
 
@@ -193,6 +214,36 @@ def ensure_registry_entry_for_slug(settings: Settings, slug: str) -> dict:
     }
     _save_registry(settings, registry)
     return {"slug": slug, "display": slug, "collection": collection}
+
+
+def rename_registry_entry(settings: Settings, slug: str, new_display: str) -> dict | None:
+    """Rename a category's display name in place. The slug/collection are
+    unchanged -- resolve_category() matches on stored display text, so a
+    later ``/rag #<new_display>`` resolves correctly without touching any
+    Qdrant data. Returns ``None`` if the slug isn't registered."""
+    registry = load_registry(settings)
+    if slug not in registry["categories"]:
+        return None
+    entry = registry["categories"][slug]
+    entry["display"] = new_display
+    entry["updated_at"] = int(time.time())
+    _save_registry(settings, registry)
+    return {
+        "slug": slug,
+        "display": new_display,
+        "collection": entry.get("collection", category_collection_name(settings, slug)),
+    }
+
+
+def remove_registry_entry(settings: Settings, slug: str) -> bool:
+    """Remove a category's registry entry (used after ``/cat merge`` folds it
+    into another category). Returns True if it existed."""
+    registry = load_registry(settings)
+    if slug not in registry["categories"]:
+        return False
+    del registry["categories"][slug]
+    _save_registry(settings, registry)
+    return True
 
 
 def resolve_category(settings: Settings, token: str) -> dict | None:

@@ -59,6 +59,7 @@ Scenarios drive the real runtime components against real Qdrant.
 | `TrackerMemoryManagementScenario.test_write_list_done_rm_round_trip_against_real_qdrant` | `/mem list`/`done`/`rm` against real Qdrant: `scroll_by_filters`, `set_payload`, `delete_points` behave as the unit fakes assume |
 | `TrackerMemoryManagementScenario.test_digest_reports_overdue_and_due_soon_against_real_qdrant` | `/mem digest` overdue/due-soon categorization against real Qdrant; repeats every call |
 | `TrackerMemoryManagementScenario.test_digest_is_suppressed_when_nothing_is_due_or_stale` | an all-clear digest sets `suppress_if_routine` |
+| `TrackerMemoryManagementScenario.test_delete_collection_against_real_qdrant` | `QdrantClient.delete_collection` actually removes a real collection (backs `/cat merge`'s cleanup step) |
 | `ChatMemoryScenario.test_second_turn_carries_the_first_exchange` | `ChatAgent` replays the prior user+assistant turn on the next request |
 | `ChatMemoryScenario.test_new_conversation_drops_history` | `/new` clears the replayed window |
 | `ChatMemoryScenario.test_other_chat_is_isolated` | conversation memory does not leak across `chat_id` |
@@ -73,6 +74,7 @@ one layer that fails if it breaks.
 | --- | --- | --- | --- |
 | Category RAG isolation + `#cat` / `#all` | `test_category_rag_retrieve` | `CategoryRagScenario` | real-index isolation |
 | Two-step caption/pending upload flow | `test_category_gateway` | — | Telegram round trip |
+| `/cat rename` / `/cat merge` | `test_categories`, `test_category_gateway`, `test_qdrant_client` | `TrackerMemoryManagementScenario::test_delete_collection_against_real_qdrant` | full merge round trip with real ingest |
 | `Sources:` attribution | `test_category_rag_retrieve` | `CategoryRagScenario`, `KnowledgeAndMemoryScenario` | — |
 | Document / knowledge ingest | `test_file_ingest` | `KnowledgeAndMemoryScenario` | — |
 | `/mem` write + default `/rag` | `test_*` unit | `KnowledgeAndMemoryScenario` | — |

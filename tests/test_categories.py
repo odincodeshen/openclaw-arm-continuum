@@ -70,6 +70,37 @@ class ParseCategoryCaptionTest(unittest.TestCase):
         )
 
 
+class ParseTwoCategoryNamesTest(unittest.TestCase):
+    def test_two_bare_words(self) -> None:
+        self.assertEqual(categories.parse_two_category_names("trip 旅行"), ("trip", "旅行"))
+
+    def test_bracketed_first_name(self) -> None:
+        self.assertEqual(
+            categories.parse_two_category_names("[Work Notes] archive"),
+            ("Work Notes", "archive"),
+        )
+
+    def test_bracketed_second_name(self) -> None:
+        self.assertEqual(
+            categories.parse_two_category_names("trip [Work Notes]"),
+            ("trip", "Work Notes"),
+        )
+
+    def test_both_braced(self) -> None:
+        self.assertEqual(
+            categories.parse_two_category_names("{Old Name} {New Name}"),
+            ("Old Name", "New Name"),
+        )
+
+    def test_only_one_name_is_none(self) -> None:
+        self.assertIsNone(categories.parse_two_category_names("trip"))
+        self.assertIsNone(categories.parse_two_category_names(""))
+
+    def test_three_bare_words_is_none(self) -> None:
+        # ambiguous without brackets -- must not silently guess
+        self.assertIsNone(categories.parse_two_category_names("trip work notes"))
+
+
 class CategoryRegistryTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -118,6 +149,38 @@ class CategoryRegistryTest(unittest.TestCase):
         self.settings.category_registry_path.parent.mkdir(parents=True, exist_ok=True)
         self.settings.category_registry_path.write_text("{not json", encoding="utf-8")
         self.assertEqual(categories.registry_entries(self.settings), [])
+
+    def test_rename_keeps_slug_and_collection(self) -> None:
+        entry = categories.upsert_registry_entry(self.settings, "trip")
+        updated = categories.rename_registry_entry(self.settings, entry["slug"], "旅行")
+        self.assertEqual(updated["slug"], entry["slug"])
+        self.assertEqual(updated["collection"], entry["collection"])
+        self.assertEqual(updated["display"], "旅行")
+
+    def test_rename_lets_resolve_find_it_by_new_name(self) -> None:
+        entry = categories.upsert_registry_entry(self.settings, "trip")
+        categories.rename_registry_entry(self.settings, entry["slug"], "旅行")
+        resolved = categories.resolve_category(self.settings, "旅行")
+        self.assertTrue(resolved["known"])
+        self.assertEqual(resolved["collection"], entry["collection"])
+        self.assertEqual(resolved["display"], "旅行")
+        # The slug is derived from the *original* name and is unchanged by a
+        # rename, so the old token still resolves to the same collection --
+        # it just now reports the new display name. Nothing breaks; a query
+        # against the old name simply isn't "lost".
+        old_token_query = categories.resolve_category(self.settings, "trip")
+        self.assertTrue(old_token_query["known"])
+        self.assertEqual(old_token_query["collection"], entry["collection"])
+        self.assertEqual(old_token_query["display"], "旅行")
+
+    def test_rename_unknown_slug_returns_none(self) -> None:
+        self.assertIsNone(categories.rename_registry_entry(self.settings, "nope_deadbeef", "x"))
+
+    def test_remove_entry(self) -> None:
+        entry = categories.upsert_registry_entry(self.settings, "trip")
+        self.assertTrue(categories.remove_registry_entry(self.settings, entry["slug"]))
+        self.assertEqual(categories.registry_entries(self.settings), [])
+        self.assertFalse(categories.remove_registry_entry(self.settings, entry["slug"]))
 
 
 if __name__ == "__main__":

@@ -272,5 +272,120 @@ class CategoryCommandTest(CategoryGatewayTestBase):
         self.assertFalse(gateway.handle_category_command(100, "hello"))
 
 
+class CategoryRenameCommandTest(CategoryGatewayTestBase):
+    def test_rename_updates_display_and_keeps_collection(self) -> None:
+        entry = categories.upsert_registry_entry(self.settings, "trip")
+        self.assertTrue(gateway.handle_category_command(100, "/cat rename trip 旅行"))
+        self.assertTrue(any('Renamed "trip" to "旅行"' in t for _, t in self.sent))
+        updated = categories.resolve_category(self.settings, "旅行")
+        self.assertEqual(updated["collection"], entry["collection"])
+
+    def test_rename_with_bracketed_new_name(self) -> None:
+        categories.upsert_registry_entry(self.settings, "trip")
+        gateway.handle_category_command(100, "/cat rename trip [Work Notes]")
+        self.assertTrue(any('to "Work Notes"' in t for _, t in self.sent))
+
+    def test_rename_unknown_source(self) -> None:
+        gateway.handle_category_command(100, "/cat rename ghost new-name")
+        self.assertTrue(any('No category named "ghost"' in t for _, t in self.sent))
+
+    def test_rename_missing_args_shows_usage(self) -> None:
+        gateway.handle_category_command(100, "/cat rename trip")
+        self.assertTrue(any("Usage: /cat rename" in t for _, t in self.sent))
+
+    def test_rename_onto_a_different_existing_category_is_rejected(self) -> None:
+        categories.upsert_registry_entry(self.settings, "trip")
+        categories.upsert_registry_entry(self.settings, "投資")
+        gateway.handle_category_command(100, "/cat rename trip 投資")
+        self.assertTrue(any("already a different category" in t for _, t in self.sent))
+        self.assertTrue(any("/cat merge trip 投資" in t for _, t in self.sent))
+        # neither category was touched
+        self.assertTrue(categories.resolve_category(self.settings, "trip")["known"])
+        self.assertEqual(categories.resolve_category(self.settings, "投資")["display"], "投資")
+
+
+class CategoryMergeCommandTest(CategoryGatewayTestBase):
+    class FakeQdrant:
+        def __init__(self) -> None:
+            self.deleted: list[str] = []
+
+        def points_count(self, collection: str):
+            return None
+
+        def delete_collection(self, collection: str) -> None:
+            self.deleted.append(collection)
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.fake_qdrant = self.FakeQdrant()
+        self._orig_qdrant = gateway.qdrant
+        gateway.qdrant = self.fake_qdrant
+        self.addCleanup(setattr, gateway, "qdrant", self._orig_qdrant)
+
+    def _wait_for_send(self, needle: str, timeout: float = 2.0) -> bool:
+        import time
+
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if any(needle in t for _, t in self.sent):
+                return True
+            time.sleep(0.01)
+        return False
+
+    def _seed_file(self, category_name: str, filename: str, body: str):
+        src_dir = self.inbox / ".staging" / "telegram"
+        src_dir.mkdir(parents=True, exist_ok=True)
+        src = src_dir / filename
+        src.write_text(body, encoding="utf-8")
+        entry = categories.upsert_registry_entry(self.settings, category_name)
+        return entry, gateway.ingest_document_into_category(src, entry, note="", original_name=filename)
+
+    def test_merge_moves_files_deletes_source_collection_and_registry_entry(self) -> None:
+        from_entry, from_doc = self._seed_file("trip", "train.md", "train ticket body")
+        into_entry, _ = self._seed_file("investing", "note.md", "investing note body")
+
+        self.assertTrue(gateway.handle_category_command(100, "/cat merge trip investing"))
+        self.assertTrue(self._wait_for_send("Merged"))
+
+        self.assertFalse(from_doc.exists())
+        moved = list((self.inbox / "categories" / into_entry["slug"]).glob(f"*{from_doc.name}"))
+        self.assertEqual(len(moved), 1)
+        sidecar_data = moved[0].with_name(moved[0].name + ".meta.json").read_text(encoding="utf-8")
+        self.assertIn('"investing"', sidecar_data)
+        self.assertIn(into_entry["slug"], sidecar_data)
+
+        self.assertFalse((self.inbox / "categories" / from_entry["slug"]).exists())
+        self.assertFalse(categories.resolve_category(self.settings, "trip")["known"])
+        self.assertEqual(self.fake_qdrant.deleted, [from_entry["collection"]])
+
+    def test_merge_unknown_source_or_target(self) -> None:
+        categories.upsert_registry_entry(self.settings, "trip")
+        gateway.handle_category_command(100, "/cat merge ghost trip")
+        self.assertTrue(any('No category named "ghost"' in t for _, t in self.sent))
+
+        self.sent.clear()
+        gateway.handle_category_command(100, "/cat merge trip ghost2")
+        self.assertTrue(any('No category named "ghost2"' in t for _, t in self.sent))
+
+    def test_merge_same_category_is_rejected(self) -> None:
+        categories.upsert_registry_entry(self.settings, "trip")
+        gateway.handle_category_command(100, "/cat merge trip trip")
+        self.assertTrue(any("Source and target are the same" in t for _, t in self.sent))
+        self.assertEqual(self.fake_qdrant.deleted, [])
+
+    def test_merge_missing_args_shows_usage(self) -> None:
+        gateway.handle_category_command(100, "/cat merge trip")
+        self.assertTrue(any("Usage: /cat merge" in t for _, t in self.sent))
+
+    def test_merge_with_no_files_still_cleans_up_source(self) -> None:
+        from_entry = categories.upsert_registry_entry(self.settings, "empty-cat")
+        categories.upsert_registry_entry(self.settings, "target-cat")
+        gateway.handle_category_command(100, "/cat merge empty-cat target-cat")
+        self.assertTrue(self._wait_for_send("had no files to move"))
+        self.assertFalse(categories.resolve_category(self.settings, "empty-cat")["known"])
+        self.assertEqual(self.fake_qdrant.deleted, [from_entry["collection"]])
+        self.assertTrue(categories.resolve_category(self.settings, "target-cat")["known"])
+
+
 if __name__ == "__main__":
     unittest.main()

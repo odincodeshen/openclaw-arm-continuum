@@ -255,6 +255,18 @@ class TrackerMemoryManagementScenario(QdrantScenarioBase):
         self.assertTrue(digest.suppress_if_routine)
         self.assertIn("all caught up", digest.answer)
 
+    def test_delete_collection_against_real_qdrant(self) -> None:
+        # Backs /cat merge's cleanup step: prove QdrantClient.delete_collection
+        # actually removes a real collection, not just that it sends *a* request.
+        collection = f"{self.prefix}delete-me"
+        self.qdrant.ensure_collection(collection)
+        self.qdrant.upsert_text(collection, "hello", [0.0] * DIM, {})
+        self.assertEqual(self.qdrant.points_count(collection), 1)
+
+        self.qdrant.delete_collection(collection)
+
+        self.assertIsNone(self.qdrant.points_count(collection))
+
 
 class ChatMemoryScenario(unittest.TestCase):
     """Needs only the in-process fake server -- always runs."""

@@ -10,6 +10,15 @@ class QdrantClientTest(unittest.TestCase):
         self.client = QdrantClient(build_settings(qdrant_base_url="http://q", request_timeout=5))
 
     @patch("openclaw_runtime.qdrant_client.request_json")
+    def test_delete_collection_sends_delete(self, request_json) -> None:
+        request_json.return_value = {}
+        self.client.delete_collection("oc_cat_trip_deadbeef")
+        method, url, payload = request_json.call_args.args
+        self.assertEqual(method, "DELETE")
+        self.assertIn("/collections/oc_cat_trip_deadbeef", url)
+        self.assertIsNone(payload)
+
+    @patch("openclaw_runtime.qdrant_client.request_json")
     def test_upsert_text_uses_caller_supplied_point_id(self, request_json) -> None:
         request_json.return_value = {}
         returned = self.client.upsert_text(

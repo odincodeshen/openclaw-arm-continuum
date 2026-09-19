@@ -15,7 +15,11 @@ from datetime import datetime, timezone
 
 from openclaw_runtime.categories import (
     parse_category_caption,
+    parse_two_category_names,
     registry_entries,
+    remove_registry_entry,
+    rename_registry_entry,
+    resolve_category,
     upsert_registry_entry,
     validate_category_name,
 )
@@ -48,7 +52,7 @@ from openclaw_runtime.gateway_cron import (
     update_gateway_job_state_sqlite,
 )
 from openclaw_runtime.conversation_memory import ConversationMemory
-from openclaw_runtime.file_ingest import SUPPORTED_SUFFIXES
+from openclaw_runtime.file_ingest import META_SIDECAR_SUFFIX, SUPPORTED_SUFFIXES
 from openclaw_runtime.engineering_review import EngineeringReviewAgent
 from openclaw_runtime.http_client import request_json
 from openclaw_runtime.llm_client import VLLM_NOT_READY_MESSAGE
@@ -204,6 +208,8 @@ or document, then name a category one of two ways:
 Query one category:  /rag #<name> <question>
 Query every category: /rag #all <question>
 /cat list shows your categories and their sizes.
+/cat rename <old> <new> and /cat merge <source> <target> fix a
+mistyped or duplicated category without losing any indexed content.
 /cancel drops a file that is waiting for a category name.
 
 Every /rag answer ends with a "Sources:" line naming the documents
@@ -564,6 +570,9 @@ def category_command_text() -> str:
         "- put the category in the caption as #<name> (e.g. #工作筆記), or\n"
         "- send the file first, then reply with the category name.\n\n"
         "/cat list   Show categories and their document counts\n"
+        "/cat rename <old> <new>   Rename a category (its files/index are untouched)\n"
+        "/cat merge <source> <target>   Move everything from source into target, "
+        "then delete source\n"
         "/cancel     Drop a file that is waiting for a category\n\n"
         "Query one category:  /rag #<name> <question>\n"
         "Query every category: /rag #all <question>"
@@ -573,11 +582,15 @@ def category_command_text() -> str:
 def handle_category_command(chat_id: int, text: str) -> bool:
     if text != "/cat" and not text.startswith("/cat "):
         return False
-    parts = text.split(maxsplit=1)
-    action = parts[1].strip().lower() if len(parts) > 1 else "help"
-    if action in {"help", "?", ""}:
+    remainder = text[len("/cat") :].strip()
+    action, _, rest = remainder.partition(" ")
+    action = action.lower() or "help"
+    rest = rest.strip()
+
+    if action in {"help", "?"}:
         send_message(chat_id, category_command_text())
         return True
+
     if action == "list":
         entries = registry_entries(settings)
         if not entries:
@@ -590,8 +603,136 @@ def handle_category_command(chat_id: int, text: str) -> bool:
             lines.append(f"- {item['display']}{suffix}  (collection: {item['collection']})")
         send_message(chat_id, "\n".join(lines))
         return True
+
+    if action == "rename":
+        names = parse_two_category_names(rest)
+        if not names:
+            send_message(
+                chat_id,
+                "Usage: /cat rename <old name> <new name> "
+                "(use [brackets] for a multi-word name, e.g. /cat rename trip [Work Notes])",
+            )
+            return True
+        old_token, new_name = names
+        entry = resolve_category(settings, old_token)
+        if not entry or not entry.get("known"):
+            send_message(chat_id, f'No category named "{old_token}".')
+            return True
+        try:
+            new_display = validate_category_name(settings, new_name)
+        except ValueError as exc:
+            send_message(chat_id, f"That category name will not work: {exc}")
+            return True
+        collision = resolve_category(settings, new_display)
+        if collision and collision.get("known") and collision["slug"] != entry["slug"]:
+            send_message(
+                chat_id,
+                f'"{new_display}" is already a different category (collection: {collision["collection"]}). '
+                f'Use /cat merge {old_token} {new_name} if you want to combine them instead.',
+            )
+            return True
+        updated = rename_registry_entry(settings, entry["slug"], new_display)
+        send_message(chat_id, f'Renamed "{entry["display"]}" to "{updated["display"]}".')
+        return True
+
+    if action == "merge":
+        names = parse_two_category_names(rest)
+        if not names:
+            send_message(
+                chat_id,
+                "Usage: /cat merge <source> <target> -- everything in <source> "
+                "moves into <target>, then <source> is deleted.",
+            )
+            return True
+        from_token, into_token = names
+        from_entry = resolve_category(settings, from_token)
+        if not from_entry or not from_entry.get("known"):
+            send_message(chat_id, f'No category named "{from_token}".')
+            return True
+        into_entry = resolve_category(settings, into_token)
+        if not into_entry or not into_entry.get("known"):
+            send_message(chat_id, f'No category named "{into_token}".')
+            return True
+        if from_entry["slug"] == into_entry["slug"]:
+            send_message(chat_id, "Source and target are the same category.")
+            return True
+        send_message(chat_id, f'Merging "{from_entry["display"]}" into "{into_entry["display"]}"...')
+        worker = threading.Thread(
+            target=_run_category_merge, args=(chat_id, from_entry, into_entry), daemon=True
+        )
+        worker.start()
+        return True
+
     send_message(chat_id, category_command_text())
     return True
+
+
+def _merge_category_files(from_slug: str, into_entry: dict) -> int:
+    """Move every file from one category's inbox directory into another's,
+    updating each .meta.json sidecar to point at the new category. The memory
+    watcher re-indexes moved files at its next poll -- merge does not touch
+    Qdrant data directly, so there is only ever one ingest path to reason
+    about."""
+    from_dir = category_dir(from_slug)
+    if not from_dir.is_dir():
+        return 0
+    into_dir = category_dir(into_entry["slug"])
+    into_media = into_dir / "media"
+    moved = 0
+    for md_path in sorted(from_dir.glob("*.md")):
+        meta_path = md_path.with_name(md_path.name + META_SIDECAR_SUFFIX)
+        target_md = unique_path(into_dir, md_path.name)
+        shutil.move(str(md_path), str(target_md))
+
+        data: dict = {}
+        if meta_path.exists():
+            try:
+                data = json.loads(meta_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                data = {}
+            meta_path.unlink(missing_ok=True)
+        image_path = data.get("image_path")
+        if image_path and Path(image_path).exists():
+            target_image = unique_path(into_media, Path(image_path).name)
+            shutil.move(image_path, str(target_image))
+            data["image_path"] = str(target_image)
+        data["category"] = into_entry["display"]
+        data["category_slug"] = into_entry["slug"]
+        _write_meta_sidecar(target_md, data)
+        moved += 1
+    shutil.rmtree(from_dir, ignore_errors=True)
+    return moved
+
+
+def _run_category_merge(chat_id: int, from_entry: dict, into_entry: dict) -> None:
+    try:
+        moved_files = _merge_category_files(from_entry["slug"], into_entry)
+        qdrant.delete_collection(from_entry["collection"])
+        remove_registry_entry(settings, from_entry["slug"])
+    except Exception as exc:
+        log(
+            f"[category] merge failed chat_id={chat_id} from={from_entry['slug']} "
+            f"into={into_entry['slug']}: {exc}"
+        )
+        send_message(chat_id, f"Merge failed partway through: {exc}")
+        return
+    log(
+        f"[category] merge chat_id={chat_id} from={from_entry['slug']} "
+        f"into={into_entry['slug']} files={moved_files}"
+    )
+    if moved_files:
+        send_message(
+            chat_id,
+            f'Merged "{from_entry["display"]}" into "{into_entry["display"]}": {moved_files} file(s). '
+            "Give the indexer ~10 seconds to catch up, then query with "
+            f'/rag #{into_entry["display"]}.',
+        )
+    else:
+        send_message(
+            chat_id,
+            f'"{from_entry["display"]}" had no files to move. "{into_entry["display"]}" is unchanged; '
+            f'"{from_entry["display"]}" no longer exists.',
+        )
 
 
 def handle_document_message(chat_id: int, message: dict, caption: str) -> bool:

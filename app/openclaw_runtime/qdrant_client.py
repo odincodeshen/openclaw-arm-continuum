@@ -28,6 +28,14 @@ class QdrantClient:
             timeout=self.settings.request_timeout,
         )
 
+    def delete_collection(self, collection: str) -> None:
+        request_json(
+            "DELETE",
+            f"{self.settings.qdrant_base_url}/collections/{collection}",
+            None,
+            timeout=self.settings.request_timeout,
+        )
+
     def points_count(self, collection: str) -> int | None:
         try:
             response = get_json(

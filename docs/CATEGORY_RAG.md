@@ -66,9 +66,28 @@ document's first heading, otherwise the stored filename.
 ## Manage categories
 
 ```
-/cat list     Show categories and their collection names
-/cat help     Usage
+/cat list                        Show categories and their collection names
+/cat rename <old> <new>          Rename a category
+/cat merge <source> <target>     Combine two categories into one
+/cat help                        Usage
 ```
+
+`/cat rename` only changes the stored display name -- the underlying
+collection is untouched, so nothing gets re-indexed and it's instant. Because
+the collection is keyed by the *original* name, a query using the old name
+still resolves to the same category after a rename (it just reports the new
+display name back) -- renaming doesn't break old references, it only changes
+what's shown.
+
+`/cat merge <source> <target>` moves every file from `<source>` into
+`<target>`'s inbox directory (updating each `.meta.json` sidecar), deletes
+`<source>`'s Qdrant collection, and removes it from the registry. The moved
+files are picked up by the memory watcher's next poll (~10s) and indexed
+fresh into `<target>` -- merge does not copy Qdrant points directly, so
+there is only ever one ingest path to reason about. This is the fix for a
+category that was accidentally split in two (e.g. a two-step reply typo --
+see the `/cat` two-step note above): find both with `/cat list`, then merge
+the wrong one into the right one instead of losing the indexed content.
 
 ## How photos are indexed
 
