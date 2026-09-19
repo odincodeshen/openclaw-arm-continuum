@@ -197,6 +197,34 @@ class KnowledgeAndMemoryScenario(QdrantScenarioBase):
         self.assertIn("dry cleaning", home_answer.lower())
         self.assertNotIn("gateway", home_answer.lower())
 
+    def test_rag_date_range_filters_against_real_qdrant(self) -> None:
+        # Proves the created_at range condition -- since: inclusive,
+        # before: exclusive -- really works against a real Qdrant, not
+        # just the fake: the item is written "now" (today), so since:today
+        # includes it, before:today excludes it, and a wide range spanning
+        # both sides of today includes it.
+        writer = MemoryWriteSkill(self.settings, {}, self.embeddings, self.qdrant)
+        writer.run("/mem deploy note about the gateway mount")
+        today = date.today().isoformat()
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        tomorrow = (date.today() + timedelta(days=1)).isoformat()
+
+        since_today = self.rag.run(f"/rag since:{today} what does the gateway container mount?").answer
+        self.assertIn("gateway", since_today.lower())
+
+        before_today = self.rag.run(f"/rag before:{today} what does the gateway container mount?").answer
+        self.assertNotIn("gateway", before_today.lower())
+
+        since_tomorrow = self.rag.run(
+            f"/rag since:{tomorrow} what does the gateway container mount?"
+        ).answer
+        self.assertNotIn("gateway", since_tomorrow.lower())
+
+        spanning_range = self.rag.run(
+            f"/rag since:{yesterday} before:{tomorrow} what does the gateway container mount?"
+        ).answer
+        self.assertIn("gateway", spanning_range.lower())
+
 
 class TrackerMemoryManagementScenario(QdrantScenarioBase):
     """/mem list|done|rm against a real Qdrant -- proves the scroll filter,

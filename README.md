@@ -204,7 +204,7 @@ Main commands:
 
 ```text
 /mem      capture, list, edit, snooze, or complete personal memory
-/rag      retrieve memory or document context, optionally scoped by #<category> or tag:<word>
+/rag      retrieve memory or document context, optionally scoped by #<category>, tag:<word>, or since:/before:
 /cat      manage Category RAG knowledge bases (list, rename, merge)
 /doc      import public Google Docs
 /search   browse with local Playwright worker
@@ -259,13 +259,14 @@ Examples:
 /mem digest
 /rag What OpenClaw settings did I ask you to remember?
 /rag tag:ops What did I save about the cron dashboard?
+/rag since:2026-09-01 What have I saved this month?
 /rag #<category> Summarize the uploaded architecture manual
 ```
 
 See `docs/TRACKER_MEMORY.md` for the full `/mem` command set (`list` / `done`
 / `rm` / `edit` / `snooze` / `digest`, `due:` / `tag:` metadata, and the
-`tag:<word>` scope filter shared with `/rag`), and `docs/CATEGORY_RAG.md`
-for `/rag #<category>`.
+`tag:<word>` / `since:`/`before:` scope filters shared with `/rag`), and
+`docs/CATEGORY_RAG.md` for `/rag #<category>`.
 
 ## Document Intake
 

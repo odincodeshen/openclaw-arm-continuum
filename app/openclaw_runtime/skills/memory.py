@@ -1,7 +1,7 @@
 import re
 import time
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from openclaw_runtime.categories import registry_entries, resolve_category
 from openclaw_runtime.config import Settings
@@ -22,8 +22,9 @@ _CATEGORY_PREFIX_RE = re.compile(
 )
 _ALL_CATEGORIES_TOKEN = "\x00all\x00"
 
-# A leading tag:<word> prefix on a /rag query, e.g. "tag:work how much...".
-_RAG_TAG_PREFIX_RE = re.compile(r"^tag:(\S+)\s+(.*)$", re.IGNORECASE | re.DOTALL)
+# A single tag:/since:/before: token, matched per whitespace-split token
+# (so no boundary lookaround needed) for /rag's leading filter-prefix run.
+_RAG_META_TOKEN_RE = re.compile(r"^(tag|since|before):(\S+)$", re.IGNORECASE)
 
 # due:YYYY-MM-DD / tag:<word> anywhere in a /mem write, as standalone tokens
 # (bounded by whitespace or string edges, so they don't match mid-word).
@@ -104,17 +105,45 @@ def split_category_prefix(query: str) -> tuple[str | None, str]:
     return token, rest
 
 
-def split_tag_prefix(query: str) -> tuple[str | None, str]:
-    """Pull a leading ``tag:<word>`` off a /rag query, e.g.
-    ``tag:work what did I save about the deadline?``. Only recognized
-    before any ``#<category>`` prefix -- tags only exist on tracker_memory
-    items (from /mem due:/tag:), so this only affects the default
-    (no-category) search path; see ``RagRetrieveSkill._run_default``.
+def split_rag_filter_prefix(query: str) -> tuple[dict[str, str], str]:
+    """Pull a leading run of ``tag:``/``since:``/``before:`` tokens off a
+    /rag query, in any order, e.g. ``since:2026-09-01 tag:work what's due?``.
+    Only recognized before any ``#<category>`` prefix -- tags and dates only
+    exist on tracker_memory (and knowledge, for dates) items, so this only
+    affects the default (no-category) search path; see
+    ``RagRetrieveSkill._run_default``.
+
+    Stops at the first token that isn't a recognized, validly-formed prefix:
+    a repeated key, or a ``since:``/``before:`` value that isn't a real ISO
+    date, falls through untouched into the question text -- same philosophy
+    as /mem's ``due:`` parsing (don't silently eat something that probably
+    wasn't meant as metadata).
     """
-    match = _RAG_TAG_PREFIX_RE.match(query)
-    if not match:
-        return None, query
-    return match.group(1), match.group(2).strip()
+    tokens = query.split(" ")
+    filters: dict[str, str] = {}
+    consumed = 0
+    for token in tokens:
+        match = _RAG_META_TOKEN_RE.match(token)
+        if not match:
+            break
+        key, value = match.group(1).lower(), match.group(2)
+        if key in filters:
+            break
+        if key in ("since", "before"):
+            try:
+                date.fromisoformat(value)
+            except ValueError:
+                break
+        filters[key] = value
+        consumed += 1
+    remaining = " ".join(tokens[consumed:]).strip()
+    return filters, remaining
+
+
+def _epoch_for_date(value: str) -> int:
+    """UTC midnight for a YYYY-MM-DD string, as an epoch second -- matches
+    the UTC-based ``int(time.time())`` already stored as ``created_at``."""
+    return int(datetime.combine(date.fromisoformat(value), datetime.min.time(), tzinfo=timezone.utc).timestamp())
 
 
 class MemoryWriteSkill:
@@ -487,7 +516,7 @@ class RagRetrieveSkill:
 
     def run(self, text: str) -> SkillResult:
         raw_query = self._strip_command(text)
-        tag, raw_query = split_tag_prefix(raw_query)
+        prefix_filters, raw_query = split_rag_filter_prefix(raw_query)
         category_token, query = split_category_prefix(raw_query)
         if not query:
             return SkillResult(self.name, "Add the question to look up after /rag.")
@@ -496,9 +525,14 @@ class RagRetrieveSkill:
             return self._run_all_categories(query)
         if self.settings.category_rag_enabled and category_token:
             return self._run_single_category(category_token, query)
-        return self._run_default(query, tag)
+        return self._run_default(query, prefix_filters)
 
-    def _run_default(self, query: str, tag: str | None = None) -> SkillResult:
+    def _run_default(self, query: str, prefix_filters: dict[str, str] | None = None) -> SkillResult:
+        prefix_filters = prefix_filters or {}
+        tag = prefix_filters.get("tag")
+        since = _epoch_for_date(prefix_filters["since"]) if "since" in prefix_filters else None
+        before = _epoch_for_date(prefix_filters["before"]) if "before" in prefix_filters else None
+
         file_hits = self._file_hits(
             query, [self.settings.knowledge_collection, self.settings.tracker_collection]
         )
@@ -506,16 +540,26 @@ class RagRetrieveSkill:
         # tags only ever live on tracker_memory items (from /mem due:/tag:),
         # so a tag filter scopes tracker search and skips knowledge search
         # entirely rather than returning knowledge hits no filter applies to.
+        # since:/before: apply to both collections -- both have created_at.
         tracker_filters = {"tags": tag} if tag else None
-        tracker_hits = self.qdrant.search(self.settings.tracker_collection, vector, filters=tracker_filters)
+        tracker_hits = self.qdrant.search(
+            self.settings.tracker_collection, vector, filters=tracker_filters, since=since, before=before
+        )
         sections = [("filename_match", file_hits), (self.settings.tracker_collection, tracker_hits)]
         if not tag:
-            knowledge_hits = self.qdrant.search(self.settings.knowledge_collection, vector)
+            knowledge_hits = self.qdrant.search(
+                self.settings.knowledge_collection, vector, since=since, before=before
+            )
             sections.append((self.settings.knowledge_collection, knowledge_hits))
         answer = self._answer_from(query, sections)
         if answer is None:
-            tag_suffix = f' tagged "{tag}"' if tag else ""
-            return SkillResult(self.name, f"No relevant memory was found in either Qdrant collection{tag_suffix}.")
+            bits = []
+            if tag:
+                bits.append(f'tagged "{tag}"')
+            if since is not None or before is not None:
+                bits.append("in that date range")
+            suffix = f" {' and '.join(bits)}" if bits else ""
+            return SkillResult(self.name, f"No relevant memory was found in either Qdrant collection{suffix}.")
         return SkillResult(self.name, answer)
 
     def _run_single_category(self, token: str, query: str) -> SkillResult:

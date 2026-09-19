@@ -138,6 +138,9 @@ Add #<category> to search one category, or #all for every category.
 Example: /rag #work-notes What are the open action items?
 Add tag:<word> to scope to /mem items with that tag (tracker only).
 Example: /rag tag:work what did I save about the deadline?
+Add since:YYYY-MM-DD and/or before:YYYY-MM-DD to scope by save date
+(tracker + knowledge; since is inclusive, before is exclusive).
+Example: /rag since:2026-09-01 what have I saved this month?
 
 /search <keywords>
 Browse and scrape the web with the local Playwright worker, convert to

@@ -90,12 +90,20 @@ class QdrantClient:
         vector: list[float],
         limit: int | None = None,
         filters: dict | None = None,
+        since: int | None = None,
+        before: int | None = None,
     ) -> list[dict]:
         payload = {"vector": vector, "limit": limit or self.settings.retrieval_limit, "with_payload": True}
-        if filters:
-            payload["filter"] = {
-                "must": [{"key": key, "match": {"value": value}} for key, value in filters.items()]
-            }
+        must = [{"key": key, "match": {"value": value}} for key, value in (filters or {}).items()]
+        if since is not None or before is not None:
+            date_range = {}
+            if since is not None:
+                date_range["gte"] = since
+            if before is not None:
+                date_range["lt"] = before
+            must.append({"key": "created_at", "range": date_range})
+        if must:
+            payload["filter"] = {"must": must}
         response = request_json(
             "POST",
             f"{self.settings.qdrant_base_url}/collections/{collection}/points/search",

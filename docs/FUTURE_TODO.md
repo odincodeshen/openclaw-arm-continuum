@@ -91,10 +91,10 @@ Still open from the original list, re-baselined against v1.6:
 - Personal memory deepening — **structured `/mem` + proactive reminders
   done** (`/mem list`/`done`/`rm`/`digest`/`snooze`/`edit`, cron-pushed
   daily digest); "more precise `/rag` scope filters" is **done for
-  category and tag** -- Category RAG (`#<category>` / `#all`) plus
-  `/rag tag:<word>` (tracker-only, added alongside `/mem list`/`digest`
-  tag scoping); filtering by date/source within a `/rag` query is not
-  started. See `docs/TRACKER_MEMORY.md`.
+  category, tag, and date** -- Category RAG (`#<category>` / `#all`),
+  `/rag tag:<word>` (tracker-only), and `/rag since:`/`before:` (tracker +
+  knowledge, combinable with `tag:`). Filtering by source within a `/rag`
+  query is not started. See `docs/TRACKER_MEMORY.md`.
 - Runtime lifecycle / `openclawctl` / `OPENCLAW_BOOT_MODE` — **first cut
   done (post-v1.6)**. `bin/openclawctl status|start|stop|restart
   core|model|full` + `boot` (honours `OPENCLAW_BOOT_MODE=core|full|manual`)
@@ -521,10 +521,10 @@ Candidate work still open:
 
 - Profile show/set flows.
 - More precise `/rag` scope filters. Category RAG (`/rag #<category>` and
-  `/rag #all`, shipped v1.4) covers collection-level scoping; `/mem list`
-  and `/rag tag:<word>` (shipped v1.9) cover tag scoping for tracker
-  memory specifically; remaining work is filtering *within* a `/rag`
-  query by date or source.
+  `/rag #all`, shipped v1.4) covers collection-level scoping; `/mem list`,
+  `/rag tag:<word>`, and `/rag since:`/`before:` (all shipped v1.9) cover
+  tag and date scoping; remaining work is filtering *within* a `/rag`
+  query by source.
 - Memory aging / archival for items with no `due` that have sat untouched a
   long time.
 

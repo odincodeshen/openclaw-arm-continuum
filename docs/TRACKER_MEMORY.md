@@ -71,19 +71,35 @@ Example: /mem digest tag:work
 `<id>` is the short ID shown by `/mem list` and after every `/mem` save (the
 first 8 hex characters of the underlying Qdrant point ID).
 
-The same tag scoping works on semantic search too:
+The same tag scoping works on semantic search too, and combines with a
+date range:
 
 ```text
 /rag tag:<word> <question>
+/rag since:YYYY-MM-DD <question>
+/rag before:YYYY-MM-DD <question>
+/rag since:YYYY-MM-DD before:YYYY-MM-DD <question>
 ```
 
-Scopes the *default* `/rag` search (no `#<category>`) to tracker items
-carrying that exact tag, and skips the knowledge-base collection entirely
-(it has no `tags` field, so there is nothing there a tag filter could
-match). `/rag #<category> ...` is unrelated and unaffected -- category
-collections don't carry tags either. See `docs/CATEGORY_RAG.md`.
+`tag:` scopes the *default* `/rag` search (no `#<category>`) to tracker
+items carrying that exact tag, and skips the knowledge-base collection
+entirely (it has no `tags` field, so there is nothing there a tag filter
+could match). `since:`/`before:` filter by `created_at` (when the item was
+saved / ingested) and apply to **both** tracker and knowledge -- both have
+`created_at`. `since:` is inclusive, `before:` is exclusive (so
+`before:2026-09-15` means "before that day, not including it"); give both
+for a range. All three can be combined, in any order, as leading tokens
+before the question -- e.g. `tag:work since:2026-09-01`. An invalid date
+(`since:not-a-date`) is left in the question text untouched, same
+philosophy as `/mem`'s `due:` parsing.
+
+`/rag #<category> ...` is a separate, unrelated mechanism and unaffected --
+category collections don't carry tags, and these prefixes are only
+recognized before a `#<category>` token, not after it. See
+`docs/CATEGORY_RAG.md`.
 
 Example: `/rag tag:work what did I save about the deadline?`
+Example: `/rag since:2026-09-01 what have I saved this month?`
 
 ## Metadata syntax
 
@@ -201,13 +217,17 @@ cooldown -- see `docs/FUTURE_TODO.md` "Personal Memory Deepening".
   in-memory fake Qdrant.
 - `tests/test_qdrant_client.py` -- the new `scroll_by_filters` / `set_payload`
   / `delete_points` / `upsert_text(point_id=...)` methods, and `search`'s
-  optional `filters` param (omitted vs. a `must` clause), HTTP-call level
-  with a mocked `request_json`.
-- `tests/test_category_rag_retrieve.py` -- `split_tag_prefix` parsing
-  (including "not a prefix mid-sentence"), and `/rag tag:<word>` only
-  searching the tracker collection with the filter applied, skipping
-  knowledge entirely, unit-level with a `FakeQdrant` that records the
-  filter each collection was searched with.
+  optional `filters` param and `since`/`before` range params (omitted,
+  each alone, combined, and alongside `filters`), HTTP-call level with a
+  mocked `request_json`.
+- `tests/test_category_rag_retrieve.py` -- `split_rag_filter_prefix`
+  parsing (`tag:`/`since:`/`before:`, any order and combination, an
+  invalid date or repeated key stopping the prefix run, "not a prefix
+  mid-sentence"), `/rag tag:<word>` only searching the tracker collection,
+  `/rag since:`/`before:` searching both tracker and knowledge with the
+  range applied, and `tag:` + `since:` combining, unit-level with a
+  `FakeQdrant` that records the filters/since/before each collection was
+  searched with.
 - `tests/test_scenarios_integration.py::TrackerMemoryManagementScenario` --
   the full write/list/done/rm round trip, the digest overdue/due-soon
   categorization, and `test_list_and_digest_tag_filter_against_real_qdrant`
@@ -219,6 +239,12 @@ cooldown -- see `docs/FUTURE_TODO.md` "Personal Memory Deepening".
   -- two differently-tagged `/mem` items, `/rag tag:work ...` and
   `/rag tag:home ...` each only surface their own item, against a real
   Qdrant (L2).
+- `tests/test_scenarios_integration.py::KnowledgeAndMemoryScenario::
+  test_rag_date_range_filters_against_real_qdrant` -- proves the
+  `created_at` range condition (`since:` inclusive, `before:` exclusive)
+  against a real Qdrant: an item saved "now" is included by
+  `since:today`, excluded by `before:today`, excluded by `since:tomorrow`,
+  and included by a range spanning both sides of today (L2).
 - `tests/test_cron_worker.py::RunDynamicJobTest` /
   `WriteGatewayRunbackTest` -- a `suppress_if_routine` result is recorded but
   not pushed; the ok/error/skipped status is three-way and each counter

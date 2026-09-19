@@ -83,7 +83,8 @@ one layer that fails if it breaks.
 | `/mem snooze` (relative/absolute, reactivates done) | `test_memory_write::MemorySnoozeTest` | `TrackerMemoryManagementScenario` (shares `set_payload` coverage) | — |
 | `/mem edit` (re-embed, preserve status/due/tags) | `test_memory_write::MemoryEditTest` | `KnowledgeAndMemoryScenario` (shares `upsert_text(point_id=...)` coverage) | — |
 | `/mem list`/`digest` tag scope filter | `test_memory_write` (list + digest tag tests) | `TrackerMemoryManagementScenario::test_list_and_digest_tag_filter_against_real_qdrant` | — |
-| `/rag tag:<word>` scope filter (tracker only, skips knowledge) | `test_category_rag_retrieve` (`SplitTagPrefixTest`, tag-filter tests), `test_qdrant_client` (`search(filters=...)`) | `KnowledgeAndMemoryScenario::test_rag_tag_prefix_scopes_to_tracker_items_with_that_tag_against_real_qdrant` | — |
+| `/rag tag:<word>` scope filter (tracker only, skips knowledge) | `test_category_rag_retrieve` (`SplitRagFilterPrefixTest`, tag-filter tests), `test_qdrant_client` (`search(filters=...)`) | `KnowledgeAndMemoryScenario::test_rag_tag_prefix_scopes_to_tracker_items_with_that_tag_against_real_qdrant` | — |
+| `/rag since:`/`before:` date range (tracker + knowledge, combines with `tag:`) | `test_category_rag_retrieve` (`SplitRagFilterPrefixTest`, date-range tests), `test_qdrant_client` (`search(since=..., before=...)`) | `KnowledgeAndMemoryScenario::test_rag_date_range_filters_against_real_qdrant` | — |
 | Conversational memory + `/new` | `test_conversation_memory`, `test_telegram_gateway` | `ChatMemoryScenario` | multi-turn with a real model |
 | Rolling summary + `/keep` | `test_conversation_memory::RollingSummaryTest`/`PinnedFactsTest` | `ChatMemoryRollingSummaryScenario` | summary quality with a real model |
 | `/history` read-only preview | `test_conversation_memory::HistoryPreviewTest`, `test_telegram_gateway::FormatHistoryPreviewTest`/`HistoryCommandTest` | — | — |

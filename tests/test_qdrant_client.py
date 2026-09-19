@@ -35,6 +35,39 @@ class QdrantClientTest(unittest.TestCase):
         self.assertEqual(payload["filter"]["must"], [{"key": "tags", "match": {"value": "work"}}])
 
     @patch("openclaw_runtime.qdrant_client.request_json")
+    def test_search_with_since_sends_gte_range_on_created_at(self, request_json) -> None:
+        request_json.return_value = {"result": []}
+        self.client.search("coll", [0.1], since=1000)
+        payload = request_json.call_args.args[2]
+        self.assertEqual(payload["filter"]["must"], [{"key": "created_at", "range": {"gte": 1000}}])
+
+    @patch("openclaw_runtime.qdrant_client.request_json")
+    def test_search_with_before_sends_lt_range_on_created_at(self, request_json) -> None:
+        request_json.return_value = {"result": []}
+        self.client.search("coll", [0.1], before=2000)
+        payload = request_json.call_args.args[2]
+        self.assertEqual(payload["filter"]["must"], [{"key": "created_at", "range": {"lt": 2000}}])
+
+    @patch("openclaw_runtime.qdrant_client.request_json")
+    def test_search_with_since_and_before_sends_combined_range(self, request_json) -> None:
+        request_json.return_value = {"result": []}
+        self.client.search("coll", [0.1], since=1000, before=2000)
+        payload = request_json.call_args.args[2]
+        self.assertEqual(
+            payload["filter"]["must"], [{"key": "created_at", "range": {"gte": 1000, "lt": 2000}}]
+        )
+
+    @patch("openclaw_runtime.qdrant_client.request_json")
+    def test_search_with_filters_and_date_range_combines_must_clauses(self, request_json) -> None:
+        request_json.return_value = {"result": []}
+        self.client.search("coll", [0.1], filters={"tags": "work"}, since=1000)
+        payload = request_json.call_args.args[2]
+        self.assertEqual(
+            payload["filter"]["must"],
+            [{"key": "tags", "match": {"value": "work"}}, {"key": "created_at", "range": {"gte": 1000}}],
+        )
+
+    @patch("openclaw_runtime.qdrant_client.request_json")
     def test_upsert_text_uses_caller_supplied_point_id(self, request_json) -> None:
         request_json.return_value = {}
         returned = self.client.upsert_text(

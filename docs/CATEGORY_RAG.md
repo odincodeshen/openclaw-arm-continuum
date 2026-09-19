@@ -57,10 +57,13 @@ id such as `oc_cat_work-notes_1a2b3c4d`.
 - `/rag <question>` with no `#` is unchanged: it searches the default
   `personal_tracker_memory` + `personal_knowledge_base` collections and
   does **not** touch category collections.
-- `/rag tag:<word> <question>` is a separate, unrelated prefix: it scopes
-  the *default* (no `#`) search to `/mem` items carrying that exact tag,
-  and does not apply to `#<category>` collections (they have no `tags`
-  field). See `docs/TRACKER_MEMORY.md`.
+- `/rag tag:<word> <question>` and `/rag since:YYYY-MM-DD [before:YYYY-MM-DD]
+  <question>` are separate, unrelated prefixes: they scope the *default*
+  (no `#`) search and do not apply to `#<category>` collections (`tag:`
+  because they have no `tags` field; `since:`/`before:` would technically
+  work since category items have `created_at` too, but the prefix is only
+  recognized before a `#<category>` token, not combined with one -- see
+  `docs/TRACKER_MEMORY.md`).
 
 Every `/rag` answer ends with a `Sources:` line naming the source documents
 the answer drew from. The name shown is the uploader's original filename when
