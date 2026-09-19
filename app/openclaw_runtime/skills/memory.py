@@ -30,6 +30,25 @@ _TAG_TOKEN_RE = re.compile(r"(?<!\S)tag:(\S+)(?!\S)", re.IGNORECASE)
 # Relative snooze targets like "3d" or "1w" for /mem snooze.
 _SNOOZE_RELATIVE_RE = re.compile(r"^(\d+)([dw])$", re.IGNORECASE)
 
+# A single tag:<word> token, matched per whitespace-split token (so no
+# boundary lookaround needed) for /mem list and /mem digest scoping.
+_TAG_ARG_TOKEN_RE = re.compile(r"^tag:(\S+)$", re.IGNORECASE)
+
+
+def _parse_list_or_digest_args(arg: str) -> tuple[str, str | None]:
+    """Parse /mem list|digest args: the literal "done" (list only) selects
+    the done bucket, and tag:<word> scopes results to that exact tag."""
+    status = "active"
+    tag: str | None = None
+    for token in arg.split():
+        if token.lower() == "done":
+            status = "done"
+            continue
+        match = _TAG_ARG_TOKEN_RE.match(token)
+        if match:
+            tag = match.group(1)
+    return status, tag
+
 
 def parse_memory_metadata(content: str) -> tuple[str, str | None, list[str]]:
     """Pull ``due:YYYY-MM-DD`` and ``tag:<word>`` tokens out of free text.
@@ -105,7 +124,8 @@ class MemoryWriteSkill:
             return SkillResult(
                 self.name,
                 "Add the content to save after /mem, or use:\n"
-                "/mem list [done]\n/mem done <id>\n/mem rm <id>\n/mem digest\n"
+                "/mem list [done] [tag:<word>]\n/mem done <id>\n/mem rm <id>\n"
+                "/mem digest [tag:<word>]\n"
                 "/mem snooze <id> <3d|1w|YYYY-MM-DD>\n/mem edit <id> <new text>\n"
                 "Add due:YYYY-MM-DD and/or tag:<word> anywhere in the text to save them.",
             )
@@ -119,7 +139,7 @@ class MemoryWriteSkill:
         if keyword in ("rm", "delete"):
             return self._remove(rest.strip())
         if keyword == "digest":
-            return self._digest()
+            return self._digest(rest.strip())
         if keyword == "snooze":
             return self._snooze(rest.strip())
         if keyword == "edit":
@@ -205,14 +225,16 @@ class MemoryWriteSkill:
         return SkillResult(self.name, f"Updated #{short_id}: {clean_text}{suffix}")
 
     def _list(self, arg: str) -> SkillResult:
-        status = "done" if arg.strip().lower() == "done" else "active"
-        hits = self.qdrant.scroll_by_filters(
-            self.settings.tracker_collection,
-            {"kind": "tracker_memory", "status": status},
-            limit=200,
-        )
+        status, tag = _parse_list_or_digest_args(arg)
+        filters = {"kind": "tracker_memory", "status": status}
+        if tag:
+            filters["tags"] = tag
+        hits = self.qdrant.scroll_by_filters(self.settings.tracker_collection, filters, limit=200)
+        tag_suffix = f' tagged "{tag}"' if tag else ""
         if not hits:
-            return SkillResult(self.name, f"No {'completed' if status == 'done' else 'active'} memory items.")
+            return SkillResult(
+                self.name, f"No {'completed' if status == 'done' else 'active'} memory items{tag_suffix}."
+            )
 
         def sort_key(hit: dict) -> tuple:
             payload = hit.get("payload") or {}
@@ -220,7 +242,7 @@ class MemoryWriteSkill:
 
         hits.sort(key=sort_key)
         label = "Completed" if status == "done" else "Active"
-        lines = [f"{label} memory ({len(hits)}):"]
+        lines = [f"{label} memory{tag_suffix} ({len(hits)}):"]
         for hit in hits[:50]:
             payload = hit.get("payload") or {}
             short_id = payload.get("short_id", "?")
@@ -304,7 +326,7 @@ class MemoryWriteSkill:
         )
         return hits[0] if hits else None
 
-    def _digest(self) -> SkillResult:
+    def _digest(self, arg: str = "") -> SkillResult:
         """A proactive-reminder summary: overdue items, items due soon, and
         stale undated items. Meant to be run interactively (/mem digest) or
         on a cron schedule -- see docs/TRACKER_MEMORY.md.
@@ -313,12 +335,15 @@ class MemoryWriteSkill:
         is what a reminder is for). Stale items get a cooldown
         (mem_digest_remind_cooldown_days) via `last_reminded_at` so an
         undated item doesn't get nagged about on every single run.
+
+        An optional tag:<word> arg scopes the whole digest to that tag --
+        handy for a per-topic cron job (e.g. `/mem digest tag:work`).
         """
-        hits = self.qdrant.scroll_by_filters(
-            self.settings.tracker_collection,
-            {"kind": "tracker_memory", "status": "active"},
-            limit=500,
-        )
+        _, tag = _parse_list_or_digest_args(arg)
+        filters = {"kind": "tracker_memory", "status": "active"}
+        if tag:
+            filters["tags"] = tag
+        hits = self.qdrant.scroll_by_filters(self.settings.tracker_collection, filters, limit=500)
         today = date.today()
         due_soon_cutoff = today + timedelta(days=self.settings.mem_digest_due_soon_days)
         stale_cutoff = time.time() - self.settings.mem_digest_stale_days * 86400
@@ -352,9 +377,10 @@ class MemoryWriteSkill:
         due_soon.sort(key=lambda h: h["payload"]["due"])
 
         if not overdue and not due_soon and not stale:
+            tag_suffix = f' tagged "{tag}"' if tag else ""
             return SkillResult(
                 self.name,
-                "You're all caught up -- nothing overdue, due soon, or stale.",
+                f"You're all caught up{tag_suffix} -- nothing overdue, due soon, or stale.",
                 suppress_if_routine=True,
             )
 

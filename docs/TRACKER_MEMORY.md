@@ -23,6 +23,14 @@ List active items, soonest due date first, undated items last.
 /mem list done
 List completed items.
 
+/mem list tag:<word>
+/mem list done tag:<word>
+Scope the list to items carrying that exact tag. Combine with "done" in
+either order.
+
+Example: /mem list tag:work
+Example: /mem list done tag:health
+
 /mem done <id>
 Mark an item done (moves it from the active list to the done list).
 
@@ -52,6 +60,12 @@ Example: /mem edit a1b2c3d4 renew passport due:2027-01-15
 A reminder summary: overdue items, items due soon, and stale undated
 items. Meant to be run on a schedule (see "Proactive reminders" below),
 but works fine typed directly too.
+
+/mem digest tag:<word>
+Scope the digest to one tag -- handy for a per-topic cron job so a
+"work" reminder and a "home" reminder don't get mixed into one push.
+
+Example: /mem digest tag:work
 ```
 
 `<id>` is the short ID shown by `/mem list` and after every `/mem` save (the
@@ -72,9 +86,16 @@ first 8 hex characters of the underlying Qdrant point ID).
 
 ## Reserved sub-commands
 
-`list`, `done`, `rm` / `delete`, `snooze`, and `edit` are reserved only as
-the exact first whitespace-delimited word of the content. `/mem listen to
-the new episode` still saves normally -- `listen` is not `list`.
+`list`, `done`, `rm` / `delete`, `snooze`, `edit`, and `digest` are reserved
+only as the exact first whitespace-delimited word of the content. `/mem
+listen to the new episode` still saves normally -- `listen` is not `list`.
+
+`tag:<word>` inside `/mem list ...` or `/mem digest ...` is a scope filter,
+not new content -- it matches a tag exactly, using Qdrant's list-payload
+match semantics (the tag must be one of the item's `tags`, not a substring
+or a partial word). It only narrows; it never selects nothing when there
+is no such tag anywhere -- that just prints "No active memory items
+tagged \"...\"." or, for digest, the usual all-caught-up message.
 
 ## Data model
 
@@ -129,6 +150,14 @@ see below.
 /cron add daily 08:00 Memory digest :: /mem digest
 ```
 
+A tag-scoped digest works the same way as its own job, so "work" and
+"home" reminders can land as separate, independently-silenced pushes:
+
+```text
+/cron add daily 08:00 Work digest :: /mem digest tag:work
+/cron add daily 09:00 Home digest :: /mem digest tag:home
+```
+
 The cron worker treats a `suppress_if_routine` result as a no-op: it still
 records the run (`lastRunStatus: "skipped"`, `consecutiveSkipped`
 increments), but does **not** push a Telegram message -- so a day with
@@ -151,15 +180,20 @@ cooldown -- see `docs/FUTURE_TODO.md` "Personal Memory Deepening".
   reserved-word edge case, unknown-ID handling, `MemorySnoozeTest`
   (relative/absolute targets, reactivating a done item, undated items,
   invalid input), `MemoryEditTest` (text replacement, re-embedding,
-  preserving status/created_at, due/tag override vs. preserve), and
-  `MemoryDigestTest` (overdue/due-soon/stale categorization, cooldown,
-  suppression). Unit-level with an in-memory fake Qdrant.
+  preserving status/created_at, due/tag override vs. preserve), tag-filter
+  tests on `/mem list` and `/mem digest` (including the `FakeQdrant`
+  list-payload match semantics), and `MemoryDigestTest` (overdue/due-soon/
+  stale categorization, cooldown, suppression). Unit-level with an
+  in-memory fake Qdrant.
 - `tests/test_qdrant_client.py` -- the new `scroll_by_filters` / `set_payload`
   / `delete_points` / `upsert_text(point_id=...)` methods, HTTP-call level
   with a mocked `request_json`.
 - `tests/test_scenarios_integration.py::TrackerMemoryManagementScenario` --
-  the full write/list/done/rm round trip, and the digest overdue/due-soon
-  categorization, against a real Qdrant (L2).
+  the full write/list/done/rm round trip, the digest overdue/due-soon
+  categorization, and `test_list_and_digest_tag_filter_against_real_qdrant`
+  (proves Qdrant's list-payload match -- "the tag is one of the item's
+  tags" -- against a real server, not just the fake), against a real
+  Qdrant (L2).
 - `tests/test_cron_worker.py::RunDynamicJobTest` /
   `WriteGatewayRunbackTest` -- a `suppress_if_routine` result is recorded but
   not pushed; the ok/error/skipped status is three-way and each counter

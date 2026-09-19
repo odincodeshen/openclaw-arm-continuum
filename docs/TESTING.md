@@ -82,6 +82,7 @@ one layer that fails if it breaks.
 | `/mem digest` + cron `suppress_if_routine` skip | `test_memory_write::MemoryDigestTest`, `test_cron_worker::RunDynamicJobTest`/`WriteGatewayRunbackTest` | `TrackerMemoryManagementScenario` | live daily push |
 | `/mem snooze` (relative/absolute, reactivates done) | `test_memory_write::MemorySnoozeTest` | `TrackerMemoryManagementScenario` (shares `set_payload` coverage) | — |
 | `/mem edit` (re-embed, preserve status/due/tags) | `test_memory_write::MemoryEditTest` | `KnowledgeAndMemoryScenario` (shares `upsert_text(point_id=...)` coverage) | — |
+| `/mem list`/`digest` tag scope filter | `test_memory_write` (list + digest tag tests) | `TrackerMemoryManagementScenario::test_list_and_digest_tag_filter_against_real_qdrant` | — |
 | Conversational memory + `/new` | `test_conversation_memory`, `test_telegram_gateway` | `ChatMemoryScenario` | multi-turn with a real model |
 | Rolling summary + `/keep` | `test_conversation_memory::RollingSummaryTest`/`PinnedFactsTest` | `ChatMemoryRollingSummaryScenario` | summary quality with a real model |
 | Vision / image analysis | `test_vision_client`, `test_category_gateway` | — | `scripts/vision_smoke.py` on a real VLM |

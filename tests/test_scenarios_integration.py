@@ -255,6 +255,27 @@ class TrackerMemoryManagementScenario(QdrantScenarioBase):
         self.assertTrue(digest.suppress_if_routine)
         self.assertIn("all caught up", digest.answer)
 
+    def test_list_and_digest_tag_filter_against_real_qdrant(self) -> None:
+        # Proves Qdrant's match-on-a-list-payload-field semantics ("the tag
+        # is one of the item's tags") really work the way FakeQdrant assumes,
+        # not just against a real Qdrant's scroll -- for both /mem list and
+        # /mem digest.
+        today = date.today()
+        overdue_due = (today - timedelta(days=1)).isoformat()
+        self.writer.run(f"/mem work overdue thing due:{overdue_due} tag:work")
+        self.writer.run("/mem home errand tag:home")
+
+        work_list = self.writer.run("/mem list tag:work").answer
+        self.assertIn("work overdue thing", work_list)
+        self.assertNotIn("home errand", work_list)
+
+        work_digest = self.writer.run("/mem digest tag:work").answer
+        self.assertIn("work overdue thing", work_digest)
+
+        home_digest = self.writer.run("/mem digest tag:home")
+        self.assertTrue(home_digest.suppress_if_routine)
+        self.assertIn('tagged "home"', home_digest.answer)
+
     def test_delete_collection_against_real_qdrant(self) -> None:
         # Backs /cat merge's cleanup step: prove QdrantClient.delete_collection
         # actually removes a real collection, not just that it sends *a* request.

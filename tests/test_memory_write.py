@@ -39,9 +39,16 @@ class FakeQdrant:
     def scroll_by_filters(self, collection, filters, limit=64):
         points = list(self.collections.get(collection, {}).values())
 
+        def field_matches(actual, expected) -> bool:
+            # Mirrors real Qdrant: a match against a list-valued payload
+            # field means "the list contains this value".
+            if isinstance(actual, list):
+                return expected in actual
+            return actual == expected
+
         def matches(point: dict) -> bool:
             payload = point["payload"]
-            return all(payload.get(key) == value for key, value in filters.items())
+            return all(field_matches(payload.get(key), value) for key, value in filters.items())
 
         return [p for p in points if matches(p)][:limit]
 
@@ -140,6 +147,32 @@ class MemoryWriteSkillTest(unittest.TestCase):
         self.assertIn("a task", lines[1])
         self.assertIn("b task", lines[2])
         self.assertIn("no due task", lines[3])
+
+    def test_list_filters_by_tag(self) -> None:
+        self.skill.run("/mem work task tag:work")
+        self.skill.run("/mem home task tag:home")
+        result = self.skill.run("/mem list tag:work")
+        self.assertIn('Active memory tagged "work" (1):', result.answer)
+        self.assertIn("work task", result.answer)
+        self.assertNotIn("home task", result.answer)
+
+    def test_list_tag_filter_with_no_matches(self) -> None:
+        self.skill.run("/mem home task tag:home")
+        result = self.skill.run("/mem list tag:missing")
+        self.assertIn('No active memory items tagged "missing".', result.answer)
+
+    def test_list_done_with_tag_filter(self) -> None:
+        self.skill.run("/mem work task tag:work")
+        short_id = self._first_short_id()
+        self.skill.run(f"/mem done {short_id}")
+        result = self.skill.run("/mem list done tag:work")
+        self.assertIn('Completed memory tagged "work" (1):', result.answer)
+        self.assertIn("work task", result.answer)
+
+    def test_list_tag_filter_ignores_items_without_that_tag(self) -> None:
+        self.skill.run("/mem untagged task")
+        result = self.skill.run("/mem list tag:work")
+        self.assertIn("No active memory items", result.answer)
 
     def test_done_removes_item_from_active_list_and_into_done_list(self) -> None:
         self.skill.run("/mem finish thing")
@@ -408,6 +441,19 @@ class MemoryDigestTest(unittest.TestCase):
         self.assertIn("Due in the next 7 days (1):", result.answer)
         self.assertIn("book flight", result.answer)
         self.assertFalse(result.suppress_if_routine)
+
+    def test_digest_scoped_to_tag_only_reports_that_tag(self) -> None:
+        self._seed("work overdue thing", due="2000-01-01", tags=["work"])
+        self._seed("home overdue thing", due="2000-01-01", tags=["home"])
+        result = self.skill.run("/mem digest tag:work")
+        self.assertIn("work overdue thing", result.answer)
+        self.assertNotIn("home overdue thing", result.answer)
+
+    def test_digest_tag_with_nothing_due_is_suppressed_and_mentions_tag(self) -> None:
+        self._seed("home overdue thing", due="2000-01-01", tags=["home"])
+        result = self.skill.run("/mem digest tag:work")
+        self.assertTrue(result.suppress_if_routine)
+        self.assertIn('tagged "work"', result.answer)
 
     def test_far_future_due_item_is_not_reported_yet(self) -> None:
         due = (date.today() + timedelta(days=60)).isoformat()
