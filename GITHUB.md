@@ -284,3 +284,52 @@ CI + tests
 
 266 tests pass.
 ```
+
+## Suggested Release Title (v1.8)
+
+```text
+OpenClaw Arm Continuum v1.8 - Structured tracker memory + proactive reminders
+```
+
+## Suggested Release Notes (v1.8)
+
+```text
+v1.8 turns /mem from a write-only log into an actual tracker, and adds
+proactive reminders that push only when there is something to say.
+
+Structured tracker memory
+- /mem <content> now accepts due:YYYY-MM-DD and/or tag:<word> anywhere in
+  the text; they are parsed out and stored as structured payload fields
+  (only the first valid due: token is consumed; an invalid or second one
+  is left in the text untouched).
+- /mem list [done] lists active or completed items, soonest due date
+  first. /mem done <id> marks an item done; /mem rm <id> (alias delete)
+  deletes it. <id> is the short ID shown by /mem list or after a save.
+- QdrantClient gained scroll_by_filters (generic AND-of-payload-fields
+  scroll), set_payload (merge, no vector touch), and delete_points;
+  upsert_text takes an optional caller-supplied point_id.
+- A one-time backfill added status/short_id to pre-v1.8 /mem items so
+  they show up in /mem list too.
+- See docs/TRACKER_MEMORY.md.
+
+Proactive reminders
+- /mem digest categorizes active items into Overdue, Due in the next
+  OPENCLAW_MEM_DIGEST_DUE_SOON_DAYS days (default 7), and Stale (no due,
+  untouched OPENCLAW_MEM_DIGEST_STALE_DAYS+ days, default 14). Overdue
+  and due-soon repeat every call on purpose; stale items get a cooldown
+  (last_reminded_at, OPENCLAW_MEM_DIGEST_REMIND_COOLDOWN_DAYS, default 7)
+  so an undated item isn't nagged about daily.
+- No new cron job type needed: /mem digest is a normal dynamic job --
+  /cron add daily 08:00 Memory digest :: /mem digest.
+- New generic SkillResult.suppress_if_routine lets any skill tell a
+  scheduled caller "nothing new, don't push" (default False, every
+  existing SkillResult construction unaffected). The cron worker now
+  treats run status as a proper three-way model (ok/error/skipped):
+  consecutiveErrors only increments on "error", consecutiveSkipped (a
+  field that already existed in the schema but was hardcoded to 0) now
+  actually increments on "skipped", and each resets when its status
+  doesn't apply. A day with nothing due or stale stays silent; the run
+  is still recorded.
+
+315 tests pass.
+```

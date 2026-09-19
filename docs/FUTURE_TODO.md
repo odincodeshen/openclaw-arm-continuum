@@ -1,7 +1,7 @@
 # Future TODO List
 
 This document tracks candidate work items for `openclaw-arm-continuum`.
-Current release: **v1.7**.
+Current release: **v1.8**.
 
 The runtime is intentionally stable and text-first. The items below are
 future-facing and should be implemented incrementally without breaking the
@@ -42,6 +42,14 @@ v1.2 baseline. What has actually shipped since then:
   answer language. CI: `.github/workflows/ci.yml` (lint + unit + static) and
   `integration.yml` (L2 scenarios against real Qdrant with an in-process
   fake model server); `docs/TESTING.md`, `docs/CI.md`.
+- **v1.8 — structured tracker memory + proactive reminders.** `/mem list
+  [done]` / `done <id>` / `rm <id>`, `due:YYYY-MM-DD` and `tag:<word>`
+  metadata parsing (`app/openclaw_runtime/skills/memory.py`). `/mem digest`
+  categorizes overdue / due-soon / stale items; wired to a daily cron push
+  (`/cron add daily 08:00 Memory digest :: /mem digest`) via a new generic
+  `SkillResult.suppress_if_routine` signal so cron skips the Telegram push
+  (but still records the run) when there's nothing to report. See
+  `docs/TRACKER_MEMORY.md`.
 
 Still open from the original list, re-baselined against v1.6:
 
