@@ -159,6 +159,22 @@ class ConversationMemory:
         self._write(chat_id, data)
         return True
 
+    def preview(self, chat_id: int | None) -> dict | None:
+        """Read-only snapshot for /history: pinned facts, the rolling
+        summary, and the raw turn window, without mutating anything.
+        ``None`` means nothing to show (disabled, no data yet, or expired)."""
+        if not self.enabled or chat_id is None:
+            return None
+        data = self._read(chat_id)
+        if self._expired(data):
+            return None
+        pinned = list(data.get("pinned") or [])
+        summary = data.get("summary") or ""
+        turns = list(data.get("turns") or [])
+        if not pinned and not summary and not turns:
+            return None
+        return {"pinned": pinned, "summary": summary, "turns": turns}
+
     def clear(self, chat_id: int | None) -> bool:
         """Delete a chat's stored conversation (turns, summary, pinned facts).
 

@@ -86,6 +86,7 @@ one layer that fails if it breaks.
 | `/rag tag:<word>` scope filter (tracker only, skips knowledge) | `test_category_rag_retrieve` (`SplitTagPrefixTest`, tag-filter tests), `test_qdrant_client` (`search(filters=...)`) | `KnowledgeAndMemoryScenario::test_rag_tag_prefix_scopes_to_tracker_items_with_that_tag_against_real_qdrant` | — |
 | Conversational memory + `/new` | `test_conversation_memory`, `test_telegram_gateway` | `ChatMemoryScenario` | multi-turn with a real model |
 | Rolling summary + `/keep` | `test_conversation_memory::RollingSummaryTest`/`PinnedFactsTest` | `ChatMemoryRollingSummaryScenario` | summary quality with a real model |
+| `/history` read-only preview | `test_conversation_memory::HistoryPreviewTest`, `test_telegram_gateway::FormatHistoryPreviewTest`/`HistoryCommandTest` | — | — |
 | Vision / image analysis | `test_vision_client`, `test_category_gateway` | — | `scripts/vision_smoke.py` on a real VLM |
 | Intent router | `test_intent_router` | — | classification accuracy |
 | Expert-model routing / `/review` | `test_engineering_review*`, `test_skill_router` | — | `docs/DGX_V13_VALIDATION.md` |

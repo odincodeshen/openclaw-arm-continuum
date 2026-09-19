@@ -130,8 +130,10 @@ Shipped post-v1.6. See `docs/CONVERSATION_MEMORY.md`.
   drop-without-summary). `/keep <fact>` pins a fact that always rides along
   regardless of window size (`OPENCLAW_CONVERSATION_KEEP_MAX_ITEMS`). Both
   cleared by `/new`. See `docs/CONVERSATION_MEMORY.md`.
-
-Possible follow-ups: per-chat `/history` preview.
+- **`/history` (v1.9):** read-only preview of what a chat currently has
+  stored -- pinned facts, the rolling summary, and the raw recent turns.
+  Changes nothing (`ConversationMemory.preview()`, a read-only sibling of
+  `load()`).
 
 ## v2.0 Candidate: Platform-Aware MultimodalAnalysisAgent
 

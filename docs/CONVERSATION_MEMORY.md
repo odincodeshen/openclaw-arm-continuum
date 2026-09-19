@@ -30,6 +30,7 @@ should survive `/new` or matters long-term, use `/mem` instead.
 | `/new` | Start a new conversation -- clears the stored turns, summary, and pinned facts for this chat. |
 | `/reset` | Alias for `/new`. |
 | `/keep <fact>` | Pin a fact so it always rides along in context, even after it would otherwise roll into the summary. Cleared by `/new`. |
+| `/history` | Read-only preview of what's currently stored for this chat: pinned facts, the rolling summary, and the raw recent turns. Changes nothing. |
 
 ## Configuration (`.env`)
 
@@ -78,6 +79,12 @@ Changes take effect on `docker compose restart openclaw-telegram`.
 - **`/keep`** appends to a capped list (`KEEP_MAX_ITEMS`, oldest first out)
   that rides in every `load()` regardless of the window. It has no
   independent expiry -- only `/new` clears it.
+- **`/history`** calls `ConversationMemory.preview(chat_id)`, a read-only
+  sibling of `load()`: same expiry/disabled checks, but returns the raw
+  `{"pinned", "summary", "turns"}` snapshot instead of an LLM-ready message
+  list (no synthetic context pair, no window truncation -- the whole stored
+  turn list, since it's already capped to `HISTORY_TURNS` by `record()`).
+  `format_history_preview()` in the gateway renders it as plain text.
 - **Truncation within the window is still deterministic**, same as before:
   the raw window is capped to `HISTORY_TURNS` exchanges, then whole exchanges
   dropped from the front until under `CONTEXT_CHARS` (at least one exchange
@@ -96,9 +103,13 @@ Changes take effect on `docker compose restart openclaw-telegram`.
 turn window, the char budget, `/new` clear, disabled mode, expiry, sweep,
 corrupt-file recovery, `ChatAgent` wiring, rolling-summary folding (with and
 without an `llm`, summarizer failure, the char cap), pinned facts (cap,
-survival alongside real turns, rejection when empty/disabled), and loading a
+survival alongside real turns, rejection when empty/disabled),
+`HistoryPreviewTest` (`preview()` returns pinned+summary+turns, `None` when
+empty/disabled/expired, never mutates the stored file), and loading a
 pre-rolling-summary (v1) file. `tests/test_telegram_gateway.py` covers the
-`/new`, `/reset`, and `/keep` command replies.
+`/new`, `/reset`, `/keep`, and `/history` command replies, plus
+`format_history_preview()`'s rendering (all three sections, turns-only,
+empty snapshot).
 `tests/test_scenarios_integration.py::ChatMemoryRollingSummaryScenario`
 exercises the summarization prompt through a real `LlmClient.chat()` call
 against the fake OpenAI-shaped server (L2) -- not just a stand-in, an actual

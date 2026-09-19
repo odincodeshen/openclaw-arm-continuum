@@ -175,6 +175,79 @@ class KeepCommandTest(unittest.TestCase):
         self.assertTrue(any("Could not pin" in t for _, t in self.sent))
 
 
+class FormatHistoryPreviewTest(unittest.TestCase):
+    def test_pinned_summary_and_turns_all_present(self):
+        text = gateway.format_history_preview(
+            {
+                "pinned": ["prefers metric units"],
+                "summary": "discussed the trip itinerary",
+                "turns": [
+                    {"role": "user", "content": "what's the weather"},
+                    {"role": "assistant", "content": "sunny today"},
+                ],
+            }
+        )
+        self.assertIn("Pinned facts:", text)
+        self.assertIn("- prefers metric units", text)
+        self.assertIn("Summary of earlier conversation:", text)
+        self.assertIn("discussed the trip itinerary", text)
+        self.assertIn("Recent turns:", text)
+        self.assertIn("You: what's the weather", text)
+        self.assertIn("Bot: sunny today", text)
+
+    def test_only_turns_no_pinned_or_summary(self):
+        text = gateway.format_history_preview(
+            {"pinned": [], "summary": "", "turns": [{"role": "user", "content": "hi"}]}
+        )
+        self.assertNotIn("Pinned facts:", text)
+        self.assertNotIn("Summary of earlier conversation:", text)
+        self.assertIn("You: hi", text)
+
+    def test_empty_snapshot_is_empty_string(self):
+        text = gateway.format_history_preview({"pinned": [], "summary": "", "turns": []})
+        self.assertEqual(text, "")
+
+
+class HistoryCommandTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.sent = []
+        self._orig_send = gateway.send_message
+        gateway.send_message = lambda chat_id, text: self.sent.append((chat_id, text))
+        self.addCleanup(setattr, gateway, "send_message", self._orig_send)
+
+        self._orig_mem = gateway.conversation_memory
+        self.addCleanup(setattr, gateway, "conversation_memory", self._orig_mem)
+
+    def _install(self, *, enabled=True, snapshot=None):
+        class FakeMemory:
+            def __init__(self):
+                self.enabled = enabled
+
+            def preview(self, chat_id):
+                return snapshot
+
+        fake = FakeMemory()
+        gateway.conversation_memory = fake
+        return fake
+
+    def test_history_shows_formatted_snapshot(self):
+        self._install(
+            snapshot={"pinned": [], "summary": "", "turns": [{"role": "user", "content": "hi"}]}
+        )
+        gateway.handle_message({"chat": {"id": 7}, "text": "/history"})
+        self.assertTrue(any("You: hi" in t for _, t in self.sent))
+
+    def test_history_with_nothing_stored(self):
+        self._install(snapshot=None)
+        gateway.handle_message({"chat": {"id": 7}, "text": "/history"})
+        self.assertTrue(any("No conversation history yet" in t for _, t in self.sent))
+
+    def test_history_when_memory_disabled(self):
+        self._install(enabled=False, snapshot=None)
+        gateway.handle_message({"chat": {"id": 7}, "text": "/history"})
+        self.assertTrue(any("disabled" in t.lower() for _, t in self.sent))
+
+
 class ModelPausedMessageTest(unittest.TestCase):
     def setUp(self):
         self.sent = []

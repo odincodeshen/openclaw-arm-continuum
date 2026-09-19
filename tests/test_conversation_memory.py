@@ -291,6 +291,62 @@ class PinnedFactsTest(unittest.TestCase):
         self.assertIsNone(mem.load(1))
 
 
+class HistoryPreviewTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def test_preview_is_none_when_nothing_stored(self) -> None:
+        mem = _memory(self.root)
+        self.assertIsNone(mem.preview(1))
+
+    def test_preview_is_none_when_disabled(self) -> None:
+        mem = _memory(self.root, conversation_memory_enabled=False)
+        self.assertIsNone(mem.preview(1))
+
+    def test_preview_includes_turns_summary_and_pinned(self) -> None:
+        llm = FakeSummarizerLlm(answer="ran errands and discussed travel")
+        mem = _memory(self.root, llm=llm, conversation_history_turns=1)
+        mem.pin(1, "prefers metric units")
+        mem.record(1, "older question", "older answer")  # rolls into summary
+        mem.record(1, "recent question", "recent answer")
+
+        snapshot = mem.preview(1)
+        self.assertEqual(snapshot["pinned"], ["prefers metric units"])
+        self.assertEqual(snapshot["summary"], "ran errands and discussed travel")
+        self.assertEqual(
+            [t["content"] for t in snapshot["turns"]], ["recent question", "recent answer"]
+        )
+
+    def test_preview_does_not_mutate_stored_data(self) -> None:
+        mem = _memory(self.root)
+        mem.record(1, "hi", "yo")
+        before = mem._read(1)
+        mem.preview(1)
+        after = mem._read(1)
+        self.assertEqual(before, after)
+
+    def test_preview_reflects_only_pinned_facts_with_no_turns(self) -> None:
+        mem = _memory(self.root)
+        mem.pin(1, "only a pinned fact so far")
+        snapshot = mem.preview(1)
+        self.assertEqual(snapshot["pinned"], ["only a pinned fact so far"])
+        self.assertEqual(snapshot["summary"], "")
+        self.assertEqual(snapshot["turns"], [])
+
+    def test_expired_history_previews_as_none(self) -> None:
+        mem = _memory(self.root, conversation_retention_hours=1)
+        mem.record(1, "hi", "yo")
+        stale_path = self.root / "conversations" / "1.json"
+        import json
+
+        data = json.loads(stale_path.read_text(encoding="utf-8"))
+        data["updated_at"] = int(time.time()) - 7200
+        stale_path.write_text(json.dumps(data), encoding="utf-8")
+        self.assertIsNone(mem.preview(1))
+
+
 class BackwardCompatTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()

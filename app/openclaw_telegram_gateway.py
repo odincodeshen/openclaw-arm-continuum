@@ -183,6 +183,10 @@ after it would otherwise roll into the summary or drop off. Cleared by
 /new. For anything that should survive /new, use /mem instead.
 Example: /keep My flight home is on the 23rd, not the 21st.
 
+/history
+Preview what this chat currently remembers: pinned facts, the rolling
+summary, and the recent raw turns. Read-only -- does not change anything.
+
 /review <sanitized engineering request>
 Run the bounded code and architecture review workflow. This command is
 available when the multi-model catalog is configured.
@@ -573,6 +577,26 @@ def _run_category_ingest(chat_id: int, items: list[dict], entry: dict) -> None:
         lines.append("Failed: " + "; ".join(failed))
     send_message(chat_id, "\n".join(lines))
     log(f"[category] ingest chat_id={chat_id} slug={entry['slug']} ok={len(done)} fail={len(failed)}")
+
+
+def format_history_preview(snapshot: dict) -> str:
+    """Render a ConversationMemory.preview() snapshot for /history: pinned
+    facts, the rolling summary, then the raw recent-turn window."""
+    sections: list[str] = []
+    pinned = snapshot.get("pinned") or []
+    if pinned:
+        sections.append("Pinned facts:\n" + "\n".join(f"- {fact}" for fact in pinned))
+    summary = snapshot.get("summary") or ""
+    if summary:
+        sections.append(f"Summary of earlier conversation:\n{summary}")
+    turns = snapshot.get("turns") or []
+    if turns:
+        lines = []
+        for turn in turns:
+            role = "You" if turn.get("role") == "user" else "Bot"
+            lines.append(f"{role}: {turn.get('content', '')}")
+        sections.append("Recent turns:\n" + "\n".join(lines))
+    return "\n\n".join(sections)
 
 
 def category_command_text() -> str:
@@ -1321,6 +1345,7 @@ def setup_bot_commands() -> None:
         {"command": "cron", "description": "Configure proactive push schedules"},
         {"command": "new", "description": "Start a new chat conversation (clear context)"},
         {"command": "keep", "description": "Pin a fact so chat always remembers it"},
+        {"command": "history", "description": "Preview what the chat remembers about this conversation"},
         {"command": "agents", "description": "List OpenClaw agents"},
         {"command": "tasks", "description": "View recent task history"},
         {"command": "review", "description": "Run a bounded private engineering review"},
@@ -1440,6 +1465,17 @@ def handle_message(message: dict) -> None:
             send_message(chat_id, f"Pinned: {fact}")
         else:
             send_message(chat_id, "Could not pin that.")
+        return
+
+    if text.lower() == "/history":
+        if not conversation_memory.enabled:
+            send_message(chat_id, "Conversation memory is disabled, so there's no history to show.")
+        else:
+            snapshot = conversation_memory.preview(chat_id)
+            if not snapshot:
+                send_message(chat_id, "No conversation history yet for this chat.")
+            else:
+                send_message(chat_id, format_history_preview(snapshot))
         return
 
     if settings.category_rag_enabled:
