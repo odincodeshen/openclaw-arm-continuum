@@ -39,14 +39,19 @@ _SNOOZE_RELATIVE_RE = re.compile(r"^(\d+)([dw])$", re.IGNORECASE)
 _TAG_ARG_TOKEN_RE = re.compile(r"^tag:(\S+)$", re.IGNORECASE)
 
 
+_LIST_STATUS_KEYWORDS = ("done", "archived")
+
+
 def _parse_list_or_digest_args(arg: str) -> tuple[str, str | None]:
-    """Parse /mem list|digest args: the literal "done" (list only) selects
-    the done bucket, and tag:<word> scopes results to that exact tag."""
+    """Parse /mem list|digest args: the literal "done"/"archived" (list
+    only) selects that bucket, and tag:<word> scopes results to that exact
+    tag."""
     status = "active"
     tag: str | None = None
     for token in arg.split():
-        if token.lower() == "done":
-            status = "done"
+        lowered = token.lower()
+        if lowered in _LIST_STATUS_KEYWORDS:
+            status = lowered
             continue
         match = _TAG_ARG_TOKEN_RE.match(token)
         if match:
@@ -169,8 +174,8 @@ class MemoryWriteSkill:
             return SkillResult(
                 self.name,
                 "Add the content to save after /mem, or use:\n"
-                "/mem list [done] [tag:<word>]\n/mem done <id>\n/mem rm <id>\n"
-                "/mem digest [tag:<word>]\n"
+                "/mem list [done|archived] [tag:<word>]\n/mem done <id>\n/mem rm <id>\n"
+                "/mem digest [tag:<word>]\n/mem archive-stale\n"
                 "/mem snooze <id> <3d|1w|YYYY-MM-DD>\n/mem edit <id> <new text>\n"
                 "Add due:YYYY-MM-DD and/or tag:<word> anywhere in the text to save them.",
             )
@@ -185,6 +190,8 @@ class MemoryWriteSkill:
             return self._remove(rest.strip())
         if keyword == "digest":
             return self._digest(rest.strip())
+        if keyword == "archive-stale":
+            return self._archive_stale()
         if keyword == "snooze":
             return self._snooze(rest.strip())
         if keyword == "edit":
@@ -276,17 +283,16 @@ class MemoryWriteSkill:
             filters["tags"] = tag
         hits = self.qdrant.scroll_by_filters(self.settings.tracker_collection, filters, limit=200)
         tag_suffix = f' tagged "{tag}"' if tag else ""
+        status_word = {"done": "completed", "archived": "archived"}.get(status, "active")
         if not hits:
-            return SkillResult(
-                self.name, f"No {'completed' if status == 'done' else 'active'} memory items{tag_suffix}."
-            )
+            return SkillResult(self.name, f"No {status_word} memory items{tag_suffix}.")
 
         def sort_key(hit: dict) -> tuple:
             payload = hit.get("payload") or {}
             return (payload.get("due") or "9999-99-99", -(payload.get("created_at") or 0))
 
         hits.sort(key=sort_key)
-        label = "Completed" if status == "done" else "Active"
+        label = {"done": "Completed", "archived": "Archived"}.get(status, "Active")
         lines = [f"{label} memory{tag_suffix} ({len(hits)}):"]
         for hit in hits[:50]:
             payload = hit.get("payload") or {}
@@ -462,6 +468,52 @@ class MemoryWriteSkill:
             suffix = f" (due {due})" if due else ""
             lines.append(f"#{short_id} {text}{suffix}")
         return "\n".join(lines)
+
+    def _archive_stale(self) -> SkillResult:
+        """Fully-automatic archival sweep: any active, undated item
+        untouched for OPENCLAW_MEM_DIGEST_STALE_DAYS+ -- the exact same
+        staleness test /mem digest already uses -- is archived. Meant to
+        run on its own cron schedule; see docs/TRACKER_MEMORY.md.
+
+        Archived items drop out of the default /mem list and out of
+        /mem digest's stale section (both scope to status=active), but
+        stay in /mem list archived and remain findable by /rag (plain
+        semantic search has no status filter). There is no unarchive --
+        this is a one-way sweep, matching the digest reminder cadence it
+        replaces once an item has gone stale long enough.
+        """
+        hits = self.qdrant.scroll_by_filters(
+            self.settings.tracker_collection,
+            {"kind": "tracker_memory", "status": "active"},
+            limit=500,
+        )
+        stale_cutoff = time.time() - self.settings.mem_digest_stale_days * 86400
+
+        stale: list[dict] = []
+        for hit in hits:
+            payload = hit.get("payload") or {}
+            if payload.get("due"):
+                continue
+            updated_at = payload.get("updated_at") or payload.get("created_at") or 0
+            if updated_at > stale_cutoff:
+                continue
+            stale.append(hit)
+
+        if not stale:
+            return SkillResult(self.name, "No stale items to archive.", suppress_if_routine=True)
+
+        now = int(time.time())
+        for hit in stale:
+            self.qdrant.set_payload(
+                self.settings.tracker_collection, hit["id"], {"status": "archived", "archived_at": now}
+            )
+        lines = [f"Archived {len(stale)} stale item(s):"]
+        for hit in stale:
+            payload = hit.get("payload") or {}
+            short_id = payload.get("short_id", "?")
+            text = str(payload.get("text") or "").strip()
+            lines.append(f"#{short_id} {text}")
+        return SkillResult(self.name, "\n".join(lines))
 
     @staticmethod
     def _parse_due(value) -> date | None:

@@ -500,13 +500,16 @@ Expected work:
 Goal: make OpenClaw more useful as a long-running personal AI system.
 
 **Done:** `/mem` metadata parsing (`due:YYYY-MM-DD`, `tag:<word>`), explicit
-user review (`/mem list [done] [tag:<word>]`), todo completion / removal
-(`/mem done <id>`, `/mem rm <id>`), editing (`/mem edit <id> <new text>`),
-snoozing (`/mem snooze <id> <3d|1w|YYYY-MM-DD>`, also reactivates a done
-item), and **proactive reminders** (`/mem digest [tag:<word>]`, wired to
-cron via `/cron add daily 08:00 Memory digest :: /mem digest`). Tag
-scoping extends to semantic search too: `/rag tag:<word> <question>`.
-See `docs/TRACKER_MEMORY.md`.
+user review (`/mem list [done|archived] [tag:<word>]`), todo completion /
+removal (`/mem done <id>`, `/mem rm <id>`), editing (`/mem edit <id> <new
+text>`), snoozing (`/mem snooze <id> <3d|1w|YYYY-MM-DD>`, also reactivates
+a done item), **proactive reminders** (`/mem digest [tag:<word>]`, wired to
+cron via `/cron add daily 08:00 Memory digest :: /mem digest`), and
+**memory aging/archival** (`/mem archive-stale`, a fully-automatic sweep
+using the same staleness test the digest already computes; no unarchive by
+design -- see "Archival" in `docs/TRACKER_MEMORY.md`). Tag *and* date
+scoping extend to semantic search too: `/rag tag:<word>` and `/rag since:`/
+`before:`. See `docs/TRACKER_MEMORY.md`.
 
 `/mem digest` didn't need a new cron job type -- it's a normal dynamic job
 whose prompt happens to be `/mem digest`. What it did need: a generic
@@ -525,9 +528,6 @@ Candidate work still open:
   `/rag tag:<word>`, and `/rag since:`/`before:` (all shipped v1.9) cover
   tag and date scoping; remaining work is filtering *within* a `/rag`
   query by source.
-- Memory aging / archival for items with no `due` that have sat untouched a
-  long time.
-
 ## Future: Runtime Lifecycle and Resource Control
 
 Goal: keep OpenClaw useful even when the main model engine is stopped for other

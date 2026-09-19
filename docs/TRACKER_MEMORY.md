@@ -23,10 +23,13 @@ List active items, soonest due date first, undated items last.
 /mem list done
 List completed items.
 
+/mem list archived
+List archived items (see /mem archive-stale below).
+
 /mem list tag:<word>
 /mem list done tag:<word>
-Scope the list to items carrying that exact tag. Combine with "done" in
-either order.
+Scope the list to items carrying that exact tag. Combine with "done" or
+"archived" in either order.
 
 Example: /mem list tag:work
 Example: /mem list done tag:health
@@ -66,6 +69,17 @@ Scope the digest to one tag -- handy for a per-topic cron job so a
 "work" reminder and a "home" reminder don't get mixed into one push.
 
 Example: /mem digest tag:work
+
+/mem archive-stale
+Fully-automatic archival sweep: any active, undated item untouched for
+OPENCLAW_MEM_DIGEST_STALE_DAYS+ (the same staleness test /mem digest
+already uses) is archived -- moved out of the default list and out of
+digest's stale section, but still visible via /mem list archived and
+still findable by plain /rag (no status filter there). There is no
+unarchive; this is meant to run on its own cron schedule, not typed
+interactively (though it works fine either way).
+
+Example: /cron add weekly mon 03:00 Archive stale memory :: /mem archive-stale
 ```
 
 `<id>` is the short ID shown by `/mem list` and after every `/mem` save (the
@@ -116,9 +130,13 @@ Example: `/rag since:2026-09-01 what have I saved this month?`
 
 ## Reserved sub-commands
 
-`list`, `done`, `rm` / `delete`, `snooze`, `edit`, and `digest` are reserved
-only as the exact first whitespace-delimited word of the content. `/mem
-listen to the new episode` still saves normally -- `listen` is not `list`.
+`list`, `done`, `rm` / `delete`, `snooze`, `edit`, `digest`, and
+`archive-stale` are reserved only as the exact first whitespace-delimited
+word of the content. `/mem listen to the new episode` still saves
+normally -- `listen` is not `list`.
+
+`archived` inside `/mem list ...` is a status keyword, same as `done` --
+`/mem list archived` lists archived items instead of active ones.
 
 `tag:<word>` inside `/mem list ...` or `/mem digest ...` is a scope filter,
 not new content -- it matches a tag exactly, using Qdrant's list-payload
@@ -136,10 +154,11 @@ same collection `/mem` always used. New payload fields on top of the existing
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `short_id` | string | first 8 hex chars of the point ID; how `/mem done` / `/mem rm` address an item |
-| `status` | `"active"` \| `"done"` | |
+| `status` | `"active"` \| `"done"` \| `"archived"` | |
 | `due` | `"YYYY-MM-DD"` or absent | |
 | `tags` | list of strings, or absent | |
 | `updated_at` | epoch seconds | set on write and on `/mem done` |
+| `archived_at` | epoch seconds, or absent | set by `/mem archive-stale` |
 
 `/mem list` / `done` / `rm` / `snooze` never touch the vector -- listing is a
 payload `scroll` filter (`kind=tracker_memory`, `status=...`), done and
@@ -194,6 +213,25 @@ increments), but does **not** push a Telegram message -- so a day with
 nothing due or stale is silent, not a "nothing to report" ping every
 morning.
 
+### Archival
+
+`/mem digest`'s **Stale** section reuses the exact same test
+`/mem archive-stale` runs (no `due`, `updated_at`/`created_at` older than
+`OPENCLAW_MEM_DIGEST_STALE_DAYS`) -- one reminds, the other acts. Wire the
+sweep on its own (coarser) cron schedule, independent of the daily digest:
+
+```text
+/cron add weekly mon 03:00 Archive stale memory :: /mem archive-stale
+```
+
+Once an item is archived it stops appearing in `/mem digest`'s Stale
+section too (digest only scans `status=active`), so the two don't double
+up -- a stale item gets reminded about on the digest's cadence until the
+next archive sweep quietly retires it. There is intentionally no
+`/mem unarchive`: archiving is a one-way move out of the everyday view,
+not a delete -- the item is still in `/mem list archived` and still
+findable by plain `/rag` (which has no status filter).
+
 ### Data model addendum
 
 | Field | Type | Meaning |
@@ -212,9 +250,12 @@ cooldown -- see `docs/FUTURE_TODO.md` "Personal Memory Deepening".
   invalid input), `MemoryEditTest` (text replacement, re-embedding,
   preserving status/created_at, due/tag override vs. preserve), tag-filter
   tests on `/mem list` and `/mem digest` (including the `FakeQdrant`
-  list-payload match semantics), and `MemoryDigestTest` (overdue/due-soon/
-  stale categorization, cooldown, suppression). Unit-level with an
-  in-memory fake Qdrant.
+  list-payload match semantics), `MemoryDigestTest` (overdue/due-soon/
+  stale categorization, cooldown, suppression), and `MemoryArchiveStaleTest`
+  (stale item archived, items with a `due` or recently-touched items never
+  touched, an already-`done` item left alone, archived items excluded from
+  the default list and digest but visible via `/mem list archived`).
+  Unit-level with an in-memory fake Qdrant.
 - `tests/test_qdrant_client.py` -- the new `scroll_by_filters` / `set_payload`
   / `delete_points` / `upsert_text(point_id=...)` methods, and `search`'s
   optional `filters` param and `since`/`before` range params (omitted,
@@ -230,10 +271,13 @@ cooldown -- see `docs/FUTURE_TODO.md` "Personal Memory Deepening".
   searched with.
 - `tests/test_scenarios_integration.py::TrackerMemoryManagementScenario` --
   the full write/list/done/rm round trip, the digest overdue/due-soon
-  categorization, and `test_list_and_digest_tag_filter_against_real_qdrant`
+  categorization, `test_list_and_digest_tag_filter_against_real_qdrant`
   (proves Qdrant's list-payload match -- "the tag is one of the item's
-  tags" -- against a real server, not just the fake), against a real
-  Qdrant (L2).
+  tags" -- against a real server, not just the fake), and
+  `test_archive_stale_sweep_against_real_qdrant` (a backdated item gets
+  archived, drops out of `/mem list` and shows in `/mem list archived`,
+  and a second sweep finds nothing left to do), against a real Qdrant
+  (L2).
 - `tests/test_scenarios_integration.py::KnowledgeAndMemoryScenario::
   test_rag_tag_prefix_scopes_to_tracker_items_with_that_tag_against_real_qdrant`
   -- two differently-tagged `/mem` items, `/rag tag:work ...` and

@@ -203,7 +203,7 @@ Use `/help` in Telegram for the mobile command card.
 Main commands:
 
 ```text
-/mem      capture, list, edit, snooze, or complete personal memory
+/mem      capture, list, edit, snooze, complete, or archive personal memory
 /rag      retrieve memory or document context, optionally scoped by #<category>, tag:<word>, or since:/before:
 /cat      manage Category RAG knowledge bases (list, rename, merge)
 /doc      import public Google Docs
@@ -257,6 +257,7 @@ Examples:
 /mem snooze <id> 3d
 /mem edit <id> Check the cron dashboard next sprint instead
 /mem digest
+/mem archive-stale
 /rag What OpenClaw settings did I ask you to remember?
 /rag tag:ops What did I save about the cron dashboard?
 /rag since:2026-09-01 What have I saved this month?
@@ -264,9 +265,9 @@ Examples:
 ```
 
 See `docs/TRACKER_MEMORY.md` for the full `/mem` command set (`list` / `done`
-/ `rm` / `edit` / `snooze` / `digest`, `due:` / `tag:` metadata, and the
-`tag:<word>` / `since:`/`before:` scope filters shared with `/rag`), and
-`docs/CATEGORY_RAG.md` for `/rag #<category>`.
+/ `rm` / `edit` / `snooze` / `digest` / `archive-stale`, `due:` / `tag:`
+metadata, and the `tag:<word>` / `since:`/`before:` scope filters shared
+with `/rag`), and `docs/CATEGORY_RAG.md` for `/rag #<category>`.
 
 ## Document Intake
 

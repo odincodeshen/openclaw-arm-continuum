@@ -108,9 +108,9 @@ and/or tag:<word> anywhere in the text to attach them.
 Example: /mem OpenClaw preference: use /mem for memory writes.
 Example: /mem renew passport due:2026-12-01 tag:admin
 
-/mem list [done] [tag:<word>]
-List active memory items (or completed ones), soonest due date first.
-Add tag:<word> to scope the list to that exact tag.
+/mem list [done|archived] [tag:<word>]
+List active memory items (or completed/archived ones), soonest due date
+first. Add tag:<word> to scope the list to that exact tag.
 
 /mem done <id>
 Mark a memory item done. /mem rm <id> deletes it. Both take the short
@@ -130,6 +130,12 @@ items. Add tag:<word> to scope it to one topic. Add a daily cron job
 to get this pushed automatically:
 Example: /cron add daily 08:00 Memory digest :: /mem digest
 A day with nothing due or stale stays silent -- it is not pushed.
+
+/mem archive-stale
+Fully-automatic sweep: archives active, undated items that have gone
+stale (the same test /mem digest uses), out of the default list. No
+unarchive -- see /mem list archived. Meant for a weekly cron job:
+Example: /cron add weekly mon 03:00 Archive stale memory :: /mem archive-stale
 
 /rag <question>
 Query local memory and the document knowledge base.

@@ -184,7 +184,7 @@ curl -I http://127.0.0.1:18789/
 主要指令：
 
 ```text
-/mem      寫入、列出、編輯、延期或完成個人記憶
+/mem      寫入、列出、編輯、延期、完成或歸檔個人記憶
 /rag      查詢本地記憶或文件，可用 #<分類>、tag:<字> 或 since:/before: 縮小範圍
 /cat      管理分類 RAG 知識庫（列出、改名、合併）
 /doc      匯入公開 Google Doc
@@ -235,16 +235,17 @@ Qdrant 預設使用兩個 collection。profile 專屬 `.env` 可以覆寫 collec
 /mem snooze <id> 3d
 /mem edit <id> 改成下個 sprint 再檢查
 /mem digest
+/mem archive-stale
 /rag 最近記住了哪些 OpenClaw 設定？
 /rag tag:ops 之前存了什麼跟 cron dashboard 有關的？
 /rag since:2026-09-01 這個月存了什麼？
 /rag #<分類> 這份架構文件的重點是什麼？
 ```
 
-`/mem list` / `done` / `rm` / `edit` / `snooze` / `digest` 完整指令、
-`due:` / `tag:` metadata 語法、以及 `/rag` 共用的 `tag:<字>` / `since:`/`before:`
-範圍過濾，見 `docs/TRACKER_MEMORY.md`；`/rag #<分類>` 見
-`docs/CATEGORY_RAG.md`。
+`/mem list` / `done` / `rm` / `edit` / `snooze` / `digest` / `archive-stale`
+完整指令、`due:` / `tag:` metadata 語法、以及 `/rag` 共用的 `tag:<字>` /
+`since:`/`before:` 範圍過濾，見 `docs/TRACKER_MEMORY.md`；`/rag #<分類>`
+見 `docs/CATEGORY_RAG.md`。
 
 ## 文件流程
 

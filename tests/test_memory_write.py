@@ -501,5 +501,92 @@ class MemoryDigestTest(unittest.TestCase):
         self.assertLess(answer.index("Due in the next"), answer.index("Stale"))
 
 
+class MemoryArchiveStaleTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.settings = build_settings(
+            tracker_collection="tracker_coll",
+            mem_digest_due_soon_days=7,
+            mem_digest_stale_days=14,
+            mem_digest_remind_cooldown_days=7,
+        )
+        self.qdrant = FakeQdrant()
+        self.skill = MemoryWriteSkill(self.settings, {}, FakeEmbeddings(), self.qdrant)
+
+    def _seed(self, text: str, **overrides) -> str:
+        point_id = f"seed-{len(self.qdrant.collections.get('tracker_coll', {}))}"
+        payload = {
+            "text": text,
+            "source": "telegram",
+            "kind": "tracker_memory",
+            "status": "active",
+            "short_id": point_id,
+            "created_at": int(time.time()),
+            "updated_at": int(time.time()),
+        }
+        payload.update(overrides)
+        self.qdrant.collections.setdefault("tracker_coll", {})[point_id] = {
+            "id": point_id,
+            "payload": payload,
+            "vector": [0.0],
+        }
+        return point_id
+
+    def test_nothing_stale_is_a_suppressed_no_op(self) -> None:
+        self._seed("recent undated item")
+        result = self.skill.run("/mem archive-stale")
+        self.assertTrue(result.suppress_if_routine)
+        self.assertIn("No stale items", result.answer)
+
+    def test_stale_undated_item_is_archived(self) -> None:
+        point_id = self._seed("old idea", updated_at=int(time.time()) - 30 * 86400)
+        result = self.skill.run("/mem archive-stale")
+        self.assertFalse(result.suppress_if_routine)
+        self.assertIn("Archived 1 stale item(s):", result.answer)
+        self.assertIn("old idea", result.answer)
+        payload = self.qdrant.collections["tracker_coll"][point_id]["payload"]
+        self.assertEqual(payload["status"], "archived")
+        self.assertGreater(payload.get("archived_at", 0), 0)
+
+    def test_item_with_due_is_never_archived_even_if_old(self) -> None:
+        point_id = self._seed(
+            "has a due date", due="2000-01-01", updated_at=int(time.time()) - 90 * 86400
+        )
+        self.skill.run("/mem archive-stale")
+        payload = self.qdrant.collections["tracker_coll"][point_id]["payload"]
+        self.assertEqual(payload["status"], "active")
+
+    def test_recently_touched_undated_item_is_not_archived(self) -> None:
+        point_id = self._seed("fresh note")
+        self.skill.run("/mem archive-stale")
+        payload = self.qdrant.collections["tracker_coll"][point_id]["payload"]
+        self.assertEqual(payload["status"], "active")
+
+    def test_already_done_item_is_not_touched(self) -> None:
+        point_id = self._seed(
+            "finished task", status="done", updated_at=int(time.time()) - 30 * 86400
+        )
+        self.skill.run("/mem archive-stale")
+        payload = self.qdrant.collections["tracker_coll"][point_id]["payload"]
+        self.assertEqual(payload["status"], "done")
+
+    def test_archived_item_is_excluded_from_default_list_and_digest(self) -> None:
+        self._seed("old idea", updated_at=int(time.time()) - 30 * 86400)
+        self.skill.run("/mem archive-stale")
+
+        active_list = self.skill.run("/mem list")
+        self.assertIn("No active memory items", active_list.answer)
+
+        digest = self.skill.run("/mem digest")
+        self.assertTrue(digest.suppress_if_routine)
+
+    def test_archived_item_appears_in_list_archived(self) -> None:
+        self._seed("old idea", updated_at=int(time.time()) - 30 * 86400)
+        self.skill.run("/mem archive-stale")
+
+        archived_list = self.skill.run("/mem list archived")
+        self.assertIn("Archived memory (1):", archived_list.answer)
+        self.assertIn("old idea", archived_list.answer)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -13,6 +13,7 @@ the in-process fake server and always run.
 import json
 import os
 import tempfile
+import time
 import unittest
 import urllib.request
 import uuid
@@ -316,6 +317,27 @@ class TrackerMemoryManagementScenario(QdrantScenarioBase):
         home_digest = self.writer.run("/mem digest tag:home")
         self.assertTrue(home_digest.suppress_if_routine)
         self.assertIn('tagged "home"', home_digest.answer)
+
+    def test_archive_stale_sweep_against_real_qdrant(self) -> None:
+        self.writer.run("/mem old idea that never got done")
+        hits = self.qdrant.scroll_by_filters(self.tracker, {"kind": "tracker_memory"}, limit=50)
+        point_id = next(h["id"] for h in hits if "old idea" in h["payload"]["text"])
+        backdated = int(time.time()) - 30 * 86400
+        self.qdrant.set_payload(self.tracker, point_id, {"updated_at": backdated})
+
+        result = self.writer.run("/mem archive-stale")
+        self.assertFalse(result.suppress_if_routine)
+        self.assertIn("old idea", result.answer)
+
+        active_after = self.writer.run("/mem list").answer
+        self.assertNotIn("old idea", active_after)
+
+        archived_after = self.writer.run("/mem list archived").answer
+        self.assertIn("old idea", archived_after)
+
+        # already-archived, so a second sweep finds nothing left to do
+        second_sweep = self.writer.run("/mem archive-stale")
+        self.assertTrue(second_sweep.suppress_if_routine)
 
     def test_delete_collection_against_real_qdrant(self) -> None:
         # Backs /cat merge's cleanup step: prove QdrantClient.delete_collection
