@@ -1,7 +1,7 @@
 # Future TODO List
 
 This document tracks candidate work items for `openclaw-arm-continuum`.
-Current release: **v1.8**.
+Current release: **v1.9**.
 
 The runtime is intentionally stable and text-first. The items below are
 future-facing and should be implemented incrementally without breaking the
@@ -50,6 +50,22 @@ v1.2 baseline. What has actually shipped since then:
   `SkillResult.suppress_if_routine` signal so cron skips the Telegram push
   (but still records the run) when there's nothing to report. See
   `docs/TRACKER_MEMORY.md`.
+- **v1.9 — chat rolling summary, category self-service, tracker CRUD.**
+  Conversation memory folds overflowed turns into a running LLM-generated
+  summary instead of dropping them, plus `/keep <fact>` to pin facts that
+  always ride along (`OPENCLAW_CONVERSATION_SUMMARY_*`,
+  `OPENCLAW_CONVERSATION_KEEP_MAX_ITEMS`); see `docs/CONVERSATION_MEMORY.md`.
+  `/cat rename <old> <new>` (instant, registry-only) and `/cat merge <src>
+  <dst>` (moves files, lets the memory watcher re-index them) give
+  self-service Category RAG cleanup without shell access; see
+  `docs/CATEGORY_RAG.md`. The two-step reply flow for a pending category
+  now strips a leading `#`/`＃` before validating, fixing a case where a
+  habitually-prefixed reply created a stray, fragmented category instead
+  of joining the intended one. `/mem` rounds out to full CRUD: `/mem snooze
+  <id> <3d|1w|YYYY-MM-DD>` pushes a due date out (also works on undated
+  items, reactivates a done one) and `/mem edit <id> <new text>` replaces
+  an item's text and re-embeds it without losing its short ID or history;
+  see `docs/TRACKER_MEMORY.md`.
 
 Still open from the original list, re-baselined against v1.6:
 
