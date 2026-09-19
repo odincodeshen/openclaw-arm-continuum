@@ -63,3 +63,6 @@ scripts/*.exp
 /*-test.md
 /協作觀察.md
 /下一步功能建議.md
+
+# Contains a real leaked identifier and commit hashes -- never git-tracked.
+/privacy-leak-fix-runbook.md
