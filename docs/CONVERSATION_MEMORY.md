@@ -16,6 +16,25 @@ older context is compressed, not lost. `/keep` lets you pin a fact that stays
 in context regardless of window size, for something you don't want compressed
 away or forgotten mid-conversation.
 
+### When exactly does "the window is full" happen?
+
+Two separate limits, and only one of them ever triggers a summary:
+
+- **Turn count** (`OPENCLAW_CONVERSATION_HISTORY_TURNS`, default `6`
+  exchanges = 12 stored messages). Checked every time a reply is recorded:
+  once the stored count exceeds 12, the oldest exchange is folded into the
+  summary and dropped from raw storage. **This is the only thing that
+  actually folds anything into the summary.** Example: on exchange 7, the
+  store would hold 14 messages; the oldest exchange (exchange 1) gets
+  folded in, leaving exchanges 2-7 (12 messages) in raw storage.
+- **Character budget** (`OPENCLAW_CONVERSATION_CONTEXT_CHARS`, default
+  `6000`). Checked only when building context for *this* reply: if the
+  (already turn-limited) window's total content exceeds the budget, older
+  exchanges are excluded from *this* reply's context, oldest first. They
+  are **not** folded into the summary and **not** deleted -- they're still
+  in the stored file, and get reconsidered on the next reply, until the
+  turn-count limit above eventually rolls them out for real.
+
 This applies **only to plain chat** (the `ChatAgent`). Explicit commands --
 `/rag`, `/search`, `/mem`, `/doc`, `/cron`, `/review` -- are always
 single-shot and ignore conversation history. Nothing said in chat is written
