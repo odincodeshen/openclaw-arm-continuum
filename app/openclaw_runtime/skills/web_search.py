@@ -8,6 +8,12 @@ from openclaw_runtime.llm_client import LlmClient
 from openclaw_runtime.skills.base import SkillResult
 
 
+# A pasted link, anywhere in the message -- e.g. "https://example.com what
+# does this say?". Matched so the scraper navigates straight to it instead
+# of searching for the URL text as a query (see _run_scraper).
+_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+
+
 class WebSearchSkill:
     name = "web_search"
 
@@ -55,11 +61,20 @@ class WebSearchSkill:
         cleaned = query.replace("/search", "", 1).replace("web:", "", 1).strip()
         if not cleaned:
             return ""
+        # A pasted link (with or without a question alongside it) should be
+        # opened directly, not searched for as literal query text -- the
+        # scraper's /scrape only navigates straight to a URL when it's sent
+        # as `url`, never when it arrives as part of `query`.
+        url_match = _URL_RE.search(cleaned)
+        scrape_payload = (
+            {"url": url_match.group(0)} if url_match else {"query": cleaned}
+        )
+        scrape_payload["limit"] = min(self.limit, self.settings.scraper_limit)
         try:
             response = request_json(
                 "POST",
                 f"{self.settings.scraper_base_url}/scrape",
-                {"query": cleaned, "limit": min(self.limit, self.settings.scraper_limit)},
+                scrape_payload,
                 timeout=max(self.settings.web_timeout, 30),
             )
         except Exception as exc:
