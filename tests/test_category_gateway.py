@@ -214,6 +214,99 @@ class CategoryIngestTest(CategoryGatewayTestBase):
         self.assertIn("image_path", sidecar_data)
         self.assertTrue((self.inbox / "categories" / entry["slug"] / "media" / "rack.jpg").exists())
 
+    def test_ingest_text_writes_content_and_sidecar_with_no_source_file(self) -> None:
+        entry = categories.upsert_registry_entry(self.settings, "影片筆記")
+        doc = gateway.ingest_text_into_category(
+            "This is a video summary with several paragraphs of content.",
+            entry,
+            note="from a script",
+            source_label="telegram-reply",
+        )
+
+        self.assertTrue(doc.exists())
+        self.assertEqual(doc.parent, self.inbox / "categories" / entry["slug"])
+        body = doc.read_text(encoding="utf-8")
+        self.assertIn("This is a video summary", body)
+        self.assertIn("from a script", body)
+
+        import json as _json
+
+        sidecar = _json.loads(doc.with_name(doc.name + ".meta.json").read_text(encoding="utf-8"))
+        self.assertEqual(sidecar["category"], "影片筆記")
+        self.assertEqual(sidecar["origin"], "telegram_reply")
+
+
+class ReplyCategoryMessageTest(CategoryGatewayTestBase):
+    def _message(self, own_text: str, replied_text: str | None, *, replied_caption: str | None = None) -> dict:
+        reply_to: dict = {}
+        if replied_text is not None:
+            reply_to["text"] = replied_text
+        if replied_caption is not None:
+            reply_to["caption"] = replied_caption
+        return {
+            "chat": {"id": 1},
+            "text": own_text,
+            "reply_to_message": reply_to if reply_to else None,
+        }
+
+    def test_reply_with_hash_category_files_the_replied_to_text(self) -> None:
+        message = self._message("#trip", "Hotel: Cambridge Holiday Inn, check-in Sept 14, itinerary 12345.")
+        handled = gateway.handle_reply_category_message(1, message)
+
+        self.assertTrue(handled)
+        entry = categories.resolve_category(self.settings, "trip")
+        self.assertTrue(entry["known"])
+        doc = next((self.inbox / "categories" / entry["slug"]).glob("*.md"))
+        self.assertIn("Cambridge Holiday Inn", doc.read_text(encoding="utf-8"))
+        self.assertTrue(any('"trip"' in t for _, t in self.sent))
+
+    def test_reply_with_bracketed_multi_word_category_and_note(self) -> None:
+        message = self._message("#[Work Notes] from the script", "Video summary content here.")
+        gateway.handle_reply_category_message(1, message)
+        entry = categories.resolve_category(self.settings, "Work Notes")
+        self.assertTrue(entry["known"])
+        doc = next((self.inbox / "categories" / entry["slug"]).glob("*.md"))
+        body = doc.read_text(encoding="utf-8")
+        self.assertIn("Video summary content here.", body)
+        self.assertIn("from the script", body)
+
+    def test_reply_without_hash_prefix_is_not_handled(self) -> None:
+        message = self._message("just a plain reply, no category", "some earlier message")
+        self.assertFalse(gateway.handle_reply_category_message(1, message))
+        self.assertEqual(self.sent, [])
+
+    def test_message_with_no_reply_is_not_handled(self) -> None:
+        message = self._message("#trip", None)
+        self.assertFalse(gateway.handle_reply_category_message(1, message))
+
+    def test_reply_to_a_message_with_no_text_is_not_handled(self) -> None:
+        # e.g. replying to a photo message that has no text/caption of its own.
+        message = {
+            "chat": {"id": 1},
+            "text": "#trip",
+            "reply_to_message": {"photo": [{"file_id": "f1"}]},
+        }
+        self.assertFalse(gateway.handle_reply_category_message(1, message))
+
+    def test_reply_uses_captioned_replied_message_too(self) -> None:
+        message = self._message("#trip", None, replied_caption="A caption-only replied message.")
+        handled = gateway.handle_reply_category_message(1, message)
+        self.assertTrue(handled)
+
+    def test_invalid_category_name_reports_error_and_does_not_ingest(self) -> None:
+        message = self._message("#" + "x" * 100, "some content")
+        handled = gateway.handle_reply_category_message(1, message)
+        self.assertTrue(handled)
+        self.assertTrue(any("will not work" in t for _, t in self.sent))
+
+    def test_disabled_category_rag_is_not_handled(self) -> None:
+        import dataclasses
+
+        self.settings = dataclasses.replace(self.settings, category_rag_enabled=False)
+        gateway.settings = self.settings
+        message = self._message("#trip", "some content")
+        self.assertFalse(gateway.handle_reply_category_message(1, message))
+
 
 class ProcessImageMessageTest(CategoryGatewayTestBase):
     def setUp(self) -> None:

@@ -40,6 +40,26 @@ not attached as a note. If you want a note, use the caption shortcut instead.
   (default 10 min), a waiting document is filed into the general knowledge
   base automatically.
 
+### 3. Reply to any text message with `#<name>`
+
+Reply to **any** text message -- your own, another bot's, or one posted
+by an external script (e.g. a Google Apps Script that calls
+`sendMessage` with the bot's own token to post a video summary) -- with
+`#<name>` and the *replied-to* message's text gets filed into that
+category. No file upload needed; the text itself becomes the document.
+
+```
+(some earlier message with the content you want saved)
+you (replying to it): #trip
+```
+
+This exists specifically because a bot can never receive its own
+outgoing messages back as input -- Telegram's Bot API only delivers
+messages sent *to* the bot as updates, never an echo of what the bot
+itself sent. Replying is the way to pull a specific message in on
+demand. `#[multi word]` and a trailing note work the same as the caption
+shortcut above.
+
 New category names are created on first use. Names are normalized
 (whitespace collapsed, case-insensitive) and mapped to a stable collection
 id such as `oc_cat_work-notes_1a2b3c4d`.

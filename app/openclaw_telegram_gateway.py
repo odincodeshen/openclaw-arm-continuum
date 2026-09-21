@@ -399,6 +399,44 @@ def ingest_document_into_category(
     return target
 
 
+def ingest_text_into_category(text: str, entry: dict, note: str = "", source_label: str = "telegram reply") -> Path:
+    """File a plain-text item with no source file -- e.g. a replied-to
+    Telegram message -- directly into its category inbox folder as
+    markdown, same shape as an image's description document."""
+    directory = category_dir(entry["slug"])
+    target_name = sanitize_filename(f"{timestamp()}-{source_label}.md", f"{timestamp()}-note.md")
+    target = unique_path(directory, target_name)
+    target.write_text(
+        "\n".join(
+            [
+                f"# {source_label}",
+                "",
+                f"Category: {entry['display']}",
+                f"Source: {source_label}",
+                f"Indexed: {datetime.now(timezone.utc).replace(microsecond=0).isoformat()}",
+                f"Note: {note}" if note else "",
+                "",
+                "## Content",
+                "",
+                text,
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    _write_meta_sidecar(
+        target,
+        {
+            "category": entry["display"],
+            "category_slug": entry["slug"],
+            "origin": "telegram_reply",
+            "caption_note": note,
+            "original_file_name": source_label,
+        },
+    )
+    return target
+
+
 def ingest_image_into_category(
     chat_id: int, image_path: Path, entry: dict, note: str = "", original_name: str = ""
 ) -> Path:
@@ -538,6 +576,39 @@ def resolve_pending_with_category(chat_id: int, category_text: str) -> bool:
         daemon=True,
     )
     worker.start()
+    return True
+
+
+def handle_reply_category_message(chat_id: int, message: dict) -> bool:
+    """Reply to any text message with #<category> to file that message's
+    text into a category -- e.g. an external script that posts a video
+    summary by calling sendMessage with the bot's own token. Telegram never
+    delivers a bot's own outgoing messages back to it as an update, so
+    there is no way to treat that push itself as input; replying is the
+    lightweight way to pull a specific message in on demand instead."""
+    if not settings.category_rag_enabled:
+        return False
+    reply_to = message.get("reply_to_message") or {}
+    replied_text = (reply_to.get("text") or reply_to.get("caption") or "").strip()
+    if not replied_text:
+        return False
+    own_text = (message.get("text") or "").strip()
+    category_name, note = parse_category_caption(own_text)
+    if not category_name:
+        return False
+    try:
+        display = validate_category_name(settings, category_name)
+    except ValueError as exc:
+        send_message(chat_id, f"That category name will not work: {exc}")
+        return True
+    entry = upsert_registry_entry(settings, display)
+    doc = ingest_text_into_category(replied_text, entry, note=note)
+    send_message(
+        chat_id,
+        f'Filed the replied-to message into category "{entry["display"]}": {doc.name}\n'
+        f'Give the indexer ~10 seconds, then query with /rag #{entry["display"]}.',
+    )
+    log(f"[category] reply ingest chat_id={chat_id} slug={entry['slug']}")
     return True
 
 
@@ -695,6 +766,8 @@ def category_command_text() -> str:
         "Upload a photo or document, then either:\n"
         "- put the category in the caption as #<name> (e.g. #工作筆記), or\n"
         "- send the file first, then reply with the category name.\n\n"
+        "Or reply to ANY text message with #<name> to file that message's "
+        "text into a category -- no file upload needed.\n\n"
         "/cat list   Show categories and their document counts\n"
         "/cat rename <old> <new>   Rename a category (its files/index are untouched)\n"
         "/cat merge <source> <target>   Move everything from source into target, "
@@ -1534,6 +1607,14 @@ def handle_message(message: dict) -> None:
     except Exception as exc:
         log(f"[telegram] file handling error chat_id={chat_id}: {exc}")
         send_message(chat_id, f"OpenClaw could not save this Telegram file: {exc}")
+        return
+
+    try:
+        if handle_reply_category_message(chat_id, message):
+            return
+    except Exception as exc:
+        log(f"[category] reply ingest error chat_id={chat_id}: {exc}")
+        send_message(chat_id, f"OpenClaw could not file that reply into a category: {exc}")
         return
 
     if not text:
