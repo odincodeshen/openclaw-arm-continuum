@@ -99,6 +99,18 @@ SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
 PENDING_CATEGORY_LOCK = threading.Lock()
 PENDING_CATEGORY: dict[int, dict] = {}
 
+# (chat_id, media_group_id) -> {"paths": [Path], "caption": str, "timer": Timer}
+# Telegram delivers a multi-photo album as separate messages that share one
+# media_group_id, but attaches the caption to only ONE of them. Without this
+# buffer, every photo would be routed by its OWN (mostly empty) caption --
+# fragmenting one #trip album across a real "trip" category and a garbage
+# category made from whatever text arrived next. Each arrival (re)starts a
+# short debounce timer; once no sibling shows up for
+# media_group_flush_seconds, the whole group is routed together using
+# whichever caption the group actually carried.
+MEDIA_GROUP_LOCK = threading.Lock()
+MEDIA_GROUP_BUFFER: dict[tuple[int, str], dict] = {}
+
 HELP_TEXT = f"""OpenClaw Arm Continuum quick reference
 
 Common commands
@@ -561,6 +573,70 @@ def _route_image_to_category(
     )
 
 
+def _ingest_caption_category_batch(
+    chat_id: int, paths: list[Path], kind: str, category_name: str, note: str
+) -> None:
+    """Like _ingest_caption_category, but for every item in one media group
+    at once -- one validation, one registry upsert, one confirmation
+    message, one ingest worker, instead of one of each per photo."""
+    try:
+        display = validate_category_name(settings, category_name)
+    except ValueError as exc:
+        send_message(chat_id, f"That category name will not work: {exc}")
+        return
+    entry = upsert_registry_entry(settings, display)
+    plural = "s" if len(paths) != 1 else ""
+    send_message(chat_id, f'Filing {len(paths)} item{plural} into category "{entry["display"]}".')
+    items = [{"path": str(path), "kind": kind, "note": note, "original_name": ""} for path in paths]
+    worker = threading.Thread(target=_run_category_ingest, args=(chat_id, items, entry), daemon=True)
+    worker.start()
+
+
+def _buffer_media_group_photo(chat_id: int, media_group_id: str, image_path: Path, caption: str) -> None:
+    """Park one photo from a Telegram album until no sibling has arrived for
+    media_group_flush_seconds, then route the whole group together (see the
+    MEDIA_GROUP_BUFFER comment for why: only one message in the album
+    carries the caption)."""
+    key = (chat_id, media_group_id)
+    with MEDIA_GROUP_LOCK:
+        group = MEDIA_GROUP_BUFFER.setdefault(key, {"paths": [], "caption": ""})
+        group["paths"].append(image_path)
+        if caption:
+            group["caption"] = caption
+        existing_timer = group.get("timer")
+        if existing_timer is not None:
+            existing_timer.cancel()
+        timer = threading.Timer(settings.media_group_flush_seconds, _flush_media_group, args=(chat_id, media_group_id))
+        timer.daemon = True
+        group["timer"] = timer
+        timer.start()
+
+
+def _flush_media_group(chat_id: int, media_group_id: str) -> None:
+    key = (chat_id, media_group_id)
+    with MEDIA_GROUP_LOCK:
+        group = MEDIA_GROUP_BUFFER.pop(key, None)
+    if not group or not group["paths"]:
+        return
+    paths: list[Path] = group["paths"]
+    caption = group.get("caption", "")
+    category_name, category_note = parse_category_caption(caption) if settings.category_rag_enabled else (None, "")
+    if not settings.category_rag_enabled:
+        return
+    if category_name:
+        _ingest_caption_category_batch(chat_id, paths, "image", category_name, category_note)
+        return
+    for path in paths:
+        set_pending_category(chat_id, {"path": str(path), "kind": "image", "note": "", "original_name": ""})
+    send_message(
+        chat_id,
+        f"To also index {'this image' if len(paths) == 1 else f'these {len(paths)} images'} for "
+        "retrieval, reply with just the category name, e.g. trip (or /cancel to skip). "
+        "The analysis above is sent regardless.",
+    )
+    log(f"[category] media group pending chat_id={chat_id} group={media_group_id} count={len(paths)}")
+
+
 def _run_category_ingest(chat_id: int, items: list[dict], entry: dict) -> None:
     done: list[str] = []
     failed: list[str] = []
@@ -908,7 +984,15 @@ def handle_photo_message(chat_id: int, message: dict) -> bool:
     )
     worker.start()
     log(f"[telegram] saved photo chat_id={chat_id} path={downloaded_path} bytes={byte_count}")
-    _route_image_to_category(chat_id, downloaded_path, category_name, category_note)
+    media_group_id = message.get("media_group_id")
+    if media_group_id and settings.category_rag_enabled:
+        # Telegram attaches a multi-photo album's caption to only one
+        # message in the group -- buffer and route the whole group
+        # together instead of using this message's own (likely empty)
+        # caption. See the MEDIA_GROUP_BUFFER comment.
+        _buffer_media_group_photo(chat_id, media_group_id, downloaded_path, caption)
+    else:
+        _route_image_to_category(chat_id, downloaded_path, category_name, category_note)
     return True
 
 

@@ -44,6 +44,23 @@ New category names are created on first use. Names are normalized
 (whitespace collapsed, case-insensitive) and mapped to a stable collection
 id such as `oc_cat_work-notes_1a2b3c4d`.
 
+### Sending several photos at once
+
+Selecting multiple photos in Telegram and sending them together as one
+album with one caption works correctly: **all** of them are filed into that
+category, not just one. This is handled specially because Telegram itself
+only attaches the caption to one message in the album -- every photo
+arrives as its own message sharing a `media_group_id`, and only one of
+them actually carries the `#<name>` text. The bot buffers photos that
+share a `media_group_id` for `OPENCLAW_MEDIA_GROUP_FLUSH_SECONDS` (default
+2.5s) after the last one arrives, then files the whole album together
+using whichever message actually had the caption.
+
+If the album has no caption at all, the two-step flow (below) still
+applies, but as **one** prompt for the whole album -- reply once with the
+category name and every photo in the album goes there, not one prompt per
+photo.
+
 ## Query a category
 
 ```
@@ -135,3 +152,4 @@ The memory watcher ingests anything under `categories/<slug>/` into
 | `OPENCLAW_CATEGORY_PENDING_TTL_SECONDS` | `600` | Two-step wait before falling back |
 | `OPENCLAW_CATEGORY_MAX_NAME_CHARS` | `40` | Category name length limit |
 | `OPENCLAW_CATEGORY_IMAGE_MAX_TOKENS` | `600` | Max tokens for the image description |
+| `OPENCLAW_MEDIA_GROUP_FLUSH_SECONDS` | `2.5` | How long to wait after the last photo in an album before filing the whole group |

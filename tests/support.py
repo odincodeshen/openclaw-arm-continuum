@@ -56,6 +56,7 @@ def build_settings(**overrides) -> Settings:
         category_pending_ttl_seconds=600,
         category_max_name_chars=40,
         category_image_max_tokens=600,
+        media_group_flush_seconds=2.5,
         mem_digest_due_soon_days=7,
         mem_digest_stale_days=14,
         mem_digest_remind_cooldown_days=7,

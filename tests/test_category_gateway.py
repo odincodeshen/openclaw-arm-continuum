@@ -34,6 +34,16 @@ class CategoryGatewayTestBase(unittest.TestCase):
             gateway.PENDING_CATEGORY.clear()
         self.addCleanup(gateway.PENDING_CATEGORY.clear)
 
+        self.addCleanup(self._clear_media_group_buffer)
+
+    def _clear_media_group_buffer(self) -> None:
+        with gateway.MEDIA_GROUP_LOCK:
+            for group in gateway.MEDIA_GROUP_BUFFER.values():
+                timer = group.get("timer")
+                if timer is not None:
+                    timer.cancel()
+            gateway.MEDIA_GROUP_BUFFER.clear()
+
 
 class PendingStateMachineTest(CategoryGatewayTestBase):
     def test_set_and_pop_pending(self) -> None:
@@ -256,6 +266,142 @@ class ProcessImageMessageTest(CategoryGatewayTestBase):
         self._install_vision(FakeVision())
         gateway.process_image_message(5, self.img, "")
         self.assertTrue(any("vision_smoke.py" in t for _, t in self.sent))
+
+
+class MediaGroupBufferTest(CategoryGatewayTestBase):
+    """Telegram attaches a multi-photo album's caption to only one message
+    in the group. Regression coverage for the bug this caused: every photo
+    was routed by its OWN (mostly empty) caption, splitting one #trip album
+    across a real "trip" category and a garbage category made from whatever
+    text the user sent next."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.paths = []
+        for name in ("first.jpg", "second.jpg"):
+            path = self.inbox / name
+            path.write_bytes(b"\xff\xd8\xff\xd9")
+            self.paths.append(path)
+
+    def _install_run_category_ingest(self):
+        captured = {}
+
+        def fake_ingest(chat_id, items, entry):
+            captured["chat_id"] = chat_id
+            captured["items"] = items
+            captured["entry"] = entry
+
+        orig = gateway._run_category_ingest
+        gateway._run_category_ingest = fake_ingest
+        self.addCleanup(setattr, gateway, "_run_category_ingest", orig)
+        return captured
+
+    def test_buffer_accumulates_paths_from_both_calls(self) -> None:
+        gateway._buffer_media_group_photo(1, "group-1", self.paths[0], "")
+        gateway._buffer_media_group_photo(1, "group-1", self.paths[1], "#trip 週末小旅行")
+
+        with gateway.MEDIA_GROUP_LOCK:
+            group = gateway.MEDIA_GROUP_BUFFER[(1, "group-1")]
+        self.assertEqual(group["paths"], [self.paths[0], self.paths[1]])
+        self.assertEqual(group["caption"], "#trip 週末小旅行")
+
+    def test_buffer_keeps_caption_seen_on_an_earlier_call(self) -> None:
+        # Order isn't guaranteed -- the caption can arrive on the FIRST
+        # message in the group just as easily as a later one.
+        gateway._buffer_media_group_photo(1, "group-1", self.paths[0], "#trip 週末小旅行")
+        gateway._buffer_media_group_photo(1, "group-1", self.paths[1], "")
+
+        with gateway.MEDIA_GROUP_LOCK:
+            group = gateway.MEDIA_GROUP_BUFFER[(1, "group-1")]
+        self.assertEqual(group["caption"], "#trip 週末小旅行")
+
+    def test_flush_routes_every_photo_to_the_shared_caption_category(self) -> None:
+        captured = self._install_run_category_ingest()
+        with gateway.MEDIA_GROUP_LOCK:
+            gateway.MEDIA_GROUP_BUFFER[(1, "group-1")] = {
+                "paths": list(self.paths),
+                "caption": "#trip 週末小旅行",
+            }
+
+        gateway._flush_media_group(1, "group-1")
+
+        self.assertEqual(captured["entry"]["display"], "trip")
+        self.assertEqual([item["path"] for item in captured["items"]], [str(p) for p in self.paths])
+        self.assertEqual(captured["items"][0]["note"], "週末小旅行")
+        self.assertTrue(any('into category "trip"' in t for _, t in self.sent))
+        with gateway.MEDIA_GROUP_LOCK:
+            self.assertNotIn((1, "group-1"), gateway.MEDIA_GROUP_BUFFER)
+
+    def test_flush_with_no_caption_anywhere_buffers_all_as_one_pending_batch(self) -> None:
+        with gateway.MEDIA_GROUP_LOCK:
+            gateway.MEDIA_GROUP_BUFFER[(1, "group-1")] = {"paths": list(self.paths), "caption": ""}
+
+        gateway._flush_media_group(1, "group-1")
+
+        pending = gateway.pop_pending_category(1)
+        self.assertEqual(len(pending["items"]), 2)
+        self.assertEqual({item["path"] for item in pending["items"]}, {str(p) for p in self.paths})
+        # One combined prompt, not one per photo.
+        prompts = [t for _, t in self.sent if "category name" in t]
+        self.assertEqual(len(prompts), 1)
+        self.assertIn("these 2 images", prompts[0])
+
+    def test_flush_of_unknown_group_is_a_noop(self) -> None:
+        gateway._flush_media_group(1, "never-buffered")
+        self.assertEqual(self.sent, [])
+
+    def test_handle_photo_message_buffers_instead_of_routing_immediately_when_grouped(self) -> None:
+        self._orig_file_info = gateway.telegram_file_info
+        gateway.telegram_file_info = lambda file_id: {"file_path": "photos/file.jpg"}
+        self.addCleanup(setattr, gateway, "telegram_file_info", self._orig_file_info)
+
+        self._orig_download = gateway.download_telegram_file
+        gateway.download_telegram_file = lambda file_id, destination: (self.paths[0], 4)
+        self.addCleanup(setattr, gateway, "download_telegram_file", self._orig_download)
+
+        self._orig_process = gateway.process_image_message
+        gateway.process_image_message = lambda *a, **k: None
+        self.addCleanup(setattr, gateway, "process_image_message", self._orig_process)
+
+        called_route = []
+        self._orig_route = gateway._route_image_to_category
+        gateway._route_image_to_category = lambda *a, **k: called_route.append(a)
+        self.addCleanup(setattr, gateway, "_route_image_to_category", self._orig_route)
+
+        message = {"photo": [{"file_id": "f1"}], "caption": "#trip", "media_group_id": "grp-42"}
+        handled = gateway.handle_photo_message(1, message)
+
+        self.assertTrue(handled)
+        self.assertEqual(called_route, [])  # buffered, not routed immediately
+        with gateway.MEDIA_GROUP_LOCK:
+            group = gateway.MEDIA_GROUP_BUFFER[(1, "grp-42")]
+        self.assertEqual(group["caption"], "#trip")
+        group["timer"].cancel()
+
+    def test_handle_photo_message_without_media_group_id_routes_immediately(self) -> None:
+        self._orig_file_info = gateway.telegram_file_info
+        gateway.telegram_file_info = lambda file_id: {"file_path": "photos/file.jpg"}
+        self.addCleanup(setattr, gateway, "telegram_file_info", self._orig_file_info)
+
+        self._orig_download = gateway.download_telegram_file
+        gateway.download_telegram_file = lambda file_id, destination: (self.paths[0], 4)
+        self.addCleanup(setattr, gateway, "download_telegram_file", self._orig_download)
+
+        self._orig_process = gateway.process_image_message
+        gateway.process_image_message = lambda *a, **k: None
+        self.addCleanup(setattr, gateway, "process_image_message", self._orig_process)
+
+        called_route = []
+        self._orig_route = gateway._route_image_to_category
+        gateway._route_image_to_category = lambda *a, **k: called_route.append(a)
+        self.addCleanup(setattr, gateway, "_route_image_to_category", self._orig_route)
+
+        message = {"photo": [{"file_id": "f1"}], "caption": "#trip"}
+        gateway.handle_photo_message(1, message)
+
+        self.assertEqual(len(called_route), 1)
+        with gateway.MEDIA_GROUP_LOCK:
+            self.assertEqual(gateway.MEDIA_GROUP_BUFFER, {})
 
 
 class CategoryCommandTest(CategoryGatewayTestBase):

@@ -82,6 +82,7 @@ class Settings:
     category_pending_ttl_seconds: int
     category_max_name_chars: int
     category_image_max_tokens: int
+    media_group_flush_seconds: float
 
     mem_digest_due_soon_days: int
     mem_digest_stale_days: int
@@ -185,6 +186,7 @@ def load_settings() -> Settings:
         category_pending_ttl_seconds=env_int("OPENCLAW_CATEGORY_PENDING_TTL_SECONDS", 600),
         category_max_name_chars=env_int("OPENCLAW_CATEGORY_MAX_NAME_CHARS", 40),
         category_image_max_tokens=env_int("OPENCLAW_CATEGORY_IMAGE_MAX_TOKENS", 600),
+        media_group_flush_seconds=env_float("OPENCLAW_MEDIA_GROUP_FLUSH_SECONDS", 2.5),
         mem_digest_due_soon_days=env_int("OPENCLAW_MEM_DIGEST_DUE_SOON_DAYS", 7),
         mem_digest_stale_days=env_int("OPENCLAW_MEM_DIGEST_STALE_DAYS", 14),
         mem_digest_remind_cooldown_days=env_int("OPENCLAW_MEM_DIGEST_REMIND_COOLDOWN_DAYS", 7),

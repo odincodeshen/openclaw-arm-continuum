@@ -74,6 +74,7 @@ one layer that fails if it breaks.
 | --- | --- | --- | --- |
 | Category RAG isolation + `#cat` / `#all` | `test_category_rag_retrieve` | `CategoryRagScenario` | real-index isolation |
 | Two-step caption/pending upload flow | `test_category_gateway` | — | Telegram round trip |
+| Multi-photo album caption sharing (`media_group_id`) | `test_category_gateway::MediaGroupBufferTest` | — | Telegram round trip with a real album |
 | `/cat rename` / `/cat merge` | `test_categories`, `test_category_gateway`, `test_qdrant_client` | `TrackerMemoryManagementScenario::test_delete_collection_against_real_qdrant` | full merge round trip with real ingest |
 | `Sources:` attribution | `test_category_rag_retrieve` | `CategoryRagScenario`, `KnowledgeAndMemoryScenario` | — |
 | Document / knowledge ingest | `test_file_ingest` | `KnowledgeAndMemoryScenario` | — |
