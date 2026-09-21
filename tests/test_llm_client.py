@@ -1,4 +1,7 @@
+import tempfile
 import unittest
+from datetime import date
+from pathlib import Path
 from unittest.mock import patch
 
 from openclaw_runtime.llm_client import LlmClient, clean_model_content
@@ -72,6 +75,62 @@ class ReplyLanguageTest(unittest.TestCase):
         messages = request_json.call_args.args[2]["messages"]
         self.assertEqual(messages[1], {"role": "user", "content": "before"})
         self.assertIn("Reply in Traditional Chinese", messages[-1]["content"])
+
+
+class DateGroundingTest(unittest.TestCase):
+    """Without today's real date in the system prompt, the model has no way
+    to know "now" and falls back to whatever its training data implies --
+    real current-dated info (a 2026 booking, today's news) then reads as
+    being years in the future. Regression coverage for that fix."""
+
+    def _today_str(self) -> str:
+        return date.today().strftime("%Y-%m-%d")
+
+    @patch("openclaw_runtime.llm_client.request_json")
+    def test_chat_system_message_includes_todays_date(self, request_json) -> None:
+        request_json.return_value = {"choices": [{"message": {"content": "ok"}}]}
+        LlmClient(build_settings(system_prompt="base prompt")).chat("hi")
+        system_msg = request_json.call_args.args[2]["messages"][0]
+        self.assertEqual(system_msg["role"], "system")
+        self.assertIn("base prompt", system_msg["content"])
+        self.assertIn(self._today_str(), system_msg["content"])
+        self.assertIn("do not assume your training cutoff is", system_msg["content"])
+
+    @patch("openclaw_runtime.llm_client.request_json")
+    def test_chat_json_system_message_includes_todays_date(self, request_json) -> None:
+        request_json.return_value = {"choices": [{"message": {"content": "{}"}}]}
+        client = LlmClient(build_settings(system_prompt="base prompt"))
+        client.chat_json("classify this", {"type": "object"}, schema_name="x")
+        system_msg = request_json.call_args.args[2]["messages"][0]
+        self.assertIn(self._today_str(), system_msg["content"])
+
+    @patch("openclaw_runtime.llm_client.request_json")
+    def test_chat_with_image_system_message_includes_todays_date(self, request_json) -> None:
+        request_json.return_value = {"choices": [{"message": {"content": "ok"}}]}
+        client = LlmClient(build_settings(system_prompt="base prompt"))
+        with tempfile.TemporaryDirectory() as tmp:
+            img = Path(tmp) / "pic.jpg"
+            img.write_bytes(b"\xff\xd8\xff\xd9")
+            client.chat_with_image(img, "describe this")
+        system_msg = request_json.call_args.args[2]["messages"][0]
+        self.assertIn(self._today_str(), system_msg["content"])
+
+    @patch("openclaw_runtime.llm_client.datetime")
+    @patch("openclaw_runtime.llm_client.request_json")
+    def test_date_is_computed_fresh_each_call_not_cached(self, request_json, fake_datetime) -> None:
+        import datetime as real_datetime
+
+        request_json.return_value = {"choices": [{"message": {"content": "ok"}}]}
+        fake_datetime.now.side_effect = [
+            real_datetime.datetime(2026, 1, 1, tzinfo=real_datetime.timezone.utc),
+            real_datetime.datetime(2026, 6, 15, tzinfo=real_datetime.timezone.utc),
+        ]
+        client = LlmClient(build_settings(system_prompt="base prompt"))
+        client.chat("first")
+        client.chat("second")
+        first_call, second_call = request_json.call_args_list
+        self.assertIn("2026-01-01", first_call.args[2]["messages"][0]["content"])
+        self.assertIn("2026-06-15", second_call.args[2]["messages"][0]["content"])
 
 
 if __name__ == "__main__":

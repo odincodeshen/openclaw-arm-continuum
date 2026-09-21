@@ -1,5 +1,6 @@
 import base64
 import mimetypes
+from datetime import datetime, timezone
 from pathlib import Path
 import re
 import socket
@@ -68,6 +69,21 @@ class LlmClient:
                 raise RuntimeError(VLLM_NOT_READY_MESSAGE) from exc
             raise
 
+    def _system_message(self) -> dict:
+        """The system prompt plus the real current date, computed fresh on
+        every call. Without this, the model has no way to know "now" --
+        it falls back to whatever date its training data implies, so real
+        current-dated info (a 2026 booking, today's news) reads as if it
+        were years in the future. UTC, not the user's local time zone --
+        good enough to fix the multi-year mismatch; exact-day precision
+        near midnight isn't worth the complexity of per-user time zones."""
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d (%A), UTC")
+        grounding = (
+            f"Today's date is {today}. Treat this as the actual current date for "
+            "anything time-relative -- do not assume your training cutoff is 'now'."
+        )
+        return {"role": "system", "content": f"{self.settings.system_prompt}\n\n{grounding}"}
+
     def _answer_instruction(self) -> str:
         directive = "Answer directly and do not output your reasoning process."
         language = getattr(self.settings, "reply_language", "") or ""
@@ -86,7 +102,7 @@ class LlmClient:
         history: list[dict] | None = None,
     ) -> str:
         final_answer_prompt = f"{user_text}\n\n{self._answer_instruction()}"
-        messages = [{"role": "system", "content": self.settings.system_prompt}]
+        messages = [self._system_message()]
         for turn in history or []:
             role = turn.get("role")
             content = turn.get("content")
@@ -111,7 +127,7 @@ class LlmClient:
         payload = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": self.settings.system_prompt},
+                self._system_message(),
                 {"role": "user", "content": user_text},
             ],
             "temperature": 0,
@@ -135,7 +151,7 @@ class LlmClient:
         payload = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": self.settings.system_prompt},
+                self._system_message(),
                 {
                     "role": "user",
                     "content": [
