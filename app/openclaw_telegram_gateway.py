@@ -165,6 +165,11 @@ Browse and scrape the web with the local Playwright worker, convert to
 Markdown, then hand it to the local reasoning model for a summary.
 Example: /search Arm Neoverse latest news
 Example: /search What tech news happened today
+Paste a link (anywhere in the message, with or without a question) to
+open that page directly instead of searching for it.
+Example: /search https://example.com/article what does this say?
+Note: this reads a page's visible text, not a video's spoken content --
+a video link yields its title/description, not a transcript.
 
 For plain weather questions, do not add /search -- ask in natural
 language instead (see "Natural language" below). /search always forces
