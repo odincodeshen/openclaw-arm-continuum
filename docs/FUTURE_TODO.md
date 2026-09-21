@@ -714,6 +714,16 @@ bots sharing one dashboard would double-run every job and could deliver
 bot B's job through bot A's Telegram token. So: own port + own
 `gateway-data` dir per bot, no way around it with the current dashboard.
 
+Found the hard way -- **Category RAG collections need their own
+`OPENCLAW_CATEGORY_COLLECTION_PREFIX` per bot; nothing else isolates
+them.** Unlike the tracker/knowledge collections (plain, already-isolated
+env vars), a category collection's name comes from the category's
+*display name*, not the bot. Two bots left on the default `oc_cat_`
+prefix that each create a category with the same name (e.g. `trip`)
+silently share one Qdrant collection -- no error, just diluted or wrong
+`/rag #<category>` answers once enough unrelated content piles up. See
+`docs/PROFILES.md` and `docs/CATEGORY_RAG.md`.
+
 Privacy / upstream note: this repo is public. Bot persona names, topics,
 and how many exist are private facts about a given deployment, not
 project structure -- keep them out of anything committed. Concretely: any

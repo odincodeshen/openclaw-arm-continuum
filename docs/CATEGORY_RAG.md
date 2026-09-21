@@ -146,7 +146,7 @@ The memory watcher ingests anything under `categories/<slug>/` into
 | Env var | Default | Meaning |
 |---------|---------|---------|
 | `OPENCLAW_CATEGORY_RAG_ENABLED` | `true` | Master switch for the whole feature |
-| `OPENCLAW_CATEGORY_COLLECTION_PREFIX` | `oc_cat_` | Prefix for category collections |
+| `OPENCLAW_CATEGORY_COLLECTION_PREFIX` | `oc_cat_` | Prefix for category collections. **Running more than one bot profile? Give each one a different prefix** -- a category collection's name comes from the category's display name, not the profile, so two profiles both using the default and both creating a same-named category (e.g. `trip`) silently share one Qdrant collection. See `docs/PROFILES.md`. |
 | `OPENCLAW_CATEGORY_INBOX_DIRNAME` | `categories` | Sub-dir of the inbox |
 | `OPENCLAW_CATEGORY_REGISTRY_PATH` | `/workspace/inbox/.openclaw/categories.json` | Shared registry file |
 | `OPENCLAW_CATEGORY_PENDING_TTL_SECONDS` | `600` | Two-step wait before falling back |

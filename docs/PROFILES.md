@@ -19,11 +19,29 @@ Each profile should have its own:
 - Gateway token
 - workspace
 - Gateway state
-- Qdrant collection names
+- `OPENCLAW_TRACKER_COLLECTION` / `OPENCLAW_KNOWLEDGE_COLLECTION` (plain env
+  vars -- just set them)
+- `OPENCLAW_CATEGORY_COLLECTION_PREFIX` (**do not skip this one** -- see
+  below)
 - task history
 - cron job state
 
 The source code remains shared.
+
+### Category RAG collections need their own prefix -- this one is easy to miss
+
+Unlike the tracker/knowledge collections above, a Category RAG collection's
+name is derived from the category's *display name* (`category_slug()`),
+not from anything profile-specific. If two profiles both leave
+`OPENCLAW_CATEGORY_COLLECTION_PREFIX` at its default (`oc_cat_`) and each
+independently creates a category with the same name (e.g. both use
+`trip`), they silently resolve to the **same Qdrant collection** and their
+content gets mixed together -- no error, no warning, just diluted/wrong
+`/rag #<category>` answers once enough unrelated content piles up.
+
+Give every profile its own `OPENCLAW_CATEGORY_COLLECTION_PREFIX` (e.g.
+`bot-a_oc_cat_`) for real isolation. This was found via real multi-bot
+usage, not caught in review -- see `docs/CATEGORY_RAG.md`.
 
 ## Naming and privacy
 
