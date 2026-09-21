@@ -17,7 +17,7 @@ import time
 import unittest
 import urllib.request
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from openclaw_runtime import categories
@@ -204,11 +204,18 @@ class KnowledgeAndMemoryScenario(QdrantScenarioBase):
         # just the fake: the item is written "now" (today), so since:today
         # includes it, before:today excludes it, and a wide range spanning
         # both sides of today includes it.
+        #
+        # UTC, not local date.today() -- /mem's created_at is a UTC epoch
+        # (int(time.time())) and since:/before: convert their date strings
+        # via UTC midnight, so the test's notion of "today" has to match
+        # that clock or it can be off by a day near local midnight (e.g.
+        # BST vs UTC).
         writer = MemoryWriteSkill(self.settings, {}, self.embeddings, self.qdrant)
         writer.run("/mem deploy note about the gateway mount")
-        today = date.today().isoformat()
-        yesterday = (date.today() - timedelta(days=1)).isoformat()
-        tomorrow = (date.today() + timedelta(days=1)).isoformat()
+        utc_today = datetime.now(timezone.utc).date()
+        today = utc_today.isoformat()
+        yesterday = (utc_today - timedelta(days=1)).isoformat()
+        tomorrow = (utc_today + timedelta(days=1)).isoformat()
 
         since_today = self.rag.run(f"/rag since:{today} what does the gateway container mount?").answer
         self.assertIn("gateway", since_today.lower())

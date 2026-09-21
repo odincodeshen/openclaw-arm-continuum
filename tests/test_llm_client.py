@@ -1,6 +1,6 @@
 import tempfile
 import unittest
-from datetime import date
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -84,7 +84,10 @@ class DateGroundingTest(unittest.TestCase):
     being years in the future. Regression coverage for that fix."""
 
     def _today_str(self) -> str:
-        return date.today().strftime("%Y-%m-%d")
+        # UTC, matching _system_message()'s own clock -- local date can
+        # differ from UTC date near midnight depending on the host's time
+        # zone (this is exactly why the app uses UTC, not local time).
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     @patch("openclaw_runtime.llm_client.request_json")
     def test_chat_system_message_includes_todays_date(self, request_json) -> None:
