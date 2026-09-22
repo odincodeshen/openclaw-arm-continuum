@@ -66,6 +66,8 @@ from openclaw_runtime.transcription_client import TranscriptionClient
 from openclaw_runtime.vision_client import DEFAULT_DESCRIBE_INSTRUCTION, VisionClient, VisionError
 
 
+_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+
 settings = load_settings()
 model_registry = load_model_registry(settings)
 model_clients = ModelClientFactory(settings, model_registry)
@@ -399,10 +401,19 @@ def ingest_document_into_category(
     return target
 
 
-def ingest_text_into_category(text: str, entry: dict, note: str = "", source_label: str = "telegram reply") -> Path:
+def ingest_text_into_category(
+    text: str, entry: dict, note: str = "", source_label: str = "telegram reply", url: str = ""
+) -> Path:
     """File a plain-text item with no source file -- e.g. a replied-to
     Telegram message -- directly into its category inbox folder as
-    markdown, same shape as an image's description document."""
+    markdown, same shape as an image's description document.
+
+    ``url`` (e.g. a video link) gets its own line in the document AND
+    becomes the stored ``original_file_name`` when present, so /rag's
+    "Sources:" citation shows the actual link instead of the generic
+    "telegram reply" label -- otherwise there is no way to trace an
+    answer back to the video it came from.
+    """
     directory = category_dir(entry["slug"])
     target_name = sanitize_filename(f"{timestamp()}-{source_label}.md", f"{timestamp()}-note.md")
     target = unique_path(directory, target_name)
@@ -413,6 +424,7 @@ def ingest_text_into_category(text: str, entry: dict, note: str = "", source_lab
                 "",
                 f"Category: {entry['display']}",
                 f"Source: {source_label}",
+                f"URL: {url}" if url else "",
                 f"Indexed: {datetime.now(timezone.utc).replace(microsecond=0).isoformat()}",
                 f"Note: {note}" if note else "",
                 "",
@@ -431,7 +443,8 @@ def ingest_text_into_category(text: str, entry: dict, note: str = "", source_lab
             "category_slug": entry["slug"],
             "origin": "telegram_reply",
             "caption_note": note,
-            "original_file_name": source_label,
+            "source_url": url,
+            "original_file_name": url or source_label,
         },
     )
     return target
@@ -601,8 +614,19 @@ def handle_reply_category_message(chat_id: int, message: dict) -> bool:
     except ValueError as exc:
         send_message(chat_id, f"That category name will not work: {exc}")
         return True
+    # A URL in the reply's own note (e.g. "#video-notes https://...") takes
+    # priority and is stripped out of the note to avoid duplicating it;
+    # otherwise fall back to one embedded in the replied-to text itself
+    # (e.g. a video summary that lists its own source link), left in place.
+    note_url_match = _URL_RE.search(note)
+    if note_url_match:
+        url = note_url_match.group(0)
+        note = (note[: note_url_match.start()] + note[note_url_match.end() :]).strip()
+    else:
+        replied_url_match = _URL_RE.search(replied_text)
+        url = replied_url_match.group(0) if replied_url_match else ""
     entry = upsert_registry_entry(settings, display)
-    doc = ingest_text_into_category(replied_text, entry, note=note)
+    doc = ingest_text_into_category(replied_text, entry, note=note, url=url)
     send_message(
         chat_id,
         f'Filed the replied-to message into category "{entry["display"]}": {doc.name}\n'

@@ -76,9 +76,11 @@ one layer that fails if it breaks.
 | Two-step caption/pending upload flow | `test_category_gateway` | — | Telegram round trip |
 | Multi-photo album caption sharing (`media_group_id`) | `test_category_gateway::MediaGroupBufferTest` | — | Telegram round trip with a real album |
 | Reply-to-message `#<category>` (no upload needed) | `test_category_gateway::ReplyCategoryMessageTest`, `CategoryIngestTest::test_ingest_text_*` | — | Telegram round trip against a real reply |
+| Reply-ingest URL extraction (`URL:` line + `Sources:` citation) | `test_category_gateway::ReplyCategoryMessageTest::test_url_in_*`, `CategoryIngestTest::test_ingest_text_with_url_*`/`test_ingest_text_without_url_*` | — | — |
 | `/cat rename` / `/cat merge` | `test_categories`, `test_category_gateway`, `test_qdrant_client` | `TrackerMemoryManagementScenario::test_delete_collection_against_real_qdrant` | full merge round trip with real ingest |
 | `Sources:` attribution | `test_category_rag_retrieve` | `CategoryRagScenario`, `KnowledgeAndMemoryScenario` | — |
 | Document / knowledge ingest | `test_file_ingest` | `KnowledgeAndMemoryScenario` | — |
+| Header-aware chunker (keeps `##`/`###` sections whole; falls back to char-slicing only for oversized sections) | `test_file_ingest::ChunkTextTest` | — | — |
 | `/mem` write + default `/rag` | `test_*` unit | `KnowledgeAndMemoryScenario` | — |
 | `/mem list` / `done` / `rm` + `due:`/`tag:` metadata | `test_memory_write`, `test_qdrant_client` | `TrackerMemoryManagementScenario` | — |
 | `/mem digest` + cron `suppress_if_routine` skip | `test_memory_write::MemoryDigestTest`, `test_cron_worker::RunDynamicJobTest`/`WriteGatewayRunbackTest` | `TrackerMemoryManagementScenario` | live daily push |

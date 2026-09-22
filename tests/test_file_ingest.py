@@ -231,5 +231,75 @@ class InboxIngestorAttributionTest(unittest.TestCase):
         self.assertNotIn("doc_title", metadata)
 
 
+class ChunkTextTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.inbox = root / "inbox"
+        (self.inbox / "knowledge").mkdir(parents=True)
+        (self.inbox / "tracker").mkdir(parents=True)
+
+    def new_ingestor(self, chunk_chars: int = 250, chunk_overlap: int = 20) -> InboxIngestor:
+        settings = build_settings(
+            web_enabled=False,
+            inbox_path=self.inbox,
+            watcher_state_path=Path(self.tmp.name) / "watcher_state.json",
+            category_registry_path=Path(self.tmp.name) / ".openclaw" / "categories.json",
+            ingest_chunk_chars=chunk_chars,
+            ingest_chunk_overlap=chunk_overlap,
+        )
+        return InboxIngestor(settings, FakeEmbeddingClient(), FakeQdrantClient())
+
+    def test_short_sections_are_packed_into_one_chunk(self) -> None:
+        text = "## Intro\nShort intro body.\n\n## Details\nShort details body."
+        ingestor = self.new_ingestor(chunk_chars=250)
+        chunks = ingestor._chunk_text(text)
+        self.assertEqual(len(chunks), 1)
+        self.assertIn("## Intro", chunks[0])
+        self.assertIn("## Details", chunks[0])
+
+    def test_sections_that_together_exceed_chunk_size_split_at_the_boundary(self) -> None:
+        section_a = "## Section A\n" + ("a" * 150)
+        section_b = "## Section B\n" + ("b" * 150)
+        text = f"{section_a}\n\n{section_b}"
+        ingestor = self.new_ingestor(chunk_chars=250)
+        chunks = ingestor._chunk_text(text)
+
+        self.assertEqual(len(chunks), 2)
+        self.assertIn("## Section A", chunks[0])
+        self.assertNotIn("## Section B", chunks[0])
+        self.assertIn("## Section B", chunks[1])
+        self.assertNotIn("## Section A", chunks[1])
+
+    def test_oversized_section_falls_back_to_character_slicing(self) -> None:
+        short_section = "## Short\nbrief body."
+        huge_section = "## Huge\n" + ("x" * 400)
+        text = f"{short_section}\n\n{huge_section}"
+        ingestor = self.new_ingestor(chunk_chars=250, chunk_overlap=20)
+        chunks = ingestor._chunk_text(text)
+
+        self.assertEqual(chunks[0], short_section)
+        self.assertGreater(len(chunks), 2)
+        for chunk in chunks[1:]:
+            self.assertLessEqual(len(chunk), 250)
+
+    def test_plain_text_with_no_headers_uses_character_slicing_like_before(self) -> None:
+        text = "no headers here, " * 30
+        ingestor = self.new_ingestor(chunk_chars=250, chunk_overlap=20)
+        chunks = ingestor._chunk_text(text)
+
+        self.assertGreater(len(chunks), 1)
+        reconstructed_start = chunks[0][:230]
+        self.assertTrue(text.startswith(reconstructed_start))
+
+    def test_single_short_document_yields_one_chunk(self) -> None:
+        text = "# Title\n\nJust one small paragraph of content."
+        ingestor = self.new_ingestor(chunk_chars=250)
+        chunks = ingestor._chunk_text(text)
+        self.assertEqual(len(chunks), 1)
+        self.assertIn("Just one small paragraph", chunks[0])
+
+
 if __name__ == "__main__":
     unittest.main()

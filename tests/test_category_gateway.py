@@ -235,6 +235,40 @@ class CategoryIngestTest(CategoryGatewayTestBase):
         self.assertEqual(sidecar["category"], "影片筆記")
         self.assertEqual(sidecar["origin"], "telegram_reply")
 
+    def test_ingest_text_with_url_writes_url_line_and_uses_it_as_source_name(self) -> None:
+        entry = categories.upsert_registry_entry(self.settings, "影片筆記")
+        doc = gateway.ingest_text_into_category(
+            "Summary content.",
+            entry,
+            note="from a script",
+            source_label="telegram-reply",
+            url="https://youtu.be/abc123",
+        )
+
+        body = doc.read_text(encoding="utf-8")
+        self.assertIn("URL: https://youtu.be/abc123", body)
+
+        import json as _json
+
+        sidecar = _json.loads(doc.with_name(doc.name + ".meta.json").read_text(encoding="utf-8"))
+        self.assertEqual(sidecar["source_url"], "https://youtu.be/abc123")
+        self.assertEqual(sidecar["original_file_name"], "https://youtu.be/abc123")
+
+    def test_ingest_text_without_url_keeps_source_label_as_original_file_name(self) -> None:
+        entry = categories.upsert_registry_entry(self.settings, "影片筆記")
+        doc = gateway.ingest_text_into_category(
+            "Summary content.", entry, source_label="telegram-reply"
+        )
+
+        body = doc.read_text(encoding="utf-8")
+        self.assertNotIn("URL:", body)
+
+        import json as _json
+
+        sidecar = _json.loads(doc.with_name(doc.name + ".meta.json").read_text(encoding="utf-8"))
+        self.assertNotIn("source_url", sidecar)
+        self.assertEqual(sidecar["original_file_name"], "telegram-reply")
+
 
 class ReplyCategoryMessageTest(CategoryGatewayTestBase):
     def _message(self, own_text: str, replied_text: str | None, *, replied_caption: str | None = None) -> dict:
@@ -278,6 +312,43 @@ class ReplyCategoryMessageTest(CategoryGatewayTestBase):
     def test_message_with_no_reply_is_not_handled(self) -> None:
         message = self._message("#trip", None)
         self.assertFalse(gateway.handle_reply_category_message(1, message))
+
+    def test_url_in_note_is_extracted_and_stripped_from_note(self) -> None:
+        message = self._message(
+            "#[Video Notes] https://youtu.be/abc123 great walkthrough",
+            "Video summary content here.",
+        )
+        gateway.handle_reply_category_message(1, message)
+        entry = categories.resolve_category(self.settings, "Video Notes")
+        doc = next((self.inbox / "categories" / entry["slug"]).glob("*.md"))
+        body = doc.read_text(encoding="utf-8")
+        self.assertIn("URL: https://youtu.be/abc123", body)
+        self.assertIn("Note: great walkthrough", body)
+        self.assertNotIn("Note: https://youtu.be/abc123", body)
+
+        import json as _json
+
+        sidecar = _json.loads(doc.with_name(doc.name + ".meta.json").read_text(encoding="utf-8"))
+        self.assertEqual(sidecar["original_file_name"], "https://youtu.be/abc123")
+
+    def test_url_in_replied_to_text_is_used_when_note_has_none(self) -> None:
+        message = self._message(
+            "#trip",
+            "Great trip summary. Source: https://example.com/video/xyz",
+        )
+        gateway.handle_reply_category_message(1, message)
+        entry = categories.resolve_category(self.settings, "trip")
+        doc = next((self.inbox / "categories" / entry["slug"]).glob("*.md"))
+        body = doc.read_text(encoding="utf-8")
+        self.assertIn("URL: https://example.com/video/xyz", body)
+
+    def test_no_url_anywhere_leaves_url_field_empty(self) -> None:
+        message = self._message("#trip", "No links in this message at all.")
+        gateway.handle_reply_category_message(1, message)
+        entry = categories.resolve_category(self.settings, "trip")
+        doc = next((self.inbox / "categories" / entry["slug"]).glob("*.md"))
+        body = doc.read_text(encoding="utf-8")
+        self.assertNotIn("URL:", body)
 
     def test_reply_to_a_message_with_no_text_is_not_handled(self) -> None:
         # e.g. replying to a photo message that has no text/caption of its own.

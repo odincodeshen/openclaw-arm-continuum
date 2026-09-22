@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 import time
 import traceback
 from dataclasses import dataclass
@@ -17,6 +18,8 @@ from openclaw_runtime.qdrant_client import QdrantClient
 
 SUPPORTED_SUFFIXES = {".md", ".txt", ".log", ".json", ".csv", ".tsv", ".pdf"}
 META_SIDECAR_SUFFIX = ".meta.json"
+
+_HEADER_RE = re.compile(r"^#{1,6}\s+\S")
 
 
 @dataclass(frozen=True)
@@ -218,6 +221,46 @@ class InboxIngestor:
     def _chunk_text(self, text: str) -> list[str]:
         chunk_size = max(200, self.settings.ingest_chunk_chars)
         overlap = max(0, min(self.settings.ingest_chunk_overlap, chunk_size // 2))
+        chunks: list[str] = []
+        buffer = ""
+        for section in self._split_into_sections(text):
+            if len(section) > chunk_size:
+                if buffer:
+                    chunks.append(buffer.strip())
+                    buffer = ""
+                chunks.extend(self._slice_by_chars(section, chunk_size, overlap))
+                continue
+            candidate = f"{buffer}\n\n{section}" if buffer else section
+            if len(candidate) <= chunk_size:
+                buffer = candidate
+            else:
+                if buffer:
+                    chunks.append(buffer.strip())
+                buffer = section
+        if buffer:
+            chunks.append(buffer.strip())
+        return [chunk for chunk in chunks if chunk]
+
+    @staticmethod
+    def _split_into_sections(text: str) -> list[str]:
+        """Split on markdown header lines, each section keeping its header
+        attached to its body -- lets _chunk_text pack whole sections
+        together instead of slicing mid-topic on a fixed character count."""
+        lines = text.splitlines()
+        sections: list[str] = []
+        current: list[str] = []
+        for line in lines:
+            if _HEADER_RE.match(line) and current:
+                sections.append("\n".join(current).strip())
+                current = [line]
+            else:
+                current.append(line)
+        if current:
+            sections.append("\n".join(current).strip())
+        return [section for section in sections if section]
+
+    @staticmethod
+    def _slice_by_chars(text: str, chunk_size: int, overlap: int) -> list[str]:
         chunks = []
         start = 0
         while start < len(text):
@@ -226,7 +269,7 @@ class InboxIngestor:
             if end >= len(text):
                 break
             start = end - overlap
-        return [chunk for chunk in chunks if chunk]
+        return chunks
 
     def _read_text(self, path: Path) -> str:
         if path.suffix.lower() == ".pdf":

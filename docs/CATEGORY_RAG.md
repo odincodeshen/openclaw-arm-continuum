@@ -60,6 +60,14 @@ itself sent. Replying is the way to pull a specific message in on
 demand. `#[multi word]` and a trailing note work the same as the caption
 shortcut above.
 
+If a URL is present -- either in the note after the category (e.g.
+`#video-notes https://youtu.be/abc123`) or embedded in the replied-to
+text itself (e.g. a video summary that lists its own source link) -- it
+is recorded as a distinct `URL:` line in the stored document and becomes
+the document's citation name, so a later `/rag #<name>` answer's
+`Sources:` line shows the actual link instead of the generic "telegram
+reply" label.
+
 New category names are created on first use. Names are normalized
 (whitespace collapsed, case-insensitive) and mapped to a stable collection
 id such as `oc_cat_work-notes_1a2b3c4d`.
@@ -104,8 +112,9 @@ photo.
 
 Every `/rag` answer ends with a `Sources:` line naming the source documents
 the answer drew from. The name shown is the uploader's original filename when
-known (recorded in the `.meta.json` sidecar at upload), otherwise the
-document's first heading, otherwise the stored filename.
+known (recorded in the `.meta.json` sidecar at upload) -- or a replied-to
+message's URL, when one was recorded -- otherwise the document's first
+heading, otherwise the stored filename.
 
 ## Manage categories
 
