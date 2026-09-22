@@ -1,7 +1,7 @@
 # Future TODO List
 
 This document tracks candidate work items for `openclaw-arm-continuum`.
-Current release: **v1.9**.
+Current release: **v1.10**.
 
 The runtime is intentionally stable and text-first. The items below are
 future-facing and should be implemented incrementally without breaking the
@@ -66,6 +66,33 @@ v1.2 baseline. What has actually shipped since then:
   items, reactivates a done one) and `/mem edit <id> <new text>` replaces
   an item's text and re-embeds it without losing its short ID or history;
   see `docs/TRACKER_MEMORY.md`.
+- **v1.10 — tag/date scoped retrieval, reply-based ingest, video summary
+  relay.** `/mem list`/`/mem digest` and `/rag` gained a shared `tag:<word>`
+  scope filter, plus `/rag since:YYYY-MM-DD [before:YYYY-MM-DD]` for
+  date-range retrieval (combinable with `tag:`); `/mem archive-stale` sweeps
+  stale undated items out of the default list automatically; `/history`
+  previews a chat's pinned facts, rolling summary, and recent turns
+  read-only. A multi-photo Telegram album's shared caption is now buffered
+  and applied to every photo, fixing a case where only one photo in the
+  group got filed. Every model call is now grounded with the real current
+  date so the model stops mistaking real recent dates for "the future";
+  `/search` now opens a pasted link directly instead of searching for its
+  literal text. Category RAG gained a third ingest path: reply to **any**
+  text message with `#<name>` to file that message's text without an
+  upload -- built specifically so an external script that pushes a message
+  using the bot's own token (which never arrives back as an update) can
+  still be pulled in on demand; a URL in the reply or the replied-to text
+  is captured as a distinct field and becomes the `/rag` citation. The
+  inbox chunker is now header-aware, keeping a `#`/`##`/`###` section whole
+  in one chunk when it fits instead of always slicing by a fixed character
+  count. An optional per-bot video summary relay
+  (`OPENCLAW_VIDEO_SUMMARY_RELAY_URL`) detects a bare YouTube link, hands it
+  off over HTTP to an external Gemini-based summarizer, and lets the
+  resulting summary flow into RAG through the same reply-ingest path; see
+  `docs/VIDEO_SUMMARY_RELAY.md` and `docs/CATEGORY_RAG.md`. Also fixed a
+  stale-git-tag privacy issue: the `v1.9` tag on origin still pointed at
+  pre-rebase history containing a leaked identifier even though `main` had
+  already been scrubbed -- retagged to the corresponding clean commit.
 
 Still open from the original list, re-baselined against v1.6:
 
