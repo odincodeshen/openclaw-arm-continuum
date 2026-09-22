@@ -67,6 +67,10 @@ from openclaw_runtime.vision_client import DEFAULT_DESCRIBE_INSTRUCTION, VisionC
 
 
 _URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+_YOUTUBE_ONLY_RE = re.compile(
+    r"^https?://(?:www\.)?(?:youtube\.com/watch\?v=[\w-]+|youtu\.be/[\w-]+)\S*$",
+    re.IGNORECASE,
+)
 
 settings = load_settings()
 model_registry = load_model_registry(settings)
@@ -633,6 +637,50 @@ def handle_reply_category_message(chat_id: int, message: dict) -> bool:
         f'Give the indexer ~10 seconds, then query with /rag #{entry["display"]}.',
     )
     log(f"[category] reply ingest chat_id={chat_id} slug={entry['slug']}")
+    return True
+
+
+def _relay_video_summary(chat_id: int, video_url: str) -> None:
+    """Background-thread call to the configured Apps Script relay: ask it to
+    run Gemini's video summary and push the result back into this same chat
+    via its own sendMessage. Runs off the polling loop since Gemini's video
+    analysis can take a while -- failures are reported back explicitly so the
+    user is never left waiting silently."""
+    payload = {"video_url": video_url}
+    if settings.video_summary_relay_secret:
+        payload["secret"] = settings.video_summary_relay_secret
+    try:
+        result = request_json(
+            "POST",
+            settings.video_summary_relay_url,
+            payload,
+            timeout=settings.video_summary_relay_timeout_seconds,
+        )
+        if not result.get("ok"):
+            send_message(chat_id, f"Video summary relay failed: {result.get('error', 'unknown error')}")
+    except Exception as exc:
+        send_message(chat_id, f"Could not reach the video summary relay: {exc}")
+
+
+def handle_video_link_message(chat_id: int, text: str) -> bool:
+    """A message that is nothing but a YouTube link gets relayed to the
+    configured Apps Script endpoint (see telegram-video-relay-spec.md), which
+    runs Gemini's video summary and pushes the result back into this chat.
+    Reply to that pushed summary with #<category> to file it via the
+    existing handle_reply_category_message flow -- this function only
+    triggers the summary, it does not itself touch RAG."""
+    if not settings.video_summary_relay_url:
+        return False
+    if not _YOUTUBE_ONLY_RE.match(text):
+        return False
+    send_message(
+        chat_id,
+        "Got it -- sending this to Gemini for a summary. I'll push the result back here once it's "
+        "ready; reply to that message with #<category> to file it into RAG.",
+    )
+    worker = threading.Thread(target=_relay_video_summary, args=(chat_id, text), daemon=True)
+    worker.start()
+    log(f"[video] relay dispatched chat_id={chat_id}")
     return True
 
 
@@ -1639,6 +1687,14 @@ def handle_message(message: dict) -> None:
     except Exception as exc:
         log(f"[category] reply ingest error chat_id={chat_id}: {exc}")
         send_message(chat_id, f"OpenClaw could not file that reply into a category: {exc}")
+        return
+
+    try:
+        if handle_video_link_message(chat_id, text):
+            return
+    except Exception as exc:
+        log(f"[video] relay dispatch error chat_id={chat_id}: {exc}")
+        send_message(chat_id, f"OpenClaw could not start the video summary relay: {exc}")
         return
 
     if not text:

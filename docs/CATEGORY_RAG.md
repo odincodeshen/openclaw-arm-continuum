@@ -60,6 +60,11 @@ itself sent. Replying is the way to pull a specific message in on
 demand. `#[multi word]` and a trailing note work the same as the caption
 shortcut above.
 
+If a bot has [video summary relay](VIDEO_SUMMARY_RELAY.md) configured, the
+"external script" case above is exactly how a Gemini-generated video
+summary gets filed: send a bare YouTube link, wait for the summary to come
+back, then reply to it with `#<name>`.
+
 If a URL is present -- either in the note after the category (e.g.
 `#video-notes https://youtu.be/abc123`) or embedded in the replied-to
 text itself (e.g. a video summary that lists its own source link) -- it

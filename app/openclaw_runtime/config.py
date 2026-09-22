@@ -83,6 +83,9 @@ class Settings:
     category_max_name_chars: int
     category_image_max_tokens: int
     media_group_flush_seconds: float
+    video_summary_relay_url: str
+    video_summary_relay_secret: str
+    video_summary_relay_timeout_seconds: int
 
     mem_digest_due_soon_days: int
     mem_digest_stale_days: int
@@ -187,6 +190,9 @@ def load_settings() -> Settings:
         category_max_name_chars=env_int("OPENCLAW_CATEGORY_MAX_NAME_CHARS", 40),
         category_image_max_tokens=env_int("OPENCLAW_CATEGORY_IMAGE_MAX_TOKENS", 600),
         media_group_flush_seconds=env_float("OPENCLAW_MEDIA_GROUP_FLUSH_SECONDS", 2.5),
+        video_summary_relay_url=os.environ.get("OPENCLAW_VIDEO_SUMMARY_RELAY_URL", "").strip(),
+        video_summary_relay_secret=os.environ.get("OPENCLAW_VIDEO_SUMMARY_RELAY_SECRET", "").strip(),
+        video_summary_relay_timeout_seconds=env_int("OPENCLAW_VIDEO_SUMMARY_RELAY_TIMEOUT_SECONDS", 360),
         mem_digest_due_soon_days=env_int("OPENCLAW_MEM_DIGEST_DUE_SOON_DAYS", 7),
         mem_digest_stale_days=env_int("OPENCLAW_MEM_DIGEST_STALE_DAYS", 14),
         mem_digest_remind_cooldown_days=env_int("OPENCLAW_MEM_DIGEST_REMIND_COOLDOWN_DAYS", 7),

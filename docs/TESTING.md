@@ -77,6 +77,7 @@ one layer that fails if it breaks.
 | Multi-photo album caption sharing (`media_group_id`) | `test_category_gateway::MediaGroupBufferTest` | — | Telegram round trip with a real album |
 | Reply-to-message `#<category>` (no upload needed) | `test_category_gateway::ReplyCategoryMessageTest`, `CategoryIngestTest::test_ingest_text_*` | — | Telegram round trip against a real reply |
 | Reply-ingest URL extraction (`URL:` line + `Sources:` citation) | `test_category_gateway::ReplyCategoryMessageTest::test_url_in_*`, `CategoryIngestTest::test_ingest_text_with_url_*`/`test_ingest_text_without_url_*` | — | — |
+| Video summary relay (bare-link detection, Apps Script HTTP relay, failure reporting) | `test_video_relay::HandleVideoLinkMessageTest`, `RelayVideoSummaryTest` | — | live smoke test against a real Apps Script deployment |
 | `/cat rename` / `/cat merge` | `test_categories`, `test_category_gateway`, `test_qdrant_client` | `TrackerMemoryManagementScenario::test_delete_collection_against_real_qdrant` | full merge round trip with real ingest |
 | `Sources:` attribution | `test_category_rag_retrieve` | `CategoryRagScenario`, `KnowledgeAndMemoryScenario` | — |
 | Document / knowledge ingest | `test_file_ingest` | `KnowledgeAndMemoryScenario` | — |
