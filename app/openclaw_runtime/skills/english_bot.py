@@ -1,12 +1,13 @@
-"""Monday + Tuesday task logic for the English-learning bot (bot4,
-lc9_dgx4_en), per openclaw_eng_spec.md Section 0/2.1/2.2.
+"""Monday - Thursday task logic for the English-learning bot (bot4,
+lc9_dgx4_en), per openclaw_eng_spec.md Section 0/2.1/2.2/2.3/2.4.
 
-Not wired into the SkillRouter/skills.json -- Monday/Tuesday are triggered
-by time (a future /cron entry), not by a user's message text, so they don't
+Not wired into the SkillRouter/skills.json -- these days are triggered by
+time (a future /cron entry), not by a user's message text, so they don't
 fit the existing can_handle(text)/run(text) Skill protocol. This module
 exposes small, independently testable functions plus one orchestrator per
 day; a later wiring step (cron + gateway) calls the orchestrators and
-supplies real send_message/send_audio callables and owner chat_ids.
+supplies real send_message/send_audio callables, owner chat_ids, and the
+current week_number.
 
 Weekly content (episode, chunks, transcript) is SHARED across the family --
 written with plain qdrant.upsert_text(), not owned_records.write_owned_point(),
@@ -16,6 +17,7 @@ through daily_task_tracking, which is owner-scoped.
 """
 
 import json
+import random
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -512,4 +514,508 @@ def evaluate_tuesday_reply(reference_text: str, transcribed_reply: str, reply_du
         f"Pace: {wpm} WPM (this is shadowing -- aim to match the original clip's pace, "
         "not a fixed target)"
     )
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Wednesday: IELTS Speaking Part 2 (spec 2.3). Fixed question bank, Part 2
+# only for now -- the week_number > 17 Part 2+3 combo is v1.16, not here.
+#
+# The 12 cue cards below are the verbatim English text the consultant
+# actually provided (IELTS Liz / IELTS Advantage sourcing, per spec 2.3),
+# not a paraphrase -- the spec file only carries the short Chinese topic
+# summaries, so the literal English wording is transcribed here from the
+# original conversation turn where it was given. The remaining 48
+# questions (to reach the spec's 60-question, zero-repeat-for-38-weeks
+# target) are a content task for later, per spec Section 0.
+# ---------------------------------------------------------------------------
+
+IELTS_QUESTION_BANK: list[dict] = [
+    {
+        "id": "ielts_p2_event_01",
+        "category": "event",
+        "cue_card": (
+            "Describe a time when you received bad customer service and how "
+            "you handled it.\n\nYou should say:\n"
+            "- when and where it was\n"
+            "- what happened\n"
+            "- who you spoke to\n"
+            "and explain what action was taken to resolve the issue."
+        ),
+    },
+    {
+        "id": "ielts_p2_event_02",
+        "category": "event",
+        "cue_card": (
+            "Describe an occasion when you had to adapt to a sudden change "
+            "of plans.\n\nYou should say:\n"
+            "- what the original plan was\n"
+            "- why it changed\n"
+            "- what you did instead\n"
+            "and explain how you felt about the sudden disruption."
+        ),
+    },
+    {
+        "id": "ielts_p2_event_03",
+        "category": "event",
+        "cue_card": (
+            "Describe a challenging task you completed under tight time "
+            "pressure.\n\nYou should say:\n"
+            "- what the task was\n"
+            "- why time was limited\n"
+            "- how you managed your time\n"
+            "and explain the result of your effort."
+        ),
+    },
+    {
+        "id": "ielts_p2_people_01",
+        "category": "people",
+        "cue_card": (
+            "Describe a mentor, colleague, or friend who gave you valuable "
+            "advice.\n\nYou should say:\n"
+            "- who this person is\n"
+            "- what the advice was\n"
+            "- why you needed it at that time\n"
+            "and explain how following this advice affected your life."
+        ),
+    },
+    {
+        "id": "ielts_p2_people_02",
+        "category": "people",
+        "cue_card": (
+            "Describe someone you met recently who made a strong first "
+            "impression on you.\n\nYou should say:\n"
+            "- where you met them\n"
+            "- what you talked about\n"
+            "- what stood out about their character\n"
+            "and explain why they left an impression."
+        ),
+    },
+    {
+        "id": "ielts_p2_people_03",
+        "category": "people",
+        "cue_card": (
+            "Describe an occasion when you helped an elderly person or "
+            "neighbor.\n\nYou should say:\n"
+            "- who they were\n"
+            "- what kind of help they needed\n"
+            "- what you did\n"
+            "and explain how they reacted afterwards."
+        ),
+    },
+    {
+        "id": "ielts_p2_place_01",
+        "category": "place",
+        "cue_card": (
+            "Describe a quiet place you often visit to relax or think.\n\n"
+            "You should say:\n"
+            "- where this place is\n"
+            "- how often you go there\n"
+            "- what you do when you are there\n"
+            "and explain why it helps you clear your mind."
+        ),
+    },
+    {
+        "id": "ielts_p2_place_02",
+        "category": "place",
+        "cue_card": (
+            "Describe a town or city you visited that was completely "
+            "different from what you expected.\n\nYou should say:\n"
+            "- where it was\n"
+            "- what your initial expectations were\n"
+            "- what it was actually like\n"
+            "and explain whether the surprise was pleasant or disappointing."
+        ),
+    },
+    {
+        "id": "ielts_p2_place_03",
+        "category": "place",
+        "cue_card": (
+            "Describe an open-air market or local shop you enjoy "
+            "visiting.\n\nYou should say:\n"
+            "- where it is located\n"
+            "- what goods are sold there\n"
+            "- who you usually go with\n"
+            "and explain why you prefer it to a regular supermarket."
+        ),
+    },
+    {
+        "id": "ielts_p2_object_01",
+        "category": "object",
+        "cue_card": (
+            "Describe an item of clothing or equipment you bought that "
+            "turned out to be useless.\n\nYou should say:\n"
+            "- what the item was\n"
+            "- why you bought it\n"
+            "- why it didn't meet your expectations\n"
+            "and explain what you eventually did with it."
+        ),
+    },
+    {
+        "id": "ielts_p2_object_02",
+        "category": "object",
+        "cue_card": (
+            "Describe an old personal possession that has strong sentimental "
+            "value to you.\n\nYou should say:\n"
+            "- what it is\n"
+            "- how long you have owned it\n"
+            "- who gave it to you or where you got it\n"
+            "and explain why it means so much to you."
+        ),
+    },
+    {
+        "id": "ielts_p2_object_03",
+        "category": "object",
+        "cue_card": (
+            "Describe a piece of technology (other than a smartphone) that "
+            "broke down when you needed it most.\n\nYou should say:\n"
+            "- what the device was\n"
+            "- what went wrong with it\n"
+            "- what you were trying to do at the time\n"
+            "and explain how you handled the situation."
+        ),
+    },
+]
+
+STAR_EVAL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "situation_present": {"type": "boolean"},
+        "task_present": {"type": "boolean"},
+        "action_present": {"type": "boolean"},
+        "result_present": {"type": "boolean"},
+        "overused_words": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "word": {"type": "string", "minLength": 1},
+                    "replacement": {"type": "string", "minLength": 1},
+                },
+                "required": ["word", "replacement"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": [
+        "situation_present",
+        "task_present",
+        "action_present",
+        "result_present",
+        "overused_words",
+    ],
+    "additionalProperties": False,
+}
+
+
+def pick_ielts_question(qdrant: QdrantClient, collection: str) -> dict:
+    """Random pick from the fixed bank, excluding questions already asked
+    (tag:eng_ielts_topics, shared, no owner -- spec 2.3 Agent step 1). The
+    bank only has 12 of its eventual 60 questions right now, so once every
+    question has been asked at least once the "already asked" exclusion
+    resets (picks from the full bank again) rather than raising -- a small
+    bank cycling is preferable to the task silently failing to run."""
+    asked_points = qdrant.scroll_by_filters(collection, {"tag": "eng_ielts_topics"}, limit=512)
+    asked_ids = {(p.get("payload") or {}).get("question_id") for p in asked_points}
+    available = [q for q in IELTS_QUESTION_BANK if q["id"] not in asked_ids]
+    if not available:
+        available = IELTS_QUESTION_BANK
+    return random.choice(available)
+
+
+def mark_ielts_question_asked(
+    qdrant: QdrantClient, embeddings: EmbeddingClient, collection: str, question: dict
+) -> None:
+    text = f"ielts question asked: {question['id']}"
+    vector = embeddings.embed(text)
+    qdrant.upsert_text(
+        collection,
+        text,
+        vector,
+        {"tag": "eng_ielts_topics", "kind": "ielts_asked", "question_id": question["id"], "category": question["category"]},
+    )
+
+
+def build_wednesday_message(question: dict) -> str:
+    return (
+        "IELTS Speaking Part 2\n\n"
+        f"{question['cue_card']}\n\n"
+        "Use the STAR principle (Situation, Task, Action, Result). Don't "
+        "write a draft -- think for 1 minute, then speak continuously for "
+        "1.5 to 2 minutes and send it as a voice message."
+    )
+
+
+def run_wednesday_task(
+    *,
+    llm: LlmClient,
+    qdrant: QdrantClient,
+    embeddings: EmbeddingClient,
+    collection: str,
+    week_number: int,
+    owners: list[str],
+    send_message: Callable[[str, str], None],
+) -> dict:
+    question = pick_ielts_question(qdrant, collection)
+    mark_ielts_question_asked(qdrant, embeddings, collection, question)
+
+    message = build_wednesday_message(question)
+    vector = embeddings.embed(message)
+    for owner in owners:
+        send_message(owner, message)
+        mark_task_pushed(qdrant, collection, week_number, "wed", owner, vector)
+    return question
+
+
+def evaluate_wednesday_reply(llm: LlmClient, cue_card: str, transcribed_reply: str) -> str:
+    """LLM judges STAR-element presence and identifies overused basic
+    vocabulary with band-7.5+ replacements -- no separate word-frequency
+    pre-pass, per spec Section 3's confirmed decision."""
+    prompt = (
+        "This is an IELTS Speaking Part 2 response. The cue card was:\n"
+        f"{cue_card}\n\n"
+        f"The spoken response (transcribed) was:\n\"{transcribed_reply}\"\n\n"
+        "Judge whether each of the four STAR elements is present: "
+        "Situation (context/background), Task (what needed to be done), "
+        "Action (what the speaker actually did), Result (the outcome and "
+        "how they felt). Also identify basic/simple words that were "
+        "overused and suggest an IELTS band-7.5+ alternative for each."
+    )
+    raw = llm.chat_json(prompt, STAR_EVAL_SCHEMA, schema_name="star_evaluation", max_tokens=500)
+    data = json.loads(raw)
+
+    star_elements = {
+        "Situation": data["situation_present"],
+        "Task": data["task_present"],
+        "Action": data["action_present"],
+        "Result": data["result_present"],
+    }
+    missing = [name for name, present in star_elements.items() if not present]
+
+    lines = [f'Transcribed: "{transcribed_reply}"']
+    if missing:
+        lines.append(f"STAR structure: missing {', '.join(missing)}")
+    else:
+        lines.append("STAR structure: complete (Situation, Task, Action, Result all present)")
+    for item in data["overused_words"]:
+        lines.append(f'Overused: "{item["word"]}" -> try "{item["replacement"]}" (band 7.5+)')
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Thursday: British social small talk (spec 2.4). 7 fixed topic categories,
+# but the opener itself is generated fresh by the LLM each time -- not a
+# fixed script like Wednesday's cue cards. The safe/avoid table below is the
+# consultant's authenticity guardrail and MUST actually land in the prompt
+# text (spec Section 6 v1.13 calls this out as a named regression risk).
+# ---------------------------------------------------------------------------
+
+THURSDAY_CATEGORIES: list[str] = [
+    "weather_banter",
+    "home_garden_diy",
+    "weekend_getaway",
+    "commute_complaints",
+    "pub_meetup",
+    "sports_banter",
+    "bank_holiday_plans",
+]
+
+# bank_holiday_plans has no dedicated safe/avoid table from the consultant --
+# it deliberately shares the same understated, self-deprecating tone as
+# every other category (spec 2.4's own note), so it's left empty here and
+# _format_safe_avoid_for_prompt() falls back to that shared-tone instruction.
+THURSDAY_SAFE_AVOID: dict[str, dict[str, list[str]]] = {
+    "weather_banter": {
+        "safe": [
+            "Typical British summer, can't make up its mind.",
+            "Make the most of it before it chucks it down.",
+        ],
+        "avoid": [
+            "\"It's raining cats and dogs.\" (a textbook cliche real people rarely say)",
+            "Stating an exact temperature -- too formal/serious for small talk",
+        ],
+    },
+    "home_garden_diy": {
+        "safe": [
+            "Trying to keep on top of the weeds is a losing battle.",
+            "The lawn is out of control, quite frankly.",
+        ],
+        "avoid": [
+            "Boasting, or describing it like a professional landscaping report",
+            "\"I executed landscape renovation\" -- far too formal a phrase",
+        ],
+    },
+    "commute_complaints": {
+        "safe": [
+            "Southern/Thameslink was in a right mess this morning.",
+            "Signal failures again, standard.",
+        ],
+        "avoid": [
+            "Genuine political ranting or losing your temper -- British "
+            "commute complaints are dry, understated sarcasm, not angry "
+            "lecturing",
+        ],
+    },
+    "weekend_getaway": {
+        "safe": [
+            "Just a quiet one, took the dog for a decent walk.",
+            "Managed to nip away for a couple of days.",
+        ],
+        "avoid": [
+            "Giving a blow-by-blow itinerary",
+            "Making an ordinary weekend sound like a huge achievement",
+        ],
+    },
+    "pub_meetup": {
+        "safe": [
+            "A swift half after work?",
+            "Whose round is it?",
+        ],
+        "avoid": [
+            "\"Shall we visit the public house to consume alcohol?\" -- "
+            "textbook-formal, nobody talks like this",
+        ],
+    },
+    "sports_banter": {
+        "safe": [
+            "Didn't catch the full match, just saw the highlights.",
+            "Don't ask me, our defence is an absolute shambles this season.",
+        ],
+        "avoid": [
+            "Pretending to know detailed tactics/stats you don't actually know",
+            "Lecturing a colleague seriously right after their team lost",
+        ],
+    },
+    "bank_holiday_plans": {"safe": [], "avoid": []},
+}
+
+THURSDAY_OPENER_SCHEMA = {
+    "type": "object",
+    "properties": {"opener": {"type": "string", "minLength": 1}},
+    "required": ["opener"],
+    "additionalProperties": False,
+}
+
+THURSDAY_EVAL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "anchor_present": {"type": "boolean"},
+        "bounce_present": {"type": "boolean"},
+        "vocabulary_original": {"type": "string"},
+        "vocabulary_replacement": {"type": "string"},
+        "banter_reply": {"type": "string", "minLength": 1},
+    },
+    "required": [
+        "anchor_present",
+        "bounce_present",
+        "vocabulary_original",
+        "vocabulary_replacement",
+        "banter_reply",
+    ],
+    "additionalProperties": False,
+}
+
+
+def _format_safe_avoid_for_prompt(category: str) -> str:
+    table = THURSDAY_SAFE_AVOID.get(category, {"safe": [], "avoid": []})
+    if not table["safe"] and not table["avoid"]:
+        return (
+            "No specific example phrases for this category -- use the same "
+            "understated, self-deprecating British tone as the other "
+            "categories."
+        )
+    lines = ["Natural things a British person might actually say:"]
+    lines.extend(f"- {s}" for s in table["safe"])
+    lines.append("Avoid (outdated textbook idioms / too formal / too serious):")
+    lines.extend(f"- {a}" for a in table["avoid"])
+    return "\n".join(lines)
+
+
+def generate_thursday_opener(llm: LlmClient, category: str) -> str:
+    guidance = _format_safe_avoid_for_prompt(category)
+    topic_label = category.replace("_", " ")
+    prompt = (
+        f"Generate a 2-3 sentence opener a British colleague might use for "
+        f"small talk about {topic_label}, ending in a question. Do not use "
+        "outdated idioms like \"rain cats and dogs\"; reflect everyday "
+        "British understatement and self-deprecating banter.\n\n"
+        f"{guidance}"
+    )
+    raw = llm.chat_json(prompt, THURSDAY_OPENER_SCHEMA, schema_name="thursday_opener", max_tokens=200)
+    return json.loads(raw)["opener"]
+
+
+def build_thursday_message(category: str, opener: str) -> str:
+    return (
+        f"British small talk ({category.replace('_', ' ')})\n\n"
+        f"{opener}\n\n"
+        "Reply with a voice message using Anchor & Bounce: acknowledge it, "
+        "share your own situation, then bounce back an open question."
+    )
+
+
+def run_thursday_task(
+    *,
+    llm: LlmClient,
+    qdrant: QdrantClient,
+    embeddings: EmbeddingClient,
+    collection: str,
+    week_number: int,
+    owners: list[str],
+    send_message: Callable[[str, str], None],
+) -> str:
+    category = random.choice(THURSDAY_CATEGORIES)
+    opener = generate_thursday_opener(llm, category)
+    message = build_thursday_message(category, opener)
+    vector = embeddings.embed(message)
+    for owner in owners:
+        send_message(owner, message)
+        mark_task_pushed(qdrant, collection, week_number, "thu", owner, vector)
+    return opener
+
+
+def evaluate_thursday_reply(llm: LlmClient, opener: str, transcribed_reply: str) -> str:
+    """Judges Anchor & Bounce structure and -- per spec Section 0's SLA-
+    review addendum -- appends a text-only in-character colleague banter
+    reply. This is the reinstated TEXT version only; the earlier TTS-based
+    voice-reply idea stays removed (no TTS capability exists)."""
+    prompt = (
+        "This is a British workplace social small-talk exercise. "
+        f"The opener was:\n\"{opener}\"\n\n"
+        f"The reply (transcribed) was:\n\"{transcribed_reply}\"\n\n"
+        "Judge whether the reply follows an Anchor & Bounce structure: "
+        "Anchor = acknowledges/empathizes with the opener and shares the "
+        "speaker's own situation; Bounce = throws back an open-ended "
+        "question to keep the conversation going. If any phrase in the "
+        "reply sounds unnatural or too literal, suggest one more idiomatic "
+        "replacement (leave vocabulary_original and vocabulary_replacement "
+        "as empty strings if the reply is already natural). Finally, write "
+        "a short, authentic British colleague-style text reply (Pub Banter "
+        "tone, understated and self-deprecating, not TTS -- just text) as "
+        "if you were the colleague responding to what they just said."
+    )
+    raw = llm.chat_json(prompt, THURSDAY_EVAL_SCHEMA, schema_name="thursday_evaluation", max_tokens=500)
+    data = json.loads(raw)
+
+    lines = [
+        "Social Bounce evaluation report:",
+        f'- Transcribed: "{transcribed_reply}"',
+    ]
+    if data["anchor_present"] and data["bounce_present"]:
+        lines.append("- Anchor & Bounce structure: complete (empathy, own situation, and a bounce-back question)")
+    else:
+        missing = []
+        if not data["anchor_present"]:
+            missing.append("Anchor (empathy + your own situation)")
+        if not data["bounce_present"]:
+            missing.append("Bounce (an open question thrown back)")
+        lines.append(f"- Anchor & Bounce structure: missing {', '.join(missing)}")
+    if data.get("vocabulary_original"):
+        lines.append("")
+        lines.append("Suggestion:")
+        lines.append(f'  - Original: "{data["vocabulary_original"]}"')
+        lines.append(f'  - More natural: "{data["vocabulary_replacement"]}"')
+    lines.append("")
+    lines.append("Colleague text reply (Pub Banter):")
+    lines.append(f'"{data["banter_reply"]}"')
     return "\n".join(lines)

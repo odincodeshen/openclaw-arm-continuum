@@ -35,7 +35,9 @@ from openclaw_runtime.owned_records import read_owned_points, write_owned_point
 from openclaw_runtime.skills.english_bot import (
     Chunk,
     WeeklyContent,
+    mark_ielts_question_asked,
     next_week_number,
+    pick_ielts_question,
     read_this_week_payload,
     store_weekly_content,
 )
@@ -476,6 +478,23 @@ class EnglishLearningScenario(QdrantScenarioBase):
 
         # next_week_number now correctly skips past this week
         self.assertEqual(next_week_number(self.qdrant, self.tracker), week_number + 1)
+
+    def test_ielts_asked_question_dedup_persists_against_real_qdrant(self) -> None:
+        """v1.13: pick_ielts_question()'s exclusion of already-asked
+        questions has to hold up against a real Qdrant round trip, not just
+        a mocked scroll_by_filters -- proves the shared (no-owner)
+        tag:eng_ielts_topics write/read actually works end to end."""
+        first_pick = pick_ielts_question(self.qdrant, self.tracker)
+        mark_ielts_question_asked(self.qdrant, self.embeddings, self.tracker, first_pick)
+
+        second_pick = pick_ielts_question(self.qdrant, self.tracker)
+        self.assertNotEqual(second_pick["id"], first_pick["id"])
+
+        mark_ielts_question_asked(self.qdrant, self.embeddings, self.tracker, second_pick)
+        # both marks are shared content -- no owner field at all
+        points = self.qdrant.scroll_by_filters(self.tracker, {"tag": "eng_ielts_topics"}, limit=64)
+        for point in points:
+            self.assertNotIn("owner", point.get("payload") or {})
 
 
 class ChatMemoryScenario(unittest.TestCase):
