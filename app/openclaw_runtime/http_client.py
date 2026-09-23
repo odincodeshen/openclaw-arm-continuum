@@ -1,8 +1,11 @@
 import ipaddress
 import json
+import mimetypes
 import socket
 import urllib.parse
 import urllib.request
+import uuid
+from pathlib import Path
 
 
 USER_AGENT = "OpenClaw-Arm-Continuum/0.1"
@@ -45,6 +48,38 @@ def request_json(method: str, url: str, payload: dict | None = None, timeout: in
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def post_multipart_file(
+    url: str, fields: dict, file_field: str, file_path: Path, timeout: int = 60
+) -> dict:
+    """POST a file as multipart/form-data alongside plain text fields, for
+    APIs that need an actual file upload (e.g. Telegram's sendAudio) rather
+    than a JSON body -- request_json can't express this."""
+    boundary = uuid.uuid4().hex
+    content_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+    parts: list[bytes] = []
+    for key, value in fields.items():
+        parts.append(f"--{boundary}\r\n".encode())
+        parts.append(f'Content-Disposition: form-data; name="{key}"\r\n\r\n'.encode())
+        parts.append(f"{value}\r\n".encode())
+    parts.append(f"--{boundary}\r\n".encode())
+    parts.append(
+        f'Content-Disposition: form-data; name="{file_field}"; filename="{file_path.name}"\r\n'.encode()
+    )
+    parts.append(f"Content-Type: {content_type}\r\n\r\n".encode())
+    parts.append(file_path.read_bytes())
+    parts.append(b"\r\n")
+    parts.append(f"--{boundary}--\r\n".encode())
+    body = b"".join(parts)
+
+    headers = {
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+        "User-Agent": USER_AGENT,
+    }
+    request = urllib.request.Request(url, data=body, headers=headers, method="POST")
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 

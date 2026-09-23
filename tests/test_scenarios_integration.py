@@ -25,7 +25,13 @@ from openclaw_runtime.agents.base import Task
 from openclaw_runtime.agents.skill_agents import ChatAgent
 from openclaw_runtime.categories import category_slug
 from openclaw_runtime.conversation_memory import ConversationMemory
+from openclaw_runtime.daily_task_tracking import (
+    mark_task_completed,
+    mark_task_pushed,
+    sweep_incomplete_to_skipped,
+)
 from openclaw_runtime.embedding_client import EmbeddingClient
+from openclaw_runtime.owned_records import read_owned_points, write_owned_point
 from openclaw_runtime.file_ingest import InboxIngestor
 from openclaw_runtime.llm_client import LlmClient
 from openclaw_runtime.qdrant_client import QdrantClient
@@ -357,6 +363,73 @@ class TrackerMemoryManagementScenario(QdrantScenarioBase):
         self.qdrant.delete_collection(collection)
 
         self.assertIsNone(self.qdrant.points_count(collection))
+
+
+class EnglishLearningScenario(QdrantScenarioBase):
+    """v1.11 foundation for the English-learning bot: proves owner-scoped
+    read/write and the daily-task-completion tracker actually behave
+    correctly against a real Qdrant, not just against FakeQdrant's
+    assumptions about scroll/set_payload filtering semantics."""
+
+    def test_owner_filter_isolates_family_members_on_real_qdrant(self) -> None:
+        vector_a = self.embeddings.embed("owner a chunk usage")
+        vector_b = self.embeddings.embed("owner b chunk usage")
+
+        write_owned_point(
+            self.qdrant,
+            self.tracker,
+            "owner-a",
+            "owner a's sentence",
+            vector_a,
+            {"tag": "eng_wk1", "chunk": "spread oneself too thin"},
+        )
+        write_owned_point(
+            self.qdrant,
+            self.tracker,
+            "owner-b",
+            "owner b's sentence",
+            vector_b,
+            {"tag": "eng_wk1", "chunk": "spread oneself too thin"},
+        )
+
+        owner_a_records = read_owned_points(self.qdrant, self.tracker, "owner-a", {"tag": "eng_wk1"})
+        self.assertEqual(len(owner_a_records), 1)
+        self.assertEqual(owner_a_records[0]["payload"]["text"], "owner a's sentence")
+
+        owner_b_records = read_owned_points(self.qdrant, self.tracker, "owner-b", {"tag": "eng_wk1"})
+        self.assertEqual(len(owner_b_records), 1)
+        self.assertEqual(owner_b_records[0]["payload"]["text"], "owner b's sentence")
+
+    def test_daily_task_completion_round_trip_against_real_qdrant(self) -> None:
+        vector = self.embeddings.embed("monday task pushed")
+        mark_task_pushed(self.qdrant, self.tracker, 1, "mon", "owner-a", vector)
+
+        pushed = read_owned_points(self.qdrant, self.tracker, "owner-a", {"tag": "eng_wk1_daymon"})
+        self.assertEqual(len(pushed), 1)
+        self.assertFalse(pushed[0]["payload"]["completed"])
+
+        completed = mark_task_completed(self.qdrant, self.tracker, 1, "mon", "owner-a")
+        self.assertTrue(completed)
+
+        after = read_owned_points(self.qdrant, self.tracker, "owner-a", {"tag": "eng_wk1_daymon"})
+        self.assertTrue(after[0]["payload"]["completed"])
+
+    def test_sweep_marks_incomplete_owner_skipped_against_real_qdrant(self) -> None:
+        vector_a = self.embeddings.embed("tuesday task pushed a")
+        vector_b = self.embeddings.embed("tuesday task pushed b")
+        mark_task_pushed(self.qdrant, self.tracker, 1, "tue", "owner-a", vector_a)
+        mark_task_pushed(self.qdrant, self.tracker, 1, "tue", "owner-b", vector_b)
+        mark_task_completed(self.qdrant, self.tracker, 1, "tue", "owner-b")
+
+        swept = sweep_incomplete_to_skipped(
+            self.qdrant, self.tracker, 1, "tue", ["owner-a", "owner-b"]
+        )
+
+        self.assertEqual(swept, ["owner-a"])
+        owner_a_after = read_owned_points(self.qdrant, self.tracker, "owner-a", {"tag": "eng_wk1_daytue"})
+        self.assertTrue(owner_a_after[0]["payload"]["skipped"])
+        owner_b_after = read_owned_points(self.qdrant, self.tracker, "owner-b", {"tag": "eng_wk1_daytue"})
+        self.assertFalse(owner_b_after[0]["payload"]["skipped"])
 
 
 class ChatMemoryScenario(unittest.TestCase):

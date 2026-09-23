@@ -54,7 +54,7 @@ from openclaw_runtime.gateway_cron import (
 from openclaw_runtime.conversation_memory import ConversationMemory
 from openclaw_runtime.file_ingest import META_SIDECAR_SUFFIX, SUPPORTED_SUFFIXES
 from openclaw_runtime.engineering_review import EngineeringReviewAgent
-from openclaw_runtime.http_client import request_json
+from openclaw_runtime.http_client import post_multipart_file, request_json
 from openclaw_runtime.llm_client import VLLM_NOT_READY_MESSAGE
 from openclaw_runtime.model_catalog import load_model_registry
 from openclaw_runtime.model_client_factory import ModelClientFactory
@@ -104,6 +104,30 @@ SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
 # user's next plain-text message names the category (the two-step flow).
 PENDING_CATEGORY_LOCK = threading.Lock()
 PENDING_CATEGORY: dict[int, dict] = {}
+
+# chat_id -> arbitrary caller-defined dict describing what's being waited on.
+# Generic version of the PENDING_CATEGORY pattern above, for any "this chat
+# is waiting to answer something, the next message (text or voice) is the
+# answer" flow -- e.g. the English-learning bot's Saturday cloze quiz. Kept
+# separate from PENDING_CATEGORY so wiring a new answer-flow can never
+# regress the existing category two-step upload behaviour.
+PENDING_ANSWER_LOCK = threading.Lock()
+PENDING_ANSWER: dict[int, dict] = {}
+
+
+def set_pending_answer(chat_id: int, item: dict) -> None:
+    with PENDING_ANSWER_LOCK:
+        PENDING_ANSWER[chat_id] = item
+
+
+def pop_pending_answer(chat_id: int) -> dict | None:
+    with PENDING_ANSWER_LOCK:
+        return PENDING_ANSWER.pop(chat_id, None)
+
+
+def has_pending_answer(chat_id: int) -> bool:
+    with PENDING_ANSWER_LOCK:
+        return chat_id in PENDING_ANSWER
 
 # (chat_id, media_group_id) -> {"paths": [Path], "caption": str, "timer": Timer}
 # Telegram delivers a multi-photo album as separate messages that share one
@@ -345,6 +369,17 @@ def download_telegram_file(file_id: str, destination: Path) -> tuple[Path, int]:
         data = response.read()
     destination.write_bytes(data)
     return destination, len(data)
+
+
+def send_audio_file(chat_id: int, audio_path: Path, caption: str = "") -> None:
+    """The reverse of download_telegram_file -- OpenClaw's first outbound
+    file transfer. Uses Telegram's sendAudio, which needs a real multipart
+    upload (request_json only speaks JSON bodies)."""
+    url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendAudio"
+    fields = {"chat_id": str(chat_id)}
+    if caption:
+        fields["caption"] = caption
+    post_multipart_file(url, fields, "audio", audio_path, timeout=settings.request_timeout)
 
 
 def timestamp() -> str:
