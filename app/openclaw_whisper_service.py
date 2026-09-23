@@ -127,7 +127,20 @@ class Handler(BaseHTTPRequestHandler):
                 vad_filter=True,
                 beam_size=5,
             )
-            text = " ".join(segment.text.strip() for segment in segments if segment.text.strip())
+            # segments is a lazy generator -- consume once, building both the
+            # joined text (existing callers, e.g. voice-message transcription)
+            # and the per-segment timestamp list (new: Monday/Tuesday need
+            # real start/end times to pick a window and quote it back
+            # accurately, not just plain text).
+            segment_list = []
+            texts = []
+            for segment in segments:
+                stripped = segment.text.strip()
+                if not stripped:
+                    continue
+                texts.append(stripped)
+                segment_list.append({"start": segment.start, "end": segment.end, "text": stripped})
+            text = " ".join(texts)
             json_response(
                 self,
                 200,
@@ -135,6 +148,7 @@ class Handler(BaseHTTPRequestHandler):
                     "text": text.strip(),
                     "language": getattr(info, "language", None),
                     "duration": getattr(info, "duration", None),
+                    "segments": segment_list,
                 },
             )
         except Exception as exc:

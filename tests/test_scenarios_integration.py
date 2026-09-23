@@ -32,6 +32,14 @@ from openclaw_runtime.daily_task_tracking import (
 )
 from openclaw_runtime.embedding_client import EmbeddingClient
 from openclaw_runtime.owned_records import read_owned_points, write_owned_point
+from openclaw_runtime.skills.english_bot import (
+    Chunk,
+    WeeklyContent,
+    next_week_number,
+    read_this_week_payload,
+    store_weekly_content,
+)
+from openclaw_runtime.transcription_client import TranscriptSegment
 from openclaw_runtime.file_ingest import InboxIngestor
 from openclaw_runtime.llm_client import LlmClient
 from openclaw_runtime.qdrant_client import QdrantClient
@@ -430,6 +438,44 @@ class EnglishLearningScenario(QdrantScenarioBase):
         self.assertTrue(owner_a_after[0]["payload"]["skipped"])
         owner_b_after = read_owned_points(self.qdrant, self.tracker, "owner-b", {"tag": "eng_wk1_daytue"})
         self.assertFalse(owner_b_after[0]["payload"]["skipped"])
+
+    def test_weekly_content_round_trips_shared_with_no_owner_against_real_qdrant(self) -> None:
+        """v1.12: Monday's chunks + transcript_excerpt + window_segments_json
+        must persist correctly against real Qdrant and be readable back by
+        week_number with no owner field at all (shared family content, not
+        gated behind any one person's chat_id)."""
+        week_number = next_week_number(self.qdrant, self.tracker)
+        content = WeeklyContent(
+            week_number=week_number,
+            episode_title="Demis Hassabis",
+            episode_guid="urn:bbc:podcast:test-episode",
+            segment_start=300.0,
+            segment_end=480.0,
+            transcript_excerpt="I remember walking into the lab for the first time...",
+            chunks=[
+                Chunk("take a gamble on", "冒險一試", "We took a gamble on the new design."),
+                Chunk("spread oneself too thin", "心力過度分散", "I was spreading myself too thin."),
+                Chunk("get to grips with", "掌握複雜事物", "It took weeks to get to grips with it."),
+            ],
+            window_segments=[
+                TranscriptSegment(start=0.0, end=5.0, text="Host: tell me about that."),
+                TranscriptSegment(start=5.0, end=45.0, text="I remember walking into the lab..."),
+            ],
+        )
+
+        store_weekly_content(self.qdrant, self.embeddings, self.tracker, content)
+
+        payload = read_this_week_payload(self.qdrant, self.tracker, week_number)
+        self.assertNotIn("owner", payload)
+        self.assertEqual(payload["tag"], f"eng_wk{week_number}")
+        self.assertEqual(payload["episode_guid"], "urn:bbc:podcast:test-episode")
+        self.assertEqual(payload["transcript_excerpt"], "I remember walking into the lab for the first time...")
+        segments_back = json.loads(payload["window_segments_json"])
+        self.assertEqual(len(segments_back), 2)
+        self.assertEqual(segments_back[1]["text"], "I remember walking into the lab...")
+
+        # next_week_number now correctly skips past this week
+        self.assertEqual(next_week_number(self.qdrant, self.tracker), week_number + 1)
 
 
 class ChatMemoryScenario(unittest.TestCase):
