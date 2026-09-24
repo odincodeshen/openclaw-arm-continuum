@@ -808,7 +808,20 @@ def mark_ielts_question_asked(
     )
 
 
-def build_wednesday_message(question: dict) -> str:
+def build_wednesday_message(question: dict, part3_question: str | None = None) -> str:
+    if part3_question:
+        return (
+            "IELTS Speaking Part 2 + Part 3\n\n"
+            f"{question['cue_card']}\n\n"
+            "Use the STAR principle (Situation, Task, Action, Result). Don't "
+            "write a draft -- think for 1 minute, then speak for about 1 "
+            "minute on Part 2.\n\n"
+            f"Then, Part 3: {part3_question}\n\n"
+            "Speak for about 1 more minute on Part 3 -- state a claim, "
+            "acknowledge a counter-argument or limitation, then give your "
+            "conclusion. Send both parts as one voice message, about 2 "
+            "minutes total."
+        )
     return (
         "IELTS Speaking Part 2\n\n"
         f"{question['cue_card']}\n\n"
@@ -816,6 +829,94 @@ def build_wednesday_message(question: dict) -> str:
         "write a draft -- think for 1 minute, then speak continuously for "
         "1.5 to 2 minutes and send it as a voice message."
     )
+
+
+# ---------------------------------------------------------------------------
+# v1.16: from week_number > 17 (~month 5 of the 9-month plan), Wednesday
+# becomes Part 2 + Part 3 "same-topic deep dive" (spec Section 0's SLA-review
+# addendum, consultant Plan A) -- not a full switch away from Part 2 and not
+# alternating weeks, so Part 2 narrative practice never goes stale. week_number
+# <= 17 is completely unchanged from v1.13: build_wednesday_message/
+# run_wednesday_task/evaluate_wednesday_reply all default part3_question to
+# None, which reproduces the old single-part behaviour byte-for-byte.
+# ---------------------------------------------------------------------------
+
+WEDNESDAY_COMBO_THRESHOLD_WEEK = 17
+
+
+def is_part2_3_combo_week(week_number: int) -> bool:
+    return week_number > WEDNESDAY_COMBO_THRESHOLD_WEEK
+
+
+# Real IELTS Part 3 examiners ask a live follow-up drawn from a macro theme,
+# not a fixed cue card -- these 6 themes are the consultant's exact list
+# (spec 2.3 point 2), used verbatim, not paraphrased.
+PART3_THEMES = [
+    "education reform",
+    "environment and urbanization",
+    "technology ethics",
+    "consumerism",
+    "cultural heritage preservation",
+    "globalization and remote work",
+]
+
+PART3_QUESTION_SCHEMA = {
+    "type": "object",
+    "properties": {"part3_question": {"type": "string", "minLength": 1}},
+    "required": ["part3_question"],
+    "additionalProperties": False,
+}
+
+ARGUMENT_EVAL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "claim_present": {"type": "boolean"},
+        "concession_present": {"type": "boolean"},
+        "conclusion_present": {"type": "boolean"},
+    },
+    "required": ["claim_present", "concession_present", "conclusion_present"],
+    "additionalProperties": False,
+}
+
+
+def generate_part3_question(llm: LlmClient, part2_cue_card: str) -> str:
+    """LLM extends the Part 2 topic into one debatable Part 3 macro
+    question -- not a fixed bank, real examiners improvise this live (spec
+    2.3 point 2)."""
+    themes = ", ".join(PART3_THEMES)
+    prompt = (
+        "This is IELTS Speaking Part 3. The candidate just answered this "
+        f"Part 2 cue card:\n{part2_cue_card}\n\n"
+        "Generate ONE follow-up Part 3 question that extends the Part 2 "
+        "topic into a debatable, evaluative macro-level discussion -- the "
+        "kind a real examiner would ask to probe abstract reasoning, not a "
+        "trivial follow-up about the same personal story. Draw on one of "
+        f"these broader themes if it fits naturally: {themes}. For example, "
+        "if Part 2 was about solving a work problem, a good Part 3 "
+        "extension would be: \"Does automation and AI reduce human "
+        "problem-solving skills, or does it enhance them?\""
+    )
+    raw = llm.chat_json(prompt, PART3_QUESTION_SCHEMA, schema_name="part3_question", max_tokens=150)
+    return json.loads(raw)["part3_question"]
+
+
+def evaluate_part3_argument(llm: LlmClient, part3_question: str, transcribed_reply: str) -> dict:
+    """Part 3's own evaluation standard -- argument structure (Claim ->
+    Concession/counter-argument -> Conclusion), a distinct schema from Part
+    2's STAR narrative check (spec Section 3, week_number > 17)."""
+    prompt = (
+        "This is an IELTS Speaking Part 3 response to a discussion "
+        f"question:\n\"{part3_question}\"\n\n"
+        f"The spoken response (transcribed) was:\n\"{transcribed_reply}\"\n\n"
+        "Judge whether each of these three argument-structure elements is "
+        "present: Claim (a clear position/opinion is stated), Concession "
+        "or counter-argument (acknowledges the other side or a "
+        "limitation), Conclusion (wraps up with a final judgment)."
+    )
+    raw = llm.chat_json(
+        prompt, ARGUMENT_EVAL_SCHEMA, schema_name="part3_argument_evaluation", max_tokens=300
+    )
+    return json.loads(raw)
 
 
 def run_wednesday_task(
@@ -831,12 +932,20 @@ def run_wednesday_task(
     question = pick_ielts_question(qdrant, collection)
     mark_ielts_question_asked(qdrant, embeddings, collection, question)
 
-    message = build_wednesday_message(question)
+    part3_question = None
+    if is_part2_3_combo_week(week_number):
+        part3_question = generate_part3_question(llm, question["cue_card"])
+
+    message = build_wednesday_message(question, part3_question=part3_question)
     vector = embeddings.embed(message)
     for owner in owners:
         send_message(owner, message)
         mark_task_pushed(qdrant, collection, week_number, "wed", owner, vector)
-    return question
+
+    result = dict(question)
+    if part3_question:
+        result["part3_question"] = part3_question
+    return result
 
 
 def evaluate_wednesday_reply(
@@ -848,10 +957,16 @@ def evaluate_wednesday_reply(
     collection: str,
     owner: str,
     week_number: int,
+    part3_question: str | None = None,
 ) -> str:
     """LLM judges STAR-element presence and identifies overused basic
     vocabulary with band-7.5+ replacements -- no separate word-frequency
-    pre-pass, per spec Section 3's confirmed decision."""
+    pre-pass, per spec Section 3's confirmed decision. When part3_question
+    is given (week_number > 17 combo weeks), also runs the Part 3
+    argument-structure check on the same transcribed_reply and reports both
+    sections separately, but still calls mark_task_completed exactly once
+    regardless of one or two parts (spec Section 0's SLA addendum). Omitting
+    part3_question reproduces the pre-v1.16 single-part behaviour exactly."""
     prompt = (
         "This is an IELTS Speaking Part 2 response. The cue card was:\n"
         f"{cue_card}\n\n"
@@ -874,12 +989,35 @@ def evaluate_wednesday_reply(
     missing = [name for name, present in star_elements.items() if not present]
 
     lines = [f'Transcribed: "{transcribed_reply}"']
+    if part3_question:
+        lines.append("")
+        lines.append("Part 2 (STAR):")
     if missing:
         lines.append(f"STAR structure: missing {', '.join(missing)}")
     else:
         lines.append("STAR structure: complete (Situation, Task, Action, Result all present)")
     for item in data["overused_words"]:
         lines.append(f'Overused: "{item["word"]}" -> try "{item["replacement"]}" (band 7.5+)')
+
+    if part3_question:
+        argument = evaluate_part3_argument(llm, part3_question, transcribed_reply)
+        argument_elements = {
+            "Claim": argument["claim_present"],
+            "Concession/counter-argument": argument["concession_present"],
+            "Conclusion": argument["conclusion_present"],
+        }
+        argument_missing = [name for name, present in argument_elements.items() if not present]
+        lines.append("")
+        lines.append(f'Part 3 question: "{part3_question}"')
+        lines.append("Part 3 (Argument structure):")
+        if argument_missing:
+            lines.append(f"Argument structure: missing {', '.join(argument_missing)}")
+        else:
+            lines.append(
+                "Argument structure: complete (Claim, Concession/counter-argument, "
+                "Conclusion all present)"
+            )
+
     mark_task_completed(qdrant, collection, week_number, "wed", owner)
     return "\n".join(lines)
 
