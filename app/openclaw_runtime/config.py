@@ -116,6 +116,13 @@ class Settings:
     gateway_token: str
     gateway_state_db_path: Path
 
+    english_bot_enabled: bool
+    english_bot_owners: set[int]
+    english_bot_push_time: str
+    english_bot_sweep_time: str
+    english_bot_timezone: str
+    english_bot_state_path: Path
+
 
 def load_settings() -> Settings:
     allowed_chat_ids = {
@@ -129,6 +136,11 @@ def load_settings() -> Settings:
     cron_chat_ids = {
         int(item.strip())
         for item in os.environ.get("OPENCLAW_CRON_CHAT_IDS", "").split(",")
+        if item.strip()
+    }
+    english_bot_owners = {
+        int(item.strip())
+        for item in os.environ.get("OPENCLAW_ENGLISH_BOT_OWNERS", "").split(",")
         if item.strip()
     }
     return Settings(
@@ -221,4 +233,12 @@ def load_settings() -> Settings:
         gateway_rpc_url=os.environ.get("OPENCLAW_GATEWAY_RPC_URL", "http://openclaw-gateway:18789/api/v1/admin/rpc").rstrip("/"),
         gateway_token=os.environ.get("OPENCLAW_GATEWAY_TOKEN", "").strip(),
         gateway_state_db_path=Path(os.environ.get("OPENCLAW_GATEWAY_STATE_DB", "/gateway-state/openclaw.sqlite")),
+        english_bot_enabled=env_bool("OPENCLAW_ENGLISH_BOT_ENABLED", False),
+        english_bot_owners=english_bot_owners,
+        english_bot_push_time=os.environ.get("OPENCLAW_ENGLISH_BOT_PUSH_TIME", "07:15"),
+        english_bot_sweep_time=os.environ.get("OPENCLAW_ENGLISH_BOT_SWEEP_TIME", "21:00"),
+        english_bot_timezone=os.environ.get("OPENCLAW_ENGLISH_BOT_TIMEZONE", "Europe/London"),
+        english_bot_state_path=Path(
+            os.environ.get("OPENCLAW_ENGLISH_BOT_STATE_PATH", "/workspace/.openclaw/english_bot_state.json")
+        ),
     )

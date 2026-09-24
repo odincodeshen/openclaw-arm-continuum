@@ -429,6 +429,12 @@ def build_tuesday_message(annotated_text: str) -> str:
     )
 
 
+@dataclass(frozen=True)
+class TuesdayTask:
+    annotated: str
+    stretch_text: str
+
+
 def run_tuesday_task(
     *,
     week_number: int,
@@ -441,9 +447,15 @@ def run_tuesday_task(
     send_message: Callable[[str, str], None],
     send_audio: Callable[[str, Path, str], None],
     workspace_dir: Path,
-) -> str:
+) -> TuesdayTask:
     """Reuses Monday's already-clipped window.mp3 and stored transcript --
-    no redownload, no re-transcription."""
+    no redownload, no re-transcription. Returns both the annotated text
+    (already sent to the user) and the raw, unannotated stretch_text --
+    the wiring layer needs the raw form as evaluate_tuesday_reply's
+    reference_text, since the **bold**/`/`/(schwa) annotation marks would
+    corrupt a word-level diff if compared against directly. The raw text
+    is never persisted anywhere else (LLM-generated fresh each Tuesday),
+    so it has to come from this return value, not a later Qdrant read."""
     payload = read_this_week_payload(qdrant, collection, week_number)
     window_segments = [
         TranscriptSegment(start=s["start"], end=s["end"], text=s["text"])
@@ -472,7 +484,7 @@ def run_tuesday_task(
         send_audio(owner, clip_path, "Shadow this clip -- listen, then record yourself echoing it.")
         mark_task_pushed(qdrant, collection, week_number, "tue", owner, vector)
 
-    return annotated
+    return TuesdayTask(annotated=annotated, stretch_text=stretch["stretch_text"])
 
 
 # ---------------------------------------------------------------------------

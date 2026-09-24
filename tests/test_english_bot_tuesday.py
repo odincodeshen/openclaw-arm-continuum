@@ -133,7 +133,7 @@ class RunTuesdayTaskTest(unittest.TestCase):
         self.send_audio = send_audio
 
     def test_reuses_window_mp3_and_sends_text_and_audio(self) -> None:
-        annotated = run_tuesday_task(
+        task = run_tuesday_task(
             week_number=1,
             clip_client=self.clip_client,
             llm=self.llm,
@@ -146,7 +146,8 @@ class RunTuesdayTaskTest(unittest.TestCase):
             workspace_dir=self.workspace_dir,
         )
 
-        self.assertEqual(annotated, "I **remember** it well / and it changed everything")
+        self.assertEqual(task.annotated, "I **remember** it well / and it changed everything")
+        self.assertEqual(task.stretch_text, "I remember it well and it changed everything")
 
         # clips from window.mp3 (not episode.mp3), using window-relative timestamps
         self.clip_client.clip.assert_called_once()

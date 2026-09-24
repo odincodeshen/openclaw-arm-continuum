@@ -86,6 +86,12 @@ def build_settings(**overrides) -> Settings:
         gateway_rpc_url="http://x",
         gateway_token="x",
         gateway_state_db_path=Path("openclaw.sqlite"),
+        english_bot_enabled=False,
+        english_bot_owners=set(),
+        english_bot_push_time="07:15",
+        english_bot_sweep_time="21:00",
+        english_bot_timezone="Europe/London",
+        english_bot_state_path=Path("english_bot_state.json"),
     )
     base.update(overrides)
     return Settings(**base)

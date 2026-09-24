@@ -12,7 +12,9 @@ import traceback
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
+from openclaw_runtime.audio_clip_client import AudioClipClient
 from openclaw_runtime.categories import (
     parse_category_caption,
     parse_two_category_names,
@@ -52,6 +54,19 @@ from openclaw_runtime.gateway_cron import (
     update_gateway_job_state_sqlite,
 )
 from openclaw_runtime.conversation_memory import ConversationMemory
+from openclaw_runtime.embedding_client import EmbeddingClient
+from openclaw_runtime.english_bot_scheduler import (
+    day_code_for,
+    dispatch_pending_reply,
+    load_json as load_english_bot_state,
+    mark_pushed_today,
+    mark_swept_today,
+    run_todays_push,
+    run_todays_sweep,
+    should_push_today,
+    should_sweep_today,
+    write_json as write_english_bot_state,
+)
 from openclaw_runtime.file_ingest import META_SIDECAR_SUFFIX, SUPPORTED_SUFFIXES
 from openclaw_runtime.engineering_review import EngineeringReviewAgent
 from openclaw_runtime.http_client import post_multipart_file, request_json
@@ -79,6 +94,8 @@ llm = model_clients.get("local_default")
 vision = VisionClient(model_clients.get_or_default("vision"))
 qdrant = QdrantClient(settings)
 transcriber = TranscriptionClient(settings)
+embeddings = EmbeddingClient(settings)
+english_bot_clip_client = AudioClipClient(settings)
 conversation_memory = ConversationMemory(settings, llm)
 skill_router = SkillRouter(settings, llm, model_clients)
 task_history = TaskHistory(settings.task_history_path)
@@ -716,6 +733,89 @@ def handle_video_link_message(chat_id: int, text: str) -> bool:
     worker = threading.Thread(target=_relay_video_summary, args=(chat_id, text), daemon=True)
     worker.start()
     log(f"[video] relay dispatched chat_id={chat_id}")
+    return True
+
+
+def _process_english_bot_reply(chat_id: int, pending: dict, transcribed_reply: str, reply_duration_seconds: float) -> None:
+    try:
+        feedback = dispatch_pending_reply(
+            pending=pending,
+            transcribed_reply=transcribed_reply,
+            reply_duration_seconds=reply_duration_seconds,
+            llm=llm,
+            qdrant=qdrant,
+            embeddings=embeddings,
+            collection=settings.tracker_collection,
+            owner=str(chat_id),
+        )
+    except Exception as exc:
+        log(f"[english_bot] reply dispatch error chat_id={chat_id} kind={pending.get('kind')}: {exc}")
+        send_message(chat_id, f"OpenClaw could not evaluate that reply: {exc}")
+        return
+    send_message(chat_id, feedback)
+    log(f"[english_bot] reply evaluated chat_id={chat_id} kind={pending.get('kind')}")
+
+
+def handle_english_bot_pending_reply(chat_id: int, message: dict) -> bool:
+    """If this chat has a pending English-bot task awaiting an answer
+    (PENDING_ANSWER, set by the daily scheduler loop -- see
+    _english_bot_scheduler_loop near main()), treat this message -- voice
+    or text, transcribed if voice -- as that answer. Runs before the
+    generic document/photo/voice handling in handle_message() so a voice
+    reply doesn't get swallowed into the normal voice-chat flow (which
+    would transcribe it and route it through the general skill router
+    instead of evaluating it as today's English-bot task, per
+    process_voice_message)."""
+    if not settings.english_bot_enabled:
+        return False
+    if not has_pending_answer(chat_id):
+        return False
+
+    voice = message.get("voice") or message.get("audio")
+    text = (message.get("text") or message.get("caption") or "").strip()
+    if not voice and not text:
+        return False  # e.g. a stray photo/document -- leave the pending answer intact
+
+    pending = pop_pending_answer(chat_id)
+    if pending is None:
+        return False
+
+    if voice:
+        file_id = voice.get("file_id")
+        if not file_id:
+            send_message(chat_id, "This voice reply has no Telegram file_id, so OpenClaw cannot download it.")
+            return True
+        file_info = telegram_file_info(file_id)
+        suffix = extension_from_file_path(file_info.get("file_path", ""), voice.get("mime_type"), ".ogg")
+        target_name = sanitize_filename(
+            f"{timestamp()}-english-bot-reply{suffix}", f"{timestamp()}-english-bot-reply.ogg"
+        )
+        target_path = unique_path(settings.inbox_path / "audio" / "telegram", target_name)
+        downloaded_path, _ = download_telegram_file(file_id, target_path)
+        duration = float(voice.get("duration") or 0.0)
+
+        def _transcribe_and_evaluate() -> None:
+            try:
+                transcript = transcriber.transcribe(downloaded_path)
+            except Exception as exc:
+                log(f"[english_bot] transcription error chat_id={chat_id}: {exc}")
+                send_message(chat_id, f"Voice reply saved, but Whisper transcription failed: {exc}")
+                return
+            if not transcript:
+                send_message(chat_id, "Whisper did not produce any text from this voice reply.")
+                return
+            _process_english_bot_reply(chat_id, pending, transcript, duration)
+
+        worker = threading.Thread(target=_transcribe_and_evaluate, daemon=True)
+        worker.start()
+        log(f"[english_bot] voice reply queued chat_id={chat_id} kind={pending.get('kind')}")
+        return True
+
+    worker = threading.Thread(
+        target=_process_english_bot_reply, args=(chat_id, pending, text, 0.0), daemon=True
+    )
+    worker.start()
+    log(f"[english_bot] text reply queued chat_id={chat_id} kind={pending.get('kind')}")
     return True
 
 
@@ -1705,6 +1805,14 @@ def handle_message(message: dict) -> None:
             log(f"[category] sweep error: {exc}")
 
     try:
+        if handle_english_bot_pending_reply(chat_id, message):
+            return
+    except Exception as exc:
+        log(f"[english_bot] pending-reply routing error chat_id={chat_id}: {exc}")
+        send_message(chat_id, f"OpenClaw could not process that reply: {exc}")
+        return
+
+    try:
         if handle_document_message(chat_id, message, text):
             return
         if handle_photo_message(chat_id, message):
@@ -1813,6 +1921,70 @@ def handle_message(message: dict) -> None:
     worker.start()
 
 
+def _english_bot_send_message(owner: str, text: str) -> None:
+    send_message(int(owner), text)
+
+
+def _english_bot_send_audio(owner: str, path: Path, caption: str) -> None:
+    send_audio_file(int(owner), path, caption)
+
+
+def _english_bot_set_pending_answer(owner: str, item: dict) -> None:
+    set_pending_answer(int(owner), item)
+
+
+def _english_bot_scheduler_loop() -> None:
+    """Background daily push/sweep loop for the English-learning bot
+    (bot4 only -- gated on OPENCLAW_ENGLISH_BOT_ENABLED in main(), never
+    runs for the other 3 bot profiles sharing this codebase). Lives in
+    this process (not the separate openclaw-cron container) so it can
+    call directly into llm/qdrant/embeddings/send_message and PENDING_ANSWER
+    without any cross-container RPC -- see openclaw_eng_spec.md's wiring
+    design. Polls roughly once a minute; english_bot_scheduler's own
+    owner/chat_id convention is str (matches owned_records.py), so every
+    call across this boundary converts str<->int explicitly (see the three
+    wrapper functions above and str(o) below) -- English-learning content
+    and per-user tracker state all live in Qdrant already, this loop's
+    own local state file only tracks "did today's push/sweep already run"
+    to survive restarts without double-firing."""
+    owners = [str(o) for o in settings.english_bot_owners]
+    if not owners:
+        log("[english_bot] scheduler enabled but OPENCLAW_ENGLISH_BOT_OWNERS is empty -- nothing to do")
+        return
+    tz = ZoneInfo(settings.english_bot_timezone)
+    while RUNNING:
+        try:
+            now = datetime.now(tz)
+            state = load_english_bot_state(settings.english_bot_state_path, {})
+            if should_push_today(now, settings.english_bot_push_time, state):
+                day_code = day_code_for(now)
+                run_todays_push(
+                    day_code=day_code,
+                    llm=llm,
+                    qdrant=qdrant,
+                    embeddings=embeddings,
+                    collection=settings.tracker_collection,
+                    owners=owners,
+                    send_message=_english_bot_send_message,
+                    send_audio=_english_bot_send_audio,
+                    set_pending_answer=_english_bot_set_pending_answer,
+                    clip_client=english_bot_clip_client,
+                    transcription_client=transcriber,
+                    workspace_root=settings.inbox_path,
+                )
+                mark_pushed_today(now, state)
+                write_english_bot_state(settings.english_bot_state_path, state)
+                log(f"[english_bot] pushed day={day_code} owners={owners}")
+            if should_sweep_today(now, settings.english_bot_sweep_time, state):
+                swept = run_todays_sweep(qdrant, settings.tracker_collection, owners)
+                mark_swept_today(now, state)
+                write_english_bot_state(settings.english_bot_state_path, state)
+                log(f"[english_bot] sweep done swept={swept}")
+        except Exception:
+            log(f"[english_bot] scheduler loop error: {traceback.format_exc()}")
+        time.sleep(60)
+
+
 def main() -> int:
     if not settings.telegram_bot_token:
         log("OPENCLAW_TELEGRAM_BOT_TOKEN is required")
@@ -1828,6 +2000,15 @@ def main() -> int:
     log(f"[vllm] endpoint={settings.vllm_base_url} model={settings.vllm_model}")
     log(f"[skills] loaded={[skill.name for skill in skill_router.skills]}")
     log(f"[agents] loaded={[agent.name for agent in agent_registry.agents]}")
+
+    if settings.english_bot_enabled:
+        english_bot_thread = threading.Thread(target=_english_bot_scheduler_loop, daemon=True)
+        english_bot_thread.start()
+        log(
+            f"[english_bot] scheduler started timezone={settings.english_bot_timezone} "
+            f"push={settings.english_bot_push_time} sweep={settings.english_bot_sweep_time} "
+            f"owners={sorted(settings.english_bot_owners)}"
+        )
 
     while RUNNING:
         try:
