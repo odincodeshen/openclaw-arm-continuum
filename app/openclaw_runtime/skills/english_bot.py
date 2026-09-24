@@ -28,6 +28,7 @@ from openclaw_runtime.daily_task_tracking import mark_task_pushed
 from openclaw_runtime.embedding_client import EmbeddingClient
 from openclaw_runtime.http_client import get_bytes, get_text
 from openclaw_runtime.llm_client import LlmClient
+from openclaw_runtime.owned_records import read_owned_points, write_owned_point
 from openclaw_runtime.qdrant_client import QdrantClient
 from openclaw_runtime.rss_client import RssItem, parse_rss_items
 from openclaw_runtime.transcription_client import TranscriptionClient, TranscriptSegment
@@ -241,6 +242,17 @@ def read_this_week_payload(qdrant: QdrantClient, collection: str, week_number: i
     if not points:
         raise ValueError(f"no weekly content stored for week {week_number} -- has Monday's task run yet?")
     return points[0]["payload"]
+
+
+def read_this_week_chunks(qdrant: QdrantClient, collection: str, week_number: int) -> list[dict]:
+    """Unlike read_this_week_payload (one point), Friday/Saturday need all 3
+    chunk payloads for the week."""
+    points = qdrant.scroll_by_filters(
+        collection, {"kind": "weekly_content", "week_number": week_number}, limit=4
+    )
+    if not points:
+        raise ValueError(f"no weekly content stored for week {week_number} -- has Monday's task run yet?")
+    return [p["payload"] for p in points]
 
 
 def build_monday_message(content: WeeklyContent) -> str:
@@ -1018,4 +1030,384 @@ def evaluate_thursday_reply(llm: LlmClient, opener: str, transcribed_reply: str)
     lines.append("")
     lines.append("Colleague text reply (Pub Banter):")
     lines.append(f'"{data["banter_reply"]}"')
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Shared per-chunk-per-owner progress (spec 2.5/2.6/Section 4). Friday and
+# Saturday write/read the SAME record per (week_number, chunk, owner): a
+# deterministic tag + chunk-name lookup (create on first write, update via
+# set_payload after), not a fresh point every time. needs_review is sticky
+# within a week -- once any single evaluation (Friday's speaking OR
+# Saturday's cloze) marks it True, a later correct evaluation that week does
+# NOT clear it back to False (spec 2.5 point 4: "任一次判定錯誤...標記
+# needs_review", no mention of un-flagging on a later success).
+#
+# NOTE for the coordinator: the spec says a failure "留存至下一週期"
+# (persists into the next cycle) -- read literally, that could mean a
+# flagged chunk should stay visible as a review item in FUTURE weeks too,
+# not just within this week's Friday/Saturday pair. This implementation
+# scopes needs_review to the week (tag includes week_number), matching
+# every test this milestone's spec section actually names (the weekly
+# Monday->Friday->Saturday chain). Building a cross-week review backlog
+# that aggregates needs_review=True chunks across many past weeks is not
+# covered by any milestone in spec Section 6 (v1.11-v1.16) -- flagging this
+# as an open question rather than guessing at unscoped work.
+# ---------------------------------------------------------------------------
+
+
+def _chunk_progress_tag(week_number: int) -> str:
+    return f"eng_wk{week_number}"
+
+
+def _read_chunk_progress_point(
+    qdrant: QdrantClient, collection: str, owner: str, week_number: int, phrase: str
+) -> dict | None:
+    points = read_owned_points(
+        qdrant,
+        collection,
+        owner,
+        {"tag": _chunk_progress_tag(week_number), "kind": "chunk_progress", "chunk": phrase},
+        limit=1,
+    )
+    return points[0] if points else None
+
+
+def read_chunk_progress(
+    qdrant: QdrantClient, collection: str, owner: str, week_number: int, phrase: str
+) -> dict | None:
+    point = _read_chunk_progress_point(qdrant, collection, owner, week_number, phrase)
+    return point["payload"] if point else None
+
+
+def record_chunk_usage(
+    qdrant: QdrantClient,
+    embeddings: EmbeddingClient,
+    collection: str,
+    owner: str,
+    week_number: int,
+    phrase: str,
+    *,
+    used_correctly: bool,
+    user_sentence: str,
+    source: str,
+) -> None:
+    """Create or update this user's per-chunk progress record for the week.
+    Only overwrites user_sentence/user_sentence_source when a new non-empty
+    sentence is given (Saturday's cloze-answer check has no new sentence to
+    record, only a correctness verdict)."""
+    existing = _read_chunk_progress_point(qdrant, collection, owner, week_number, phrase)
+    needs_review = not used_correctly
+    if existing:
+        if (existing["payload"] or {}).get("needs_review"):
+            needs_review = True  # sticky: stays flagged once set this week
+        fields: dict = {"needs_review": needs_review}
+        if user_sentence:
+            fields["user_sentence"] = user_sentence
+            fields["user_sentence_source"] = source
+        qdrant.set_payload(collection, existing["id"], fields)
+        return
+
+    text = f"{phrase} usage: {user_sentence or '(not used)'}"
+    vector = embeddings.embed(text)
+    payload = {
+        "tag": _chunk_progress_tag(week_number),
+        "kind": "chunk_progress",
+        "chunk": phrase,
+        "needs_review": needs_review,
+        "mastered": False,
+    }
+    if user_sentence:
+        payload["user_sentence"] = user_sentence
+        payload["user_sentence_source"] = source
+    write_owned_point(qdrant, collection, owner, text, vector, payload)
+
+
+# ---------------------------------------------------------------------------
+# Friday: chunk activation (spec 2.5). Fully resolved, no open design
+# questions -- read this week's chunks, ask for a 1-minute impromptu voice
+# ramble using at least 2 of them, LLM judges usage semantically (spoken
+# chunks morph -- "spread oneself too thin" becomes "I was spreading myself
+# too thin"), and critically writes back the user's ACTUAL sentence
+# (user_sentence_source="fri_voice") for Saturday to quiz from.
+# ---------------------------------------------------------------------------
+
+FRIDAY_EVAL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "chunk_results": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "phrase": {"type": "string", "minLength": 1},
+                    "used_correctly": {"type": "boolean"},
+                    "user_sentence": {"type": "string"},
+                },
+                "required": ["phrase", "used_correctly", "user_sentence"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["chunk_results"],
+    "additionalProperties": False,
+}
+
+
+def build_friday_message(chunks: list[dict]) -> str:
+    lines = ["Friday chunk activation", "", "This week's chunks:"]
+    for chunk in chunks:
+        lines.append(f"- {chunk['phrase']} ({chunk['definition']})")
+    lines.append("")
+    lines.append(
+        "Record a 1-minute impromptu voice ramble on anything -- naturally "
+        "work in at least 2 of these chunks."
+    )
+    return "\n".join(lines)
+
+
+def run_friday_task(
+    *,
+    qdrant: QdrantClient,
+    embeddings: EmbeddingClient,
+    collection: str,
+    week_number: int,
+    owners: list[str],
+    send_message: Callable[[str, str], None],
+) -> list[dict]:
+    chunks = read_this_week_chunks(qdrant, collection, week_number)
+    message = build_friday_message(chunks)
+    vector = embeddings.embed(message)
+    for owner in owners:
+        send_message(owner, message)
+        mark_task_pushed(qdrant, collection, week_number, "fri", owner, vector)
+    return chunks
+
+
+def evaluate_chunk_usage(llm: LlmClient, chunks: list[dict], transcribed_reply: str) -> dict:
+    """LLM judges chunk usage via semantic understanding, not string
+    matching -- spoken chunks morph, e.g. "spread oneself too thin" becomes
+    "I was spreading myself too thin" (spec 2.5 point 3). Also extracts the
+    user's actual sentence for each chunk they used."""
+    phrase_list = "\n".join(f"- {c['phrase']}" for c in chunks)
+    prompt = (
+        "This week's target English chunks are:\n"
+        f"{phrase_list}\n\n"
+        f"The speaker's impromptu voice reply (transcribed) was:\n\"{transcribed_reply}\"\n\n"
+        "For each chunk, judge whether it was used correctly and naturally "
+        "in the reply. Spoken language morphs a chunk's exact wording -- "
+        "e.g. \"spread oneself too thin\" might be said as \"I was "
+        "spreading myself too thin\" -- that still counts as correct use. "
+        "If used, quote the exact sentence or snippet from the reply "
+        "containing it as user_sentence; leave user_sentence as an empty "
+        "string if the chunk was not used."
+    )
+    raw = llm.chat_json(prompt, FRIDAY_EVAL_SCHEMA, schema_name="friday_chunk_usage", max_tokens=600)
+    return json.loads(raw)
+
+
+def evaluate_friday_reply(
+    qdrant: QdrantClient,
+    embeddings: EmbeddingClient,
+    llm: LlmClient,
+    collection: str,
+    owner: str,
+    week_number: int,
+    chunks: list[dict],
+    transcribed_reply: str,
+) -> str:
+    chunk_usage = evaluate_chunk_usage(llm, chunks, transcribed_reply)
+    lines = ["Friday chunk-activation evaluation:", f'- Transcribed: "{transcribed_reply}"', ""]
+    for result in chunk_usage["chunk_results"]:
+        phrase = result["phrase"]
+        used = bool(result["used_correctly"])
+        sentence = (result.get("user_sentence") or "").strip()
+        record_chunk_usage(
+            qdrant,
+            embeddings,
+            collection,
+            owner,
+            week_number,
+            phrase,
+            used_correctly=used,
+            user_sentence=sentence,
+            source="fri_voice",
+        )
+        status = "used correctly" if used else "not detected / not used naturally"
+        lines.append(f"- {phrase}: {status}")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Saturday: weekly cloze review (spec 2.6). Cloze generation is deterministic
+# string manipulation, not an LLM call -- spec Section 6 explicitly names
+# this as the priority to test thoroughly. Prefers the user's own sentence
+# (from Monday's reply or Friday's voice ramble) over the shared
+# context_sentence, per spec 2.6's confirmed fallback order.
+#
+# Answer judging is also deterministic (word/phrase match, not LLM) -- spec
+# Section 6 leaves this open but a known target string is checked more
+# reliably this way than via a semantic judgment call.
+#
+# The pending-answer state machine (PENDING_ANSWER in
+# app/openclaw_telegram_gateway.py) is NOT touched directly here --
+# english_bot.py stays gateway-agnostic, matching how send_message/
+# send_audio are already injected rather than imported. run_saturday_task
+# takes a set_pending_answer callable; the not-yet-built gateway/cron wiring
+# step supplies the real one.
+# ---------------------------------------------------------------------------
+
+_REFLEXIVE_VARIANTS = [
+    "myself",
+    "yourself",
+    "himself",
+    "herself",
+    "itself",
+    "ourselves",
+    "yourselves",
+    "themselves",
+    "oneself",
+]
+
+
+def _build_phrase_pattern(phrase: str) -> re.Pattern:
+    """Match a chunk phrase inside a sentence, tolerating the spoken-language
+    morphology that's common for this kind of idiom: 'oneself' standing in
+    for any actual reflexive pronoun, and verb-ending variation that keeps
+    the literal stem as a prefix (spread/spreading, take/takes/taken) via a
+    loose word-stem + \\w* match. Does NOT handle irregular stem changes
+    (take -> took) or silent-e-drop spellings (take -> taking) -- callers
+    fall back to context_sentence or a phrase-only prompt in that case, see
+    build_cloze_question."""
+    words = phrase.split()
+    parts = []
+    for word in words:
+        if word.lower() == "oneself":
+            parts.append("(?:" + "|".join(_REFLEXIVE_VARIANTS) + ")")
+        elif word.isalpha():
+            parts.append(re.escape(word) + r"\w*")
+        else:
+            parts.append(re.escape(word))
+    return re.compile(r"\b" + r"\s+".join(parts) + r"\b", re.IGNORECASE)
+
+
+def generate_cloze(phrase: str, sentence: str) -> str | None:
+    """Deterministic string blanking: find the phrase's occurrence in the
+    sentence (tolerating morphology, see _build_phrase_pattern) and replace
+    it with a blank. Returns None if no match is found at all -- the caller
+    decides the fallback (spec 2.6 point 1's context_sentence fallback, or
+    ultimately a phrase-only prompt)."""
+    if not phrase or not sentence:
+        return None
+    pattern = _build_phrase_pattern(phrase)
+    match = pattern.search(sentence)
+    if not match:
+        return None
+    return sentence[: match.start()] + "____" + sentence[match.end() :]
+
+
+def judge_cloze_answer(phrase: str, user_answer: str) -> bool:
+    """Deterministic check: does the answer contain a recognizable form of
+    the target phrase (same tolerance as generate_cloze)? Simpler and more
+    reliable than an LLM call for checking one known target string."""
+    if not phrase or not user_answer:
+        return False
+    return bool(_build_phrase_pattern(phrase).search(user_answer))
+
+
+@dataclass(frozen=True)
+class ClozeQuestion:
+    phrase: str
+    prompt_text: str
+    source: str  # "user_sentence" | "context_sentence" | "phrase_only"
+
+
+def build_cloze_question(chunk_payload: dict, progress_payload: dict | None) -> ClozeQuestion:
+    """Prefers the user's own sentence (spec 2.6: "優先" -- priority) over
+    the shared LLM-generated context_sentence, falling back further to a
+    phrase-only prompt if neither sentence actually contains a matchable
+    form of the phrase."""
+    phrase = chunk_payload["phrase"]
+    user_sentence = (progress_payload or {}).get("user_sentence") or ""
+    if user_sentence:
+        blanked = generate_cloze(phrase, user_sentence)
+        if blanked:
+            return ClozeQuestion(phrase=phrase, prompt_text=blanked, source="user_sentence")
+
+    context_sentence = chunk_payload.get("context_sentence") or ""
+    blanked = generate_cloze(phrase, context_sentence)
+    if blanked:
+        return ClozeQuestion(phrase=phrase, prompt_text=blanked, source="context_sentence")
+
+    return ClozeQuestion(
+        phrase=phrase,
+        prompt_text=f'(no example sentence on file) Use "{phrase}" correctly in a sentence.',
+        source="phrase_only",
+    )
+
+
+def build_saturday_message(questions: list[ClozeQuestion]) -> str:
+    lines = ["Saturday review quiz", "", "Fill in each blank:"]
+    for index, question in enumerate(questions, start=1):
+        lines.append(f"{index}. {question.prompt_text}")
+    lines.append("")
+    lines.append("Reply with your answers (text or voice) -- one message covers all three.")
+    return "\n".join(lines)
+
+
+def run_saturday_task(
+    *,
+    qdrant: QdrantClient,
+    embeddings: EmbeddingClient,
+    collection: str,
+    week_number: int,
+    owners: list[str],
+    send_message: Callable[[str, str], None],
+    set_pending_answer: Callable[[str, dict], None],
+) -> dict[str, list[ClozeQuestion]]:
+    chunks = read_this_week_chunks(qdrant, collection, week_number)
+    result: dict[str, list[ClozeQuestion]] = {}
+    for owner in owners:
+        questions = [
+            build_cloze_question(
+                chunk, read_chunk_progress(qdrant, collection, owner, week_number, chunk["phrase"])
+            )
+            for chunk in chunks
+        ]
+        message = build_saturday_message(questions)
+        vector = embeddings.embed(message)
+        send_message(owner, message)
+        mark_task_pushed(qdrant, collection, week_number, "sat", owner, vector)
+        set_pending_answer(
+            owner,
+            {"kind": "eng_saturday_quiz", "week_number": week_number, "phrases": [q.phrase for q in questions]},
+        )
+        result[owner] = questions
+    return result
+
+
+def evaluate_saturday_answers(
+    qdrant: QdrantClient,
+    embeddings: EmbeddingClient,
+    collection: str,
+    owner: str,
+    week_number: int,
+    phrases: list[str],
+    transcribed_answer: str,
+) -> str:
+    lines = ["Saturday review results:", f'- Your answer: "{transcribed_answer}"', ""]
+    for phrase in phrases:
+        correct = judge_cloze_answer(phrase, transcribed_answer)
+        record_chunk_usage(
+            qdrant,
+            embeddings,
+            collection,
+            owner,
+            week_number,
+            phrase,
+            used_correctly=correct,
+            user_sentence="",
+            source="",
+        )
+        lines.append(f"- {phrase}: {'correct' if correct else 'needs review'}")
     return "\n".join(lines)

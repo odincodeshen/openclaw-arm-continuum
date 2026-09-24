@@ -35,10 +35,15 @@ from openclaw_runtime.owned_records import read_owned_points, write_owned_point
 from openclaw_runtime.skills.english_bot import (
     Chunk,
     WeeklyContent,
+    build_cloze_question,
+    evaluate_saturday_answers,
     mark_ielts_question_asked,
     next_week_number,
     pick_ielts_question,
+    read_chunk_progress,
+    read_this_week_chunks,
     read_this_week_payload,
+    record_chunk_usage,
     store_weekly_content,
 )
 from openclaw_runtime.transcription_client import TranscriptSegment
@@ -495,6 +500,68 @@ class EnglishLearningScenario(QdrantScenarioBase):
         points = self.qdrant.scroll_by_filters(self.tracker, {"tag": "eng_ielts_topics"}, limit=64)
         for point in points:
             self.assertNotIn("owner", point.get("payload") or {})
+
+    def test_monday_friday_saturday_chain_persists_needs_review_against_real_qdrant(self) -> None:
+        """v1.14 centerpiece: Monday writes a shared chunk -> Friday records
+        this owner's real spoken sentence for it (used correctly) -> Saturday
+        builds its cloze question from that real sentence (not the shared
+        context_sentence) -> a wrong Saturday answer flips needs_review to
+        True even though Friday's use was correct -- proves the "any single
+        failure this week marks it" rule (spec 2.5 point 4) actually holds
+        across three separate days' writes against a real Qdrant, not just
+        within one mocked call. Only exercises the deterministic pieces
+        (record_chunk_usage, build_cloze_question, evaluate_saturday_answers)
+        -- the LLM-judgment steps that produce their inputs are covered by
+        the unit tests with a mocked LLM, per the established L0/L2 split."""
+        week_number = next_week_number(self.qdrant, self.tracker)
+        content = WeeklyContent(
+            week_number=week_number,
+            episode_title="Test Episode",
+            episode_guid=f"urn:test:{week_number}",
+            segment_start=300.0,
+            segment_end=480.0,
+            transcript_excerpt="...",
+            chunks=[Chunk("get to grips with", "掌握複雜事物", "It took weeks to get to grips with it.")],
+            window_segments=[],
+        )
+        store_weekly_content(self.qdrant, self.embeddings, self.tracker, content)
+        chunks = read_this_week_chunks(self.qdrant, self.tracker, week_number)
+        self.assertEqual(len(chunks), 1)
+        phrase = chunks[0]["phrase"]
+
+        # Friday: this owner used the chunk correctly, with their own real
+        # sentence -- as evaluate_friday_reply (LLM-driven) would record.
+        record_chunk_usage(
+            self.qdrant,
+            self.embeddings,
+            self.tracker,
+            "owner-a",
+            week_number,
+            phrase,
+            used_correctly=True,
+            user_sentence="I am finally getting to grips with the new deployment pipeline.",
+            source="fri_voice",
+        )
+        progress = read_chunk_progress(self.qdrant, self.tracker, "owner-a", week_number, phrase)
+        self.assertFalse(progress["needs_review"])
+
+        # Saturday: the cloze question must be built from Friday's real
+        # sentence, not the shared context_sentence.
+        question = build_cloze_question(chunks[0], progress)
+        self.assertEqual(question.source, "user_sentence")
+        self.assertIn("deployment pipeline", question.prompt_text)
+
+        # A wrong Saturday answer flips needs_review, even though Friday's
+        # use of the same chunk this week was correct.
+        evaluate_saturday_answers(
+            self.qdrant, self.embeddings, self.tracker, "owner-a", week_number, [phrase], "I have no idea."
+        )
+        after = read_chunk_progress(self.qdrant, self.tracker, "owner-a", week_number, phrase)
+        self.assertTrue(after["needs_review"])
+        # the real Friday sentence must survive Saturday's update untouched
+        self.assertEqual(
+            after["user_sentence"], "I am finally getting to grips with the new deployment pipeline."
+        )
 
 
 class ChatMemoryScenario(unittest.TestCase):
