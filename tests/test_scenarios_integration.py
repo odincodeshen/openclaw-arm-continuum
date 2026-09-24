@@ -33,6 +33,7 @@ from openclaw_runtime.daily_task_tracking import (
 from openclaw_runtime.embedding_client import EmbeddingClient
 from openclaw_runtime.owned_records import read_owned_points, write_owned_point
 from openclaw_runtime.skills.english_bot import (
+    ALL_DAY_CODES,
     Chunk,
     WeeklyContent,
     build_cloze_question,
@@ -44,6 +45,7 @@ from openclaw_runtime.skills.english_bot import (
     read_this_week_chunks,
     read_this_week_payload,
     record_chunk_usage,
+    run_daily_completion_sweep,
     store_weekly_content,
 )
 from openclaw_runtime.transcription_client import TranscriptSegment
@@ -562,6 +564,41 @@ class EnglishLearningScenario(QdrantScenarioBase):
         self.assertEqual(
             after["user_sentence"], "I am finally getting to grips with the new deployment pipeline."
         )
+
+    def test_full_week_push_reply_sweep_against_real_qdrant(self) -> None:
+        """v1.15 grand finale: push all 7 days for two family members, reply
+        to (mark completed) all but one day for owner-a and none for
+        owner-b, run the 21:00 sweep, and verify exactly the still-
+        incomplete days end up skipped=True per owner -- proves the full
+        daily-completion lifecycle (push -> complete -> sweep -> read) holds
+        end to end against a real Qdrant, not just the individual pieces
+        tested elsewhere."""
+        week_number = next_week_number(self.qdrant, self.tracker)
+        owners = ["owner-a", "owner-b"]
+        vector = self.embeddings.embed("daily task pushed")
+
+        for day in ALL_DAY_CODES:
+            for owner in owners:
+                mark_task_pushed(self.qdrant, self.tracker, week_number, day, owner, vector)
+
+        # owner-a completes every day except "sat"; owner-b completes none.
+        for day in ALL_DAY_CODES:
+            if day != "sat":
+                mark_task_completed(self.qdrant, self.tracker, week_number, day, "owner-a")
+
+        swept = run_daily_completion_sweep(self.qdrant, self.tracker, week_number, owners)
+
+        self.assertEqual(swept["sat"], ["owner-a", "owner-b"])
+        for day in ALL_DAY_CODES:
+            if day != "sat":
+                self.assertEqual(swept[day], ["owner-b"])
+
+        owner_a_sat = read_owned_points(self.qdrant, self.tracker, "owner-a", {"tag": f"eng_wk{week_number}_daysat"})
+        self.assertTrue(owner_a_sat[0]["payload"]["skipped"])
+        owner_a_mon = read_owned_points(self.qdrant, self.tracker, "owner-a", {"tag": f"eng_wk{week_number}_daymon"})
+        self.assertFalse(owner_a_mon[0]["payload"]["skipped"])
+        owner_b_mon = read_owned_points(self.qdrant, self.tracker, "owner-b", {"tag": f"eng_wk{week_number}_daymon"})
+        self.assertTrue(owner_b_mon[0]["payload"]["skipped"])
 
 
 class ChatMemoryScenario(unittest.TestCase):

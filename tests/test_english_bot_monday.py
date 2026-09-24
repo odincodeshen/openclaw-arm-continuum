@@ -8,6 +8,7 @@ from openclaw_runtime.skills.english_bot import (
     Chunk,
     WeeklyContent,
     build_monday_message,
+    evaluate_monday_reply,
     extract_chunks,
     fetch_latest_episode,
     is_episode_processed,
@@ -320,6 +321,96 @@ class RunMondayTaskTest(unittest.TestCase):
                 send_message=self.send_message,
                 workspace_dir=self.workspace_dir,
             )
+
+
+CHUNKS = [
+    {"phrase": "take a gamble on", "definition": "冒險一試", "context_sentence": "We take a gamble on it."},
+    {"phrase": "spread oneself too thin", "definition": "心力過度分散", "context_sentence": "I was spreading myself too thin."},
+    {"phrase": "get to grips with", "definition": "掌握複雜事物", "context_sentence": "It took weeks to get to grips with it."},
+]
+
+
+class EvaluateMondayReplyTest(unittest.TestCase):
+    """Monday's reply-with-one-example-sentence step had no evaluation
+    function at all through v1.11-v1.14 -- added while wiring up full
+    daily-completion tracking (v1.15), since without it Monday could never
+    be marked completed."""
+
+    def setUp(self) -> None:
+        self.qdrant = MagicMock()
+
+        def scroll_by_filters(collection, filters, limit=64):
+            if filters.get("kind") == "daily_task":
+                return [{"id": "pushed-point-1", "payload": {"completed": False}}]
+            return []  # no existing chunk_progress record -> record_chunk_usage takes the "new" path
+
+        self.qdrant.scroll_by_filters.side_effect = scroll_by_filters
+        self.embeddings = MagicMock()
+        self.embeddings.embed.return_value = [0.1]
+
+    def test_writes_back_user_sentence_with_mon_reply_source(self) -> None:
+        llm = FakeLlm(
+            [
+                json.dumps(
+                    {
+                        "chunk_results": [
+                            {
+                                "phrase": "take a gamble on",
+                                "used_correctly": True,
+                                "user_sentence": "I take a gamble on the new job.",
+                            },
+                            {"phrase": "spread oneself too thin", "used_correctly": False, "user_sentence": ""},
+                            {"phrase": "get to grips with", "used_correctly": False, "user_sentence": ""},
+                        ]
+                    }
+                )
+            ]
+        )
+
+        message = evaluate_monday_reply(
+            self.qdrant, self.embeddings, llm, "coll", "owner-a", 1, CHUNKS, "I take a gamble on the new job."
+        )
+
+        self.assertIn("thanks", message.lower())
+        self.qdrant.upsert_text.assert_called_once()
+        payload = self.qdrant.upsert_text.call_args.args[3]
+        self.assertEqual(payload["user_sentence"], "I take a gamble on the new job.")
+        self.assertEqual(payload["user_sentence_source"], "mon_reply")
+
+    def test_no_chunk_detected_still_marks_completed_with_gentle_message(self) -> None:
+        llm = FakeLlm(
+            [
+                json.dumps(
+                    {
+                        "chunk_results": [
+                            {"phrase": c["phrase"], "used_correctly": False, "user_sentence": ""} for c in CHUNKS
+                        ]
+                    }
+                )
+            ]
+        )
+
+        message = evaluate_monday_reply(
+            self.qdrant, self.embeddings, llm, "coll", "owner-a", 1, CHUNKS, "just rambling, no chunk here"
+        )
+
+        self.assertIn("couldn't spot", message)
+        self.qdrant.upsert_text.assert_not_called()
+
+    def test_marks_monday_task_completed(self) -> None:
+        llm = FakeLlm(
+            [
+                json.dumps(
+                    {
+                        "chunk_results": [
+                            {"phrase": c["phrase"], "used_correctly": False, "user_sentence": ""} for c in CHUNKS
+                        ]
+                    }
+                )
+            ]
+        )
+        evaluate_monday_reply(self.qdrant, self.embeddings, llm, "coll", "owner-a", 1, CHUNKS, "reply text")
+        self.qdrant.set_payload.assert_called_once_with("coll", "pushed-point-1", {"completed": True})
 
 
 if __name__ == "__main__":

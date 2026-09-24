@@ -113,6 +113,17 @@ class RunThursdayTaskTest(unittest.TestCase):
 
 
 class EvaluateThursdayReplyTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.qdrant = MagicMock()
+        self.qdrant.scroll_by_filters.return_value = [
+            {"id": "pushed-point-1", "payload": {"completed": False}}
+        ]
+
+    def _eval(self, llm, opener, reply):
+        return evaluate_thursday_reply(
+            llm, opener, reply, qdrant=self.qdrant, collection="coll", owner="owner-a", week_number=1
+        )
+
     def test_complete_anchor_and_bounce_with_banter_reply(self) -> None:
         llm = FakeLlm(
             [
@@ -127,7 +138,7 @@ class EvaluateThursdayReplyTest(unittest.TestCase):
                 )
             ]
         )
-        report = evaluate_thursday_reply(llm, "Did you get caught in that rain?", "Yeah drenched, you?")
+        report = self._eval(llm, "Did you get caught in that rain?", "Yeah drenched, you?")
         self.assertIn("complete (empathy, own situation, and a bounce-back question)", report)
         self.assertIn("Colleague text reply (Pub Banter):", report)
         self.assertIn("Haha, tell me about it! Same here.", report)
@@ -147,7 +158,7 @@ class EvaluateThursdayReplyTest(unittest.TestCase):
                 )
             ]
         )
-        report = evaluate_thursday_reply(llm, "opener", "reply with no question back")
+        report = self._eval(llm, "opener", "reply with no question back")
         self.assertIn("missing Bounce (an open question thrown back)", report)
 
     def test_vocabulary_suggestion_included_when_present(self) -> None:
@@ -164,7 +175,7 @@ class EvaluateThursdayReplyTest(unittest.TestCase):
                 )
             ]
         )
-        report = evaluate_thursday_reply(llm, "opener", "reply")
+        report = self._eval(llm, "opener", "reply")
         self.assertIn('Original: "I think the garden is very bad."', report)
         self.assertIn('More natural: "The lawn is a bit of a nightmare at the moment."', report)
 
@@ -182,10 +193,27 @@ class EvaluateThursdayReplyTest(unittest.TestCase):
                 )
             ]
         )
-        evaluate_thursday_reply(llm, "opener", "reply")
+        self._eval(llm, "opener", "reply")
         prompt, schema_name = llm.calls[0]
         self.assertEqual(schema_name, "thursday_evaluation")
         self.assertIn("not TTS -- just text", prompt)
+
+    def test_marks_thursday_task_completed(self) -> None:
+        llm = FakeLlm(
+            [
+                json.dumps(
+                    {
+                        "anchor_present": True,
+                        "bounce_present": True,
+                        "vocabulary_original": "",
+                        "vocabulary_replacement": "",
+                        "banter_reply": "x",
+                    }
+                )
+            ]
+        )
+        self._eval(llm, "opener", "reply")
+        self.qdrant.set_payload.assert_called_once_with("coll", "pushed-point-1", {"completed": True})
 
 
 if __name__ == "__main__":

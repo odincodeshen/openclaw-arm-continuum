@@ -167,6 +167,24 @@ class EvaluateSaturdayAnswersTest(unittest.TestCase):
         self.assertIn("spread oneself too thin: needs review", report)
         self.assertEqual(qdrant.upsert_text.call_count, 2)
 
+    def test_marks_saturday_task_completed(self) -> None:
+        qdrant = MagicMock()
+
+        def scroll_by_filters(collection, filters, limit=64):
+            if filters.get("kind") == "daily_task":
+                return [{"id": "pushed-point-1", "payload": {"completed": False}}]
+            return []  # no existing chunk_progress record for either phrase
+
+        qdrant.scroll_by_filters.side_effect = scroll_by_filters
+        embeddings = MagicMock()
+        embeddings.embed.return_value = [0.1]
+
+        evaluate_saturday_answers(
+            qdrant, embeddings, "coll", "owner-a", 1, ["take a gamble on"], "I take a gamble on it."
+        )
+
+        qdrant.set_payload.assert_any_call("coll", "pushed-point-1", {"completed": True})
+
 
 if __name__ == "__main__":
     unittest.main()

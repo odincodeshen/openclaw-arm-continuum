@@ -90,8 +90,8 @@ def get_json(url: str, timeout: int = 20) -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
-def get_text(url: str, timeout: int = 20) -> str:
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT}, method="GET")
+def get_text(url: str, timeout: int = 20, user_agent: str | None = None) -> str:
+    request = urllib.request.Request(url, headers={"User-Agent": user_agent or USER_AGENT}, method="GET")
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.read().decode("utf-8", errors="replace")
 

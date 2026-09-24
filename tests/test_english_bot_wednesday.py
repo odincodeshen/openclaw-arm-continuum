@@ -131,6 +131,12 @@ class RunWednesdayTaskTest(unittest.TestCase):
 
 
 class EvaluateWednesdayReplyTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.qdrant = MagicMock()
+        self.qdrant.scroll_by_filters.return_value = [
+            {"id": "pushed-point-1", "payload": {"completed": False}}
+        ]
+
     def test_reports_missing_star_elements(self) -> None:
         llm = FakeLlm(
             [
@@ -145,7 +151,15 @@ class EvaluateWednesdayReplyTest(unittest.TestCase):
                 )
             ]
         )
-        feedback = evaluate_wednesday_reply(llm, "Describe a challenge...", "I once had a problem")
+        feedback = evaluate_wednesday_reply(
+            llm,
+            "Describe a challenge...",
+            "I once had a problem",
+            qdrant=self.qdrant,
+            collection="coll",
+            owner="owner-a",
+            week_number=1,
+        )
         self.assertIn("missing Action, Result", feedback)
         prompt, schema_name = llm.calls[0]
         self.assertEqual(schema_name, "star_evaluation")
@@ -165,9 +179,30 @@ class EvaluateWednesdayReplyTest(unittest.TestCase):
                 )
             ]
         )
-        feedback = evaluate_wednesday_reply(llm, "cue card", "reply text")
+        feedback = evaluate_wednesday_reply(
+            llm, "cue card", "reply text", qdrant=self.qdrant, collection="coll", owner="owner-a", week_number=1
+        )
         self.assertIn("complete (Situation, Task, Action, Result all present)", feedback)
         self.assertIn('"good" -> try "commendable" (band 7.5+)', feedback)
+
+    def test_marks_wednesday_task_completed(self) -> None:
+        llm = FakeLlm(
+            [
+                json.dumps(
+                    {
+                        "situation_present": True,
+                        "task_present": True,
+                        "action_present": True,
+                        "result_present": True,
+                        "overused_words": [],
+                    }
+                )
+            ]
+        )
+        evaluate_wednesday_reply(
+            llm, "cue card", "reply text", qdrant=self.qdrant, collection="coll", owner="owner-a", week_number=1
+        )
+        self.qdrant.set_payload.assert_called_once_with("coll", "pushed-point-1", {"completed": True})
 
 
 if __name__ == "__main__":

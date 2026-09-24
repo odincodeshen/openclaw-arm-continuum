@@ -20,11 +20,13 @@ import json
 import random
 import re
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Callable
 
 from openclaw_runtime.audio_clip_client import AudioClipClient
-from openclaw_runtime.daily_task_tracking import mark_task_pushed
+from openclaw_runtime.daily_task_tracking import mark_task_completed, mark_task_pushed, sweep_incomplete_to_skipped
 from openclaw_runtime.embedding_client import EmbeddingClient
 from openclaw_runtime.http_client import get_bytes, get_text
 from openclaw_runtime.llm_client import LlmClient
@@ -327,6 +329,54 @@ def run_monday_task(
     return content
 
 
+def evaluate_monday_reply(
+    qdrant: QdrantClient,
+    embeddings: EmbeddingClient,
+    llm: LlmClient,
+    collection: str,
+    owner: str,
+    week_number: int,
+    chunks: list[dict],
+    transcribed_reply: str,
+) -> str:
+    """Monday asks for one chunk used in an original sentence (spec 2.1
+    point 7) -- reuses evaluate_chunk_usage exactly as Friday does (same
+    judgment task, just "at least 1" instead of "at least 2"), writing back
+    user_sentence/user_sentence_source="mon_reply" for whichever chunk(s)
+    were used. Spec Section 3 has no dedicated feedback-report format for
+    Monday (unlike Tue-Sat), so this only needs a short acknowledgement,
+    not a structured report. This function was missing through v1.11-v1.14
+    -- without it Monday could never be marked completed, so it would
+    always show up in Saturday's skipped-task list even when the user did
+    reply -- added here while wiring up full daily-completion tracking."""
+    chunk_usage = evaluate_chunk_usage(llm, chunks, transcribed_reply)
+    used_any = False
+    for result in chunk_usage["chunk_results"]:
+        used = bool(result["used_correctly"])
+        sentence = (result.get("user_sentence") or "").strip()
+        if not used:
+            continue
+        used_any = True
+        record_chunk_usage(
+            qdrant,
+            embeddings,
+            collection,
+            owner,
+            week_number,
+            result["phrase"],
+            used_correctly=True,
+            user_sentence=sentence,
+            source="mon_reply",
+        )
+    mark_task_completed(qdrant, collection, week_number, "mon", owner)
+    if used_any:
+        return "Nice -- got it, thanks for the example sentence."
+    return (
+        "Thanks for the reply -- I couldn't spot one of this week's chunks in there, "
+        "but no worries, you'll get more chances this week."
+    )
+
+
 def select_longest_guest_stretch(llm: LlmClient, transcript_block: str) -> dict:
     """Pick the guest's single longest continuous stretch (no host
     interruption at all, not even backchannels) within Monday's already-
@@ -510,7 +560,16 @@ def compute_wpm(text: str, duration_seconds: float) -> float:
     return round(word_count / (duration_seconds / 60.0), 1)
 
 
-def evaluate_tuesday_reply(reference_text: str, transcribed_reply: str, reply_duration_seconds: float) -> str:
+def evaluate_tuesday_reply(
+    reference_text: str,
+    transcribed_reply: str,
+    reply_duration_seconds: float,
+    *,
+    qdrant: QdrantClient,
+    collection: str,
+    owner: str,
+    week_number: int,
+) -> str:
     diff = word_level_diff(reference_text, transcribed_reply)
     wpm = compute_wpm(transcribed_reply, reply_duration_seconds)
     match_pct = max(0.0, 1 - diff.error_rate) * 100
@@ -526,6 +585,7 @@ def evaluate_tuesday_reply(reference_text: str, transcribed_reply: str, reply_du
         f"Pace: {wpm} WPM (this is shadowing -- aim to match the original clip's pace, "
         "not a fixed target)"
     )
+    mark_task_completed(qdrant, collection, week_number, "tue", owner)
     return "\n".join(lines)
 
 
@@ -779,7 +839,16 @@ def run_wednesday_task(
     return question
 
 
-def evaluate_wednesday_reply(llm: LlmClient, cue_card: str, transcribed_reply: str) -> str:
+def evaluate_wednesday_reply(
+    llm: LlmClient,
+    cue_card: str,
+    transcribed_reply: str,
+    *,
+    qdrant: QdrantClient,
+    collection: str,
+    owner: str,
+    week_number: int,
+) -> str:
     """LLM judges STAR-element presence and identifies overused basic
     vocabulary with band-7.5+ replacements -- no separate word-frequency
     pre-pass, per spec Section 3's confirmed decision."""
@@ -811,6 +880,7 @@ def evaluate_wednesday_reply(llm: LlmClient, cue_card: str, transcribed_reply: s
         lines.append("STAR structure: complete (Situation, Task, Action, Result all present)")
     for item in data["overused_words"]:
         lines.append(f'Overused: "{item["word"]}" -> try "{item["replacement"]}" (band 7.5+)')
+    mark_task_completed(qdrant, collection, week_number, "wed", owner)
     return "\n".join(lines)
 
 
@@ -986,7 +1056,16 @@ def run_thursday_task(
     return opener
 
 
-def evaluate_thursday_reply(llm: LlmClient, opener: str, transcribed_reply: str) -> str:
+def evaluate_thursday_reply(
+    llm: LlmClient,
+    opener: str,
+    transcribed_reply: str,
+    *,
+    qdrant: QdrantClient,
+    collection: str,
+    owner: str,
+    week_number: int,
+) -> str:
     """Judges Anchor & Bounce structure and -- per spec Section 0's SLA-
     review addendum -- appends a text-only in-character colleague banter
     reply. This is the reinstated TEXT version only; the earlier TTS-based
@@ -1030,6 +1109,7 @@ def evaluate_thursday_reply(llm: LlmClient, opener: str, transcribed_reply: str)
     lines.append("")
     lines.append("Colleague text reply (Pub Banter):")
     lines.append(f'"{data["banter_reply"]}"')
+    mark_task_completed(qdrant, collection, week_number, "thu", owner)
     return "\n".join(lines)
 
 
@@ -1235,6 +1315,7 @@ def evaluate_friday_reply(
         )
         status = "used correctly" if used else "not detected / not used naturally"
         lines.append(f"- {phrase}: {status}")
+    mark_task_completed(qdrant, collection, week_number, "fri", owner)
     return "\n".join(lines)
 
 
@@ -1410,4 +1491,243 @@ def evaluate_saturday_answers(
             source="",
         )
         lines.append(f"- {phrase}: {'correct' if correct else 'needs review'}")
+    mark_task_completed(qdrant, collection, week_number, "sat", owner)
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Sunday: British culture painless reading (spec 2.7). RSS URLs, the 3-tier
+# freshness/dedup fallback, and the Guardian HTML structure to scrape were
+# all consultant-verified. During implementation review, the consultant's
+# exact series-slug RSS URLs (.../series/tim-dowling-column/rss and
+# .../series/grace-dent-on-restaurants/rss) were re-checked against the
+# live site and both now 404 -- the series pages appear to have been
+# reorganized since the consultant checked. The equivalent author-profile
+# RSS format (.../profile/<name>/rss) was verified live and returns 200
+# with real, current articles by the same columnists, so that's what's
+# used here instead. .../uk/lifeandstyle/rss (tier 3) was unaffected and
+# also verified live. Re-check these three URLs periodically -- Guardian's
+# URL structure isn't something this codebase controls.
+# ---------------------------------------------------------------------------
+
+GUARDIAN_TIM_DOWLING_RSS = "https://www.theguardian.com/profile/timdowling/rss"
+GUARDIAN_GRACE_DENT_RSS = "https://www.theguardian.com/profile/gracedent/rss"
+GUARDIAN_LIFESTYLE_RSS = "https://www.theguardian.com/uk/lifeandstyle/rss"
+SUNDAY_FEEDS = [GUARDIAN_TIM_DOWLING_RSS, GUARDIAN_GRACE_DENT_RSS, GUARDIAN_LIFESTYLE_RSS]
+
+# A real desktop browser UA, per spec 2.7 point 3 -- Guardian's CDN can 403
+# the default OpenClaw-Arm-Continuum/0.1 UA.
+DESKTOP_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+
+SUNDAY_SUMMARY_SCHEMA = {
+    "type": "object",
+    "properties": {"summary": {"type": "string", "minLength": 1, "maxLength": 400}},
+    "required": ["summary"],
+    "additionalProperties": False,
+}
+
+
+def is_article_pushed(qdrant: QdrantClient, collection: str, article_url: str) -> bool:
+    if not article_url:
+        return False
+    points = qdrant.scroll_by_filters(
+        collection, {"tag": "eng_sunday_pushed", "article_url": article_url}, limit=1
+    )
+    return bool(points)
+
+
+def mark_article_pushed(
+    qdrant: QdrantClient, embeddings: EmbeddingClient, collection: str, article_url: str
+) -> None:
+    text = f"sunday article pushed: {article_url}"
+    vector = embeddings.embed(text)
+    qdrant.upsert_text(
+        collection,
+        text,
+        vector,
+        {"tag": "eng_sunday_pushed", "kind": "sunday_article", "article_url": article_url},
+    )
+
+
+def _freshest_unpushed_item(
+    qdrant: QdrantClient, collection: str, items: list[RssItem], *, now: datetime | None = None
+) -> RssItem | None:
+    """Tier 1 + Tier 2 for a single feed (spec 2.7 point 1 / Section 5):
+    prefer the newest item if it's both fresh (<=7 days old) and not yet
+    pushed; otherwise fall back to the newest not-yet-pushed item from the
+    last ~2 months among this feed's first 5 items. Returns None if this
+    feed has nothing usable at all (caller then tries the next feed --
+    Tier 3)."""
+    if not items:
+        return None
+    reference_now = now or datetime.now(timezone.utc)
+    newest = items[0]
+    if (
+        newest.pub_date
+        and (reference_now - newest.pub_date) <= timedelta(days=7)
+        and not is_article_pushed(qdrant, collection, newest.link)
+    ):
+        return newest
+    for item in items:
+        if (
+            item.pub_date
+            and (reference_now - item.pub_date) <= timedelta(days=60)
+            and not is_article_pushed(qdrant, collection, item.link)
+        ):
+            return item
+    return None
+
+
+def select_sunday_article(
+    qdrant: QdrantClient,
+    collection: str,
+    fetch_rss: Callable[[str], str],
+    *,
+    now: datetime | None = None,
+) -> RssItem:
+    """Tier 3: if the primary feed has nothing usable (all pushed, or all
+    stale), move to the next feed in SUNDAY_FEEDS and retry Tiers 1+2 there.
+    Raises if all three feeds are exhausted -- an extremely unlikely edge
+    case (would mean months of Guardian downtime across 3 different
+    columns), but the caller (a future cron step) needs a signal to skip
+    Sunday's push entirely rather than crash on a None."""
+    for feed_url in SUNDAY_FEEDS:
+        rss_xml = fetch_rss(feed_url)
+        items = parse_rss_items(rss_xml)[:5]
+        chosen = _freshest_unpushed_item(qdrant, collection, items, now=now)
+        if chosen:
+            return chosen
+    raise ValueError("no usable Sunday article found across primary and fallback Guardian feeds")
+
+
+class _ArticleTextExtractor(HTMLParser):
+    """Extracts text from <p> tags nested inside an <article> element --
+    Guardian's stable structure, consultant-verified (spec 2.7 point 3).
+    Ignores everything outside <article>; inline tags inside a <p> (links,
+    bold, etc.) still contribute their text since only "article"/"p" affect
+    scope tracking."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._article_depth = 0
+        self._p_depth = 0
+        self._paragraphs: list[str] = []
+        self._current: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list) -> None:
+        if tag == "article":
+            self._article_depth += 1
+        elif tag == "p" and self._article_depth > 0:
+            self._p_depth += 1
+            self._current = []
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "article" and self._article_depth > 0:
+            self._article_depth -= 1
+        elif tag == "p" and self._p_depth > 0:
+            self._p_depth -= 1
+            text = "".join(self._current).strip()
+            if text:
+                self._paragraphs.append(text)
+            self._current = []
+
+    def handle_data(self, data: str) -> None:
+        if self._p_depth > 0:
+            self._current.append(data)
+
+    @property
+    def text(self) -> str:
+        return "\n\n".join(self._paragraphs)
+
+
+def extract_article_text(html: str) -> str:
+    parser = _ArticleTextExtractor()
+    parser.feed(html)
+    return parser.text
+
+
+def summarize_sunday_article(llm: LlmClient, article_text: str) -> str:
+    """LLM reads the real fetched article text and writes a ~50-word
+    cultural-background summary -- explicitly grounded in the actual
+    content, not guessed from the title/URL (spec 2.7 point 4)."""
+    prompt = (
+        "This is the full text of a British lifestyle/culture newspaper "
+        "column. Write a roughly 50-word summary in English that gives a "
+        "Traditional-Chinese-speaking reader enough cultural background to "
+        "understand and enjoy the piece -- don't retell the whole plot, "
+        "just orient them.\n\n"
+        f"Article text:\n{article_text}"
+    )
+    raw = llm.chat_json(prompt, SUNDAY_SUMMARY_SCHEMA, schema_name="sunday_summary", max_tokens=200)
+    return json.loads(raw)["summary"]
+
+
+def build_sunday_message(article_url: str, summary: str) -> str:
+    return (
+        "Sunday painless reading\n\n"
+        f"{article_url}\n\n"
+        f"{summary}\n\n"
+        "Read for the gist -- no dictionary, no notes. Understanding "
+        "70-80% of it is the goal."
+    )
+
+
+def run_sunday_task(
+    *,
+    llm: LlmClient,
+    qdrant: QdrantClient,
+    embeddings: EmbeddingClient,
+    collection: str,
+    week_number: int,
+    owners: list[str],
+    send_message: Callable[[str, str], None],
+    fetch_rss: Callable[[str], str] = lambda url: get_text(url, timeout=30),
+    fetch_article_html: Callable[[str], str] = lambda url: get_text(
+        url, timeout=30, user_agent=DESKTOP_USER_AGENT
+    ),
+) -> str:
+    article = select_sunday_article(qdrant, collection, fetch_rss)
+    article_html = fetch_article_html(article.link)
+    article_text = extract_article_text(article_html)
+    if not article_text:
+        raise ValueError(f"could not extract any <article>/<p> text from {article.link}")
+
+    summary = summarize_sunday_article(llm, article_text)
+    message = build_sunday_message(article.link, summary)
+    vector = embeddings.embed(message)
+    mark_article_pushed(qdrant, embeddings, collection, article.link)
+    for owner in owners:
+        send_message(owner, message)
+        mark_task_pushed(qdrant, collection, week_number, "sun", owner, vector)
+        # No reply is expected on Sundays (spec 2.7: purely passive reading,
+        # no evaluation step at all) -- mark complete immediately, otherwise
+        # every Sunday would wrongly show up in the skipped-task list even
+        # though the content was successfully delivered.
+        mark_task_completed(qdrant, collection, week_number, "sun", owner)
+    return summary
+
+
+# ---------------------------------------------------------------------------
+# Daily-completion-tracking wiring (spec Section 5 point 3). Every
+# run_<day>_task already calls mark_task_pushed (built in v1.11-v1.14); what
+# was still missing is the completion side -- each evaluate_<day>_* function
+# now also calls mark_task_completed once it has successfully processed a
+# reply, plus a thin sweep orchestrator for the 21:00 cron step.
+# ---------------------------------------------------------------------------
+
+ALL_DAY_CODES = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+
+
+def run_daily_completion_sweep(
+    qdrant: QdrantClient, collection: str, week_number: int, owners: list[str]
+) -> dict[str, list[str]]:
+    """Meant for a future 21:00 /cron entry: sweep every day of the current
+    week, marking skipped=True for any owner whose task is still
+    incomplete. Returns {day_code: [owners swept]} for logging."""
+    return {
+        day: sweep_incomplete_to_skipped(qdrant, collection, week_number, day, owners)
+        for day in ALL_DAY_CODES
+    }

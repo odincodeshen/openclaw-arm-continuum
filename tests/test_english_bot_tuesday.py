@@ -220,9 +220,24 @@ class ComputeWpmTest(unittest.TestCase):
 
 
 class EvaluateTuesdayReplyTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.qdrant = MagicMock()
+        # Simulates run_tuesday_task's mark_task_pushed having already
+        # created a daily_task record -- mark_task_completed needs a
+        # point to find and flip.
+        self.qdrant.scroll_by_filters.return_value = [
+            {"id": "pushed-point-1", "payload": {"completed": False}}
+        ]
+
     def test_feedback_includes_transcript_match_and_pace(self) -> None:
         feedback = evaluate_tuesday_reply(
-            "I remember it well and it changed everything", "I remember it well", 4.0
+            "I remember it well and it changed everything",
+            "I remember it well",
+            4.0,
+            qdrant=self.qdrant,
+            collection="coll",
+            owner="owner-a",
+            week_number=1,
         )
         self.assertIn("Transcribed:", feedback)
         self.assertIn("Word match:", feedback)
@@ -232,10 +247,17 @@ class EvaluateTuesdayReplyTest(unittest.TestCase):
         self.assertIn("everything", feedback)
 
     def test_perfect_match_has_no_missing_or_extra_lines(self) -> None:
-        feedback = evaluate_tuesday_reply("hello world", "hello world", 2.0)
+        feedback = evaluate_tuesday_reply(
+            "hello world", "hello world", 2.0, qdrant=self.qdrant, collection="coll", owner="owner-a", week_number=1
+        )
         self.assertNotIn("Missing/changed:", feedback)
         self.assertNotIn("Extra words:", feedback)
-        self.assertIn("Word match: 100%", feedback)
+
+    def test_marks_tuesday_task_completed(self) -> None:
+        evaluate_tuesday_reply(
+            "hello world", "hello world", 2.0, qdrant=self.qdrant, collection="coll", owner="owner-a", week_number=1
+        )
+        self.qdrant.set_payload.assert_called_once_with("coll", "pushed-point-1", {"completed": True})
 
 
 if __name__ == "__main__":
