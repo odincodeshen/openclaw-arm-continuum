@@ -123,6 +123,12 @@ class Settings:
     english_bot_sweep_time: str
     english_bot_timezone: str
     english_bot_state_path: Path
+    # Testing-only override: forces the scheduler loop to treat every day as
+    # this day_code instead of computing it from the real weekday, so a
+    # specific day's push+PENDING_ANSWER wiring can be exercised live
+    # without waiting for the real calendar day. Empty (default) means no
+    # override -- day_code_for(now) is used as normal.
+    english_bot_force_day_code: str
 
 
 def load_settings() -> Settings:
@@ -243,4 +249,5 @@ def load_settings() -> Settings:
         english_bot_state_path=Path(
             os.environ.get("OPENCLAW_ENGLISH_BOT_STATE_PATH", "/workspace/.openclaw/english_bot_state.json")
         ),
+        english_bot_force_day_code=os.environ.get("OPENCLAW_ENGLISH_BOT_FORCE_DAY_CODE", "").strip().lower(),
     )

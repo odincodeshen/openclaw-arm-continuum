@@ -131,6 +131,12 @@ PENDING_CATEGORY: dict[int, dict] = {}
 PENDING_ANSWER_LOCK = threading.Lock()
 PENDING_ANSWER: dict[int, dict] = {}
 
+# Below this, a voice reply to a pending English-bot task is treated as a
+# non-attempt (accidental tap, misfire) rather than a real answer -- see
+# handle_english_bot_pending_reply, which restores the pending task instead
+# of consuming the user's only chance to answer that day.
+MIN_ENGLISH_BOT_VOICE_REPLY_SECONDS = 5.0
+
 
 def set_pending_answer(chat_id: int, item: dict) -> None:
     with PENDING_ANSWER_LOCK:
@@ -785,6 +791,18 @@ def handle_english_bot_pending_reply(chat_id: int, message: dict) -> bool:
         if not file_id:
             send_message(chat_id, "This voice reply has no Telegram file_id, so OpenClaw cannot download it.")
             return True
+        duration = float(voice.get("duration") or 0.0)
+        if duration < MIN_ENGLISH_BOT_VOICE_REPLY_SECONDS:
+            # Too short to be a real answer (accidental tap, misfire, etc.)
+            # -- restore the pending task rather than burning the user's
+            # only chance to answer today on a non-attempt.
+            set_pending_answer(chat_id, pending)
+            send_message(
+                chat_id,
+                f"That voice reply was only {duration:.0f}s -- needs to be at least "
+                f"{MIN_ENGLISH_BOT_VOICE_REPLY_SECONDS:.0f}s. Today's task is still waiting, try again.",
+            )
+            return True
         file_info = telegram_file_info(file_id)
         suffix = extension_from_file_path(file_info.get("file_path", ""), voice.get("mime_type"), ".ogg")
         target_name = sanitize_filename(
@@ -792,17 +810,26 @@ def handle_english_bot_pending_reply(chat_id: int, message: dict) -> bool:
         )
         target_path = unique_path(settings.inbox_path / "audio" / "telegram", target_name)
         downloaded_path, _ = download_telegram_file(file_id, target_path)
-        duration = float(voice.get("duration") or 0.0)
 
         def _transcribe_and_evaluate() -> None:
             try:
                 transcript = transcriber.transcribe(downloaded_path)
             except Exception as exc:
                 log(f"[english_bot] transcription error chat_id={chat_id}: {exc}")
-                send_message(chat_id, f"Voice reply saved, but Whisper transcription failed: {exc}")
+                set_pending_answer(chat_id, pending)
+                send_message(
+                    chat_id,
+                    f"Voice reply saved, but Whisper transcription failed: {exc} "
+                    "-- today's task is still waiting, try again.",
+                )
                 return
             if not transcript:
-                send_message(chat_id, "Whisper did not produce any text from this voice reply.")
+                set_pending_answer(chat_id, pending)
+                send_message(
+                    chat_id,
+                    "Whisper did not produce any text from this voice reply -- "
+                    "today's task is still waiting, try again.",
+                )
                 return
             _process_english_bot_reply(chat_id, pending, transcript, duration)
 
@@ -1957,7 +1984,7 @@ def _english_bot_scheduler_loop() -> None:
             now = datetime.now(tz)
             state = load_english_bot_state(settings.english_bot_state_path, {})
             if should_push_today(now, settings.english_bot_push_time, state):
-                day_code = day_code_for(now)
+                day_code = settings.english_bot_force_day_code or day_code_for(now)
                 run_todays_push(
                     day_code=day_code,
                     llm=llm,

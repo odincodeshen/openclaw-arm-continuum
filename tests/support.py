@@ -93,6 +93,7 @@ def build_settings(**overrides) -> Settings:
         english_bot_sweep_time="21:00",
         english_bot_timezone="Europe/London",
         english_bot_state_path=Path("english_bot_state.json"),
+        english_bot_force_day_code="",
     )
     base.update(overrides)
     return Settings(**base)
