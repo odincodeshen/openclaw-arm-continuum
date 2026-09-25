@@ -36,6 +36,7 @@ def build_settings(**overrides) -> Settings:
         whisper_enabled=False,
         whisper_base_url="http://x",
         whisper_timeout=1,
+        whisper_workspace_root="",
         memory_enabled=True,
         ollama_base_url="http://x",
         embedding_model="x",

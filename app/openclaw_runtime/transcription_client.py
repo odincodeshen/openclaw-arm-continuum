@@ -3,6 +3,7 @@ from pathlib import Path
 
 from openclaw_runtime.config import Settings
 from openclaw_runtime.http_client import request_json
+from openclaw_runtime.whisper_paths import to_whisper_path
 
 
 @dataclass(frozen=True)
@@ -27,7 +28,7 @@ class TranscriptionClient:
         response = request_json(
             "POST",
             f"{self.settings.whisper_base_url}/transcribe",
-            {"path": str(audio_path)},
+            {"path": str(to_whisper_path(audio_path, self.settings))},
             timeout=self.settings.whisper_timeout,
         )
         return str(response.get("text") or "").strip()
@@ -40,7 +41,7 @@ class TranscriptionClient:
         response = request_json(
             "POST",
             f"{self.settings.whisper_base_url}/transcribe",
-            {"path": str(audio_path)},
+            {"path": str(to_whisper_path(audio_path, self.settings))},
             timeout=self.settings.whisper_timeout,
         )
         segments = [

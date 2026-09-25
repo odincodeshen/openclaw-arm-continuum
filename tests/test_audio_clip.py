@@ -121,6 +121,41 @@ class ClipAudioSegmentTest(unittest.TestCase):
         finally:
             svc.WORKSPACE_ROOT = original_root
 
+    def test_extra_allowed_root_permits_a_persona_workspace_path(self) -> None:
+        """One shared whisper container now serves multiple bot personas,
+        each with its own host workspace mounted at a namespaced path under
+        /profiles (see compose.yaml + EXTRA_ALLOWED_ROOTS) -- a path under a
+        second, non-default root must be accepted too, not just the legacy
+        single WORKSPACE_ROOT."""
+        import openclaw_whisper_service as svc
+
+        persona_root = self.root / "profiles" / "lc9_dgx4_en" / "workspace"
+        persona_root.mkdir(parents=True)
+        original_extra = svc.EXTRA_ALLOWED_ROOTS
+        svc.EXTRA_ALLOWED_ROOTS = [persona_root]
+        try:
+            result = safe_audio_write_path(str(persona_root / "does" / "not" / "exist.mp3"))
+            self.assertTrue(result.parent.exists())
+        finally:
+            svc.EXTRA_ALLOWED_ROOTS = original_extra
+
+    def test_path_outside_every_allowed_root_still_rejected(self) -> None:
+        """Security regression: adding EXTRA_ALLOWED_ROOTS must not
+        accidentally widen the check to allow everything -- a path outside
+        every configured root (legacy or extra) still has to raise."""
+        import openclaw_whisper_service as svc
+
+        original_root = svc.WORKSPACE_ROOT
+        original_extra = svc.EXTRA_ALLOWED_ROOTS
+        svc.WORKSPACE_ROOT = self.root / "workspace"
+        svc.EXTRA_ALLOWED_ROOTS = [self.root / "profiles"]
+        try:
+            with self.assertRaises(ValueError):
+                safe_audio_write_path("/etc/passwd")
+        finally:
+            svc.WORKSPACE_ROOT = original_root
+            svc.EXTRA_ALLOWED_ROOTS = original_extra
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -60,6 +60,7 @@ class Settings:
     whisper_enabled: bool
     whisper_base_url: str
     whisper_timeout: int
+    whisper_workspace_root: str
 
     memory_enabled: bool
     ollama_base_url: str
@@ -177,6 +178,7 @@ def load_settings() -> Settings:
         whisper_enabled=env_bool("OPENCLAW_WHISPER_ENABLED", True),
         whisper_base_url=os.environ.get("OPENCLAW_WHISPER_BASE_URL", "http://openclaw-whisper:8765").rstrip("/"),
         whisper_timeout=env_int("OPENCLAW_WHISPER_TIMEOUT", 180),
+        whisper_workspace_root=os.environ.get("OPENCLAW_WHISPER_WORKSPACE_ROOT", "").strip(),
         memory_enabled=env_bool("OPENCLAW_MEMORY_ENABLED", True),
         ollama_base_url=os.environ.get("OPENCLAW_OLLAMA_BASE_URL", "http://host.docker.internal:11434").rstrip("/"),
         embedding_model=os.environ.get("OPENCLAW_EMBEDDING_MODEL", "nomic-embed-text:latest"),

@@ -17,6 +17,22 @@ DEVICE = os.environ.get("OPENCLAW_WHISPER_DEVICE", "cpu")
 COMPUTE_TYPE = os.environ.get("OPENCLAW_WHISPER_COMPUTE_TYPE", "int8")
 WORKSPACE_ROOT = Path(os.environ.get("OPENCLAW_WORKSPACE_ROOT", "/workspace")).resolve()
 
+# One shared whisper container serves every bot persona, but each persona's
+# gateway mounts its OWN host workspace directory at its own container's
+# /workspace -- this container only ever saw the single default /workspace,
+# so it couldn't see any persona-specific file. EXTRA_ALLOWED_ROOTS
+# generalizes the containment check to accept additional roots: the legacy
+# WORKSPACE_ROOT stays the primary one (and stays live-patchable by tests,
+# see _is_under_an_allowed_root reading it fresh each call rather than
+# baking it into a snapshot list), plus (once mounted, see compose.yaml) a
+# /profiles root under which every persona's own workspace lives, namespaced
+# by persona so one shared container can serve all of them unambiguously.
+EXTRA_ALLOWED_ROOTS = [
+    Path(root).resolve()
+    for root in os.environ.get("OPENCLAW_WHISPER_ALLOWED_ROOTS", "").split(",")
+    if root.strip()
+]
+
 model: WhisperModel | None = None
 
 
@@ -40,21 +56,28 @@ def json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict) -
     handler.wfile.write(body)
 
 
+def _is_under_an_allowed_root(path: Path) -> bool:
+    # WORKSPACE_ROOT is read fresh here (not baked into a snapshot list) so
+    # tests that monkeypatch it directly (see test_audio_clip.py) still work.
+    roots = [WORKSPACE_ROOT, *EXTRA_ALLOWED_ROOTS]
+    return any(root in path.parents or path == root for root in roots)
+
+
 def safe_audio_path(raw_path: str) -> Path:
     path = Path(raw_path).resolve()
-    if WORKSPACE_ROOT not in path.parents and path != WORKSPACE_ROOT:
-        raise ValueError("audio path must be inside /workspace")
+    if not _is_under_an_allowed_root(path):
+        raise ValueError(f"audio path must be inside one of {[WORKSPACE_ROOT, *EXTRA_ALLOWED_ROOTS]}")
     if not path.exists() or not path.is_file():
         raise FileNotFoundError(str(path))
     return path
 
 
 def safe_audio_write_path(raw_path: str) -> Path:
-    """Same workspace-containment check as safe_audio_path, but for an
+    """Same allowed-roots containment check as safe_audio_path, but for an
     output file that doesn't exist yet."""
     path = Path(raw_path).resolve()
-    if WORKSPACE_ROOT not in path.parents and path != WORKSPACE_ROOT:
-        raise ValueError("output path must be inside /workspace")
+    if not _is_under_an_allowed_root(path):
+        raise ValueError(f"output path must be inside one of {[WORKSPACE_ROOT, *EXTRA_ALLOWED_ROOTS]}")
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 

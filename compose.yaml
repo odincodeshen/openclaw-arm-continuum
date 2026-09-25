@@ -144,10 +144,19 @@ services:
       OPENCLAW_WHISPER_DEVICE: cpu
       OPENCLAW_WHISPER_COMPUTE_TYPE: int8
       OPENCLAW_WORKSPACE_ROOT: /workspace
+      # One shared whisper container serves every bot persona, but each
+      # persona's own gateway mounts a DIFFERENT host directory at its own
+      # /workspace (profiles/<persona>/workspace) -- without this, whisper
+      # could only ever see the single default ./workspace, so any file a
+      # persona bot asked it to read/write (audio clips, transcription
+      # input) 404'd. /profiles gives it visibility into every persona's
+      # workspace, namespaced by persona so there's no path collision.
+      OPENCLAW_WHISPER_ALLOWED_ROOTS: /profiles
       NVIDIA_VISIBLE_DEVICES: void
       CUDA_VISIBLE_DEVICES: ""
     volumes:
       - ./app:/app:ro
+      - ./profiles:/profiles
       - ${OPENCLAW_HOST_WORKSPACE:-./workspace}:/workspace
       - ${HF_CACHE_DIR:-./.cache/huggingface}:/root/.cache/huggingface
     restart: unless-stopped

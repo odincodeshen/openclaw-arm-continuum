@@ -2,6 +2,7 @@ from pathlib import Path
 
 from openclaw_runtime.config import Settings
 from openclaw_runtime.http_client import request_json
+from openclaw_runtime.whisper_paths import to_whisper_path
 
 
 class AudioClipClient:
@@ -17,10 +18,10 @@ class AudioClipClient:
             "POST",
             f"{self.settings.whisper_base_url}/clip",
             {
-                "path": str(input_path),
+                "path": str(to_whisper_path(input_path, self.settings)),
                 "start_seconds": start_seconds,
                 "end_seconds": end_seconds,
-                "output_path": str(output_path),
+                "output_path": str(to_whisper_path(output_path, self.settings)),
             },
             timeout=self.settings.whisper_timeout,
         )
