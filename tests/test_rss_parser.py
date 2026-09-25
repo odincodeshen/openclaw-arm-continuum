@@ -4,7 +4,7 @@ from openclaw_runtime.rss_client import parse_rss_items
 
 
 BBC_STYLE_RSS = """<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0">
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
 <channel>
 <title>Desert Island Discs</title>
 <item>
@@ -12,18 +12,21 @@ BBC_STYLE_RSS = """<?xml version="1.0" encoding="UTF-8"?>
 <guid isPermaLink="false">urn:bbc:podcast:older</guid>
 <enclosure url="https://podcasts.files.bbci.co.uk/older.mp3" type="audio/mpeg" />
 <pubDate>Fri, 01 Aug 2026 09:00:00 GMT</pubDate>
+<itunes:duration>3053</itunes:duration>
 </item>
 <item>
 <title>Episode Newest</title>
 <guid isPermaLink="false">urn:bbc:podcast:newest</guid>
 <enclosure url="https://podcasts.files.bbci.co.uk/newest.mp3" type="audio/mpeg" />
 <pubDate>Fri, 22 Aug 2026 09:00:00 GMT</pubDate>
+<itunes:duration>51:20</itunes:duration>
 </item>
 <item>
 <title>Episode Middle</title>
 <guid isPermaLink="false">urn:bbc:podcast:middle</guid>
 <enclosure url="https://podcasts.files.bbci.co.uk/middle.mp3" type="audio/mpeg" />
 <pubDate>Fri, 15 Aug 2026 09:00:00 GMT</pubDate>
+<itunes:duration>179</itunes:duration>
 </item>
 </channel>
 </rss>
@@ -92,6 +95,20 @@ class ParseRssItemsTest(unittest.TestCase):
     def test_empty_feed_returns_empty_list(self) -> None:
         items = parse_rss_items("<rss><channel></channel></rss>")
         self.assertEqual(items, [])
+
+    def test_itunes_duration_plain_seconds_is_parsed(self) -> None:
+        items = parse_rss_items(BBC_STYLE_RSS)
+        middle = next(item for item in items if item.title == "Episode Middle")
+        self.assertEqual(middle.duration_seconds, 179.0)
+
+    def test_itunes_duration_clock_format_is_parsed(self) -> None:
+        items = parse_rss_items(BBC_STYLE_RSS)
+        newest = next(item for item in items if item.title == "Episode Newest")
+        self.assertEqual(newest.duration_seconds, 51 * 60 + 20)
+
+    def test_missing_itunes_duration_is_none(self) -> None:
+        items = parse_rss_items(GUARDIAN_STYLE_RSS)
+        self.assertIsNone(items[0].duration_seconds)
 
     def test_item_missing_pub_date_sorts_last(self) -> None:
         xml = """<rss><channel>

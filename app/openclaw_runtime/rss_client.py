@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 import xml.etree.ElementTree as ET
 
+_ITUNES_NS = "{http://www.itunes.com/dtds/podcast-1.0.dtd}"
+
 
 @dataclass(frozen=True)
 class RssItem:
@@ -12,6 +14,7 @@ class RssItem:
     enclosure_url: str
     pub_date: datetime | None
     pub_date_raw: str
+    duration_seconds: float | None
 
 
 def parse_rss_items(xml_text: str) -> list[RssItem]:
@@ -38,6 +41,8 @@ def parse_rss_items(xml_text: str) -> list[RssItem]:
         enclosure_url = ((enclosure_el.get("url") if enclosure_el is not None else "") or "").strip()
         pub_date_raw = (item_el.findtext("pubDate") or "").strip()
         pub_date = _parse_pub_date(pub_date_raw)
+        duration_raw = (item_el.findtext(f"{_ITUNES_NS}duration") or "").strip()
+        duration_seconds = _parse_itunes_duration(duration_raw)
 
         if not link and not enclosure_url:
             continue
@@ -50,11 +55,32 @@ def parse_rss_items(xml_text: str) -> list[RssItem]:
                 enclosure_url=enclosure_url,
                 pub_date=pub_date,
                 pub_date_raw=pub_date_raw,
+                duration_seconds=duration_seconds,
             )
         )
 
     items.sort(key=lambda item: item.pub_date or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
     return items
+
+
+def _parse_itunes_duration(raw: str) -> float | None:
+    """<itunes:duration> is spec'd as either a plain integer of seconds
+    ("179") or a colon-separated HH:MM:SS / MM:SS clock ("51:20"). Real
+    feeds use both forms, so both need handling."""
+    if not raw:
+        return None
+    if ":" in raw:
+        parts = raw.split(":")
+        if not all(part.isdigit() for part in parts) or len(parts) > 3:
+            return None
+        seconds = 0.0
+        for part in parts:
+            seconds = seconds * 60 + int(part)
+        return seconds
+    try:
+        return float(raw)
+    except ValueError:
+        return None
 
 
 def _parse_pub_date(raw: str) -> datetime | None:

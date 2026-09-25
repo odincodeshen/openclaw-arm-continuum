@@ -31,6 +31,25 @@ BBC_RSS = """<?xml version="1.0"?>
 </channel></rss>
 """
 
+BBC_RSS_WITH_HIGHLIGHT_CLIP = """<?xml version="1.0"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"><channel>
+<item>
+<title>Daily highlight clip</title>
+<guid isPermaLink="false">urn:bbc:podcast:clip</guid>
+<enclosure url="https://podcasts.files.bbci.co.uk/clip.mp3" type="audio/mpeg" />
+<pubDate>Thu, 24 Sep 2026 09:00:00 GMT</pubDate>
+<itunes:duration>189</itunes:duration>
+</item>
+<item>
+<title>Full episode</title>
+<guid isPermaLink="false">urn:bbc:podcast:full</guid>
+<enclosure url="https://podcasts.files.bbci.co.uk/full.mp3" type="audio/mpeg" />
+<pubDate>Sun, 13 Sep 2026 09:00:00 GMT</pubDate>
+<itunes:duration>3073</itunes:duration>
+</item>
+</channel></rss>
+"""
+
 
 class FakeLlm:
     def __init__(self, responses: list[str]) -> None:
@@ -50,6 +69,15 @@ class FetchLatestEpisodeTest(unittest.TestCase):
 
     def test_empty_feed_returns_none(self) -> None:
         self.assertIsNone(fetch_latest_episode("<rss><channel></channel></rss>"))
+
+    def test_skips_newer_short_highlight_clip_for_older_full_episode(self) -> None:
+        """Real BBC feed behavior (found live 2026-09-24): a ~3 minute daily
+        highlight clip can be newer by pubDate than the actual weekly
+        episode. Picking the clip leaves almost nothing to transcribe after
+        INTRO_SKIP_SECONDS, so duration must gate selection, not recency
+        alone."""
+        episode = fetch_latest_episode(BBC_RSS_WITH_HIGHLIGHT_CLIP)
+        self.assertEqual(episode.guid, "urn:bbc:podcast:full")
 
 
 class IsEpisodeProcessedTest(unittest.TestCase):

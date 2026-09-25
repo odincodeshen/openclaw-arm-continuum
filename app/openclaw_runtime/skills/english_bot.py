@@ -38,6 +38,14 @@ from openclaw_runtime.transcription_client import TranscriptionClient, Transcrip
 
 BBC_DESERT_ISLAND_DISCS_RSS = "https://podcasts.files.bbci.co.uk/b006qnmr.rss"
 
+# The feed interleaves short daily "highlight clip" items (~180-245s,
+# confirmed live 2026-09-24) with full weekly episodes (~3050-3130s). A
+# clip this short is almost entirely consumed by INTRO_SKIP_SECONDS alone,
+# leaving nothing to transcribe -- so fetch_latest_episode() filters for a
+# minimum duration rather than blindly taking the newest item by pubDate.
+# 1200s (20 min) sits safely between the two, with wide margin either side.
+MIN_EPISODE_DURATION_SECONDS = 1200.0
+
 # Fixed intro + host's guest-bio segment, consultant-verified (spec Section 0
 # point 3): opening theme ~20-30s + host's intro monologue ~60-90s, usually
 # into the real interview by 2:00-2:30, rarely later than 2:40. 3 minutes is
@@ -153,8 +161,16 @@ def is_episode_processed(qdrant: QdrantClient, collection: str, guid: str) -> bo
 
 
 def fetch_latest_episode(rss_xml: str) -> RssItem | None:
+    """Newest item (by pubDate, since parse_rss_items already sorts that way)
+    that is long enough to be a real episode, not a short highlight clip --
+    see MIN_EPISODE_DURATION_SECONDS. An item with no <itunes:duration> at
+    all is treated as unknown-but-acceptable rather than excluded, since the
+    tag isn't guaranteed by every feed."""
     items = parse_rss_items(rss_xml)
-    return items[0] if items else None
+    for item in items:
+        if item.duration_seconds is None or item.duration_seconds >= MIN_EPISODE_DURATION_SECONDS:
+            return item
+    return None
 
 
 def select_guest_dominant_window(llm: LlmClient, segments: list[TranscriptSegment]) -> dict:
