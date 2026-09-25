@@ -130,10 +130,9 @@ ANNOTATION_SCHEMA = {
 CHINESE_SHADOWING_FEEDBACK_SCHEMA = {
     "type": "object",
     "properties": {
-        "translation_zh": {"type": "string", "minLength": 1},
         "analysis_zh": {"type": "string", "minLength": 1},
     },
-    "required": ["translation_zh", "analysis_zh"],
+    "required": ["analysis_zh"],
     "additionalProperties": False,
 }
 
@@ -600,18 +599,19 @@ def compute_wpm(text: str, duration_seconds: float) -> float:
     return round(word_count / (duration_seconds / 60.0), 1)
 
 
-def explain_tuesday_shadowing_in_chinese(
+def analyze_tuesday_shadowing_in_chinese(
     llm: LlmClient,
     reference_text: str,
     transcribed_reply: str,
     diff: WordDiffResult,
     wpm: float,
 ) -> dict:
-    """Chinese translation + analysis of this specific shadowing attempt,
+    """Chinese-language analysis of THIS shadowing attempt's correctness,
     generated only AFTER the user's reply (spec change: the Tuesday push
-    message itself stays English + stress-annotation only, per user
-    request -- Chinese content now lives entirely in the evaluation step,
-    not the push)."""
+    message itself stays English + stress-annotation only -- Chinese
+    content lives entirely in the evaluation step). No translation of the
+    original text -- per user request, the point is judging accuracy
+    (pronunciation/word/pace fidelity to the original), not comprehension."""
     missing = ", ".join(diff.missing_words) or "無"
     extra = ", ".join(diff.extra_words) or "無"
     prompt = (
@@ -621,11 +621,11 @@ def explain_tuesday_shadowing_in_chinese(
         f"Missing/changed words: {missing}\n"
         f"Extra words: {extra}\n"
         f"Their speaking pace: {wpm:.0f} words per minute.\n\n"
-        "In Traditional Chinese (繁體中文), provide: (1) a natural translation "
-        "of the original English text, so the learner understands its "
-        "meaning, and (2) a short, encouraging analysis of their shadowing "
-        "attempt -- comment on which words they got right, which they missed "
-        "or changed, and whether their pace was close to the original."
+        "In Traditional Chinese (繁體中文), give a short, encouraging analysis "
+        "of the CORRECTNESS of their shadowing attempt -- not a translation "
+        "of the original text. Comment on which words they got right, which "
+        "they missed or changed, and whether their pace was close to the "
+        "original."
     )
     raw = llm.chat_json(
         prompt, CHINESE_SHADOWING_FEEDBACK_SCHEMA, schema_name="tuesday_chinese_feedback", max_tokens=500
@@ -659,9 +659,8 @@ def evaluate_tuesday_reply(
         f"Pace: {wpm} WPM (this is shadowing -- aim to match the original clip's pace, "
         "not a fixed target)"
     )
-    feedback_zh = explain_tuesday_shadowing_in_chinese(llm, reference_text, transcribed_reply, diff, wpm)
+    feedback_zh = analyze_tuesday_shadowing_in_chinese(llm, reference_text, transcribed_reply, diff, wpm)
     lines.append("")
-    lines.append(f"中文翻譯：{feedback_zh['translation_zh']}")
     lines.append(f"中文分析：{feedback_zh['analysis_zh']}")
     mark_task_completed(qdrant, collection, week_number, "tue", owner)
     return "\n".join(lines)

@@ -5,11 +5,11 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from openclaw_runtime.skills.english_bot import (
+    analyze_tuesday_shadowing_in_chinese,
     annotate_for_shadowing,
     build_tuesday_message,
     compute_wpm,
     evaluate_tuesday_reply,
-    explain_tuesday_shadowing_in_chinese,
     read_this_week_payload,
     run_tuesday_task,
     select_longest_guest_stretch,
@@ -52,16 +52,16 @@ class AnnotateForShadowingTest(unittest.TestCase):
         self.assertIn("not an analysis of the actual audio", prompt.lower())
 
 
-class ExplainTuesdayShadowingInChineseTest(unittest.TestCase):
-    def test_parses_translation_and_analysis_and_prompt_asks_for_traditional_chinese(self) -> None:
-        llm = FakeLlm([json.dumps({"translation_zh": "我記得很清楚", "analysis_zh": "發音掌握得不錯"})])
+class AnalyzeTuesdayShadowingInChineseTest(unittest.TestCase):
+    def test_parses_analysis_and_prompt_asks_for_correctness_not_translation(self) -> None:
+        llm = FakeLlm([json.dumps({"analysis_zh": "發音掌握得不錯"})])
         diff = word_level_diff("I remember it well", "I remember well")
-        feedback = explain_tuesday_shadowing_in_chinese(llm, "I remember it well", "I remember well", diff, 90.0)
-        self.assertEqual(feedback["translation_zh"], "我記得很清楚")
+        feedback = analyze_tuesday_shadowing_in_chinese(llm, "I remember it well", "I remember well", diff, 90.0)
         self.assertEqual(feedback["analysis_zh"], "發音掌握得不錯")
         prompt, schema_name = llm.calls[0]
         self.assertEqual(schema_name, "tuesday_chinese_feedback")
         self.assertIn("繁體中文", prompt)
+        self.assertIn("not a translation", prompt.lower())
         self.assertIn("it", prompt)  # the missing word is in the prompt
 
 
@@ -251,7 +251,7 @@ class EvaluateTuesdayReplyTest(unittest.TestCase):
         self.qdrant.scroll_by_filters.return_value = [
             {"id": "pushed-point-1", "payload": {"completed": False}}
         ]
-        self.llm = FakeLlm([json.dumps({"translation_zh": "我記得很清楚", "analysis_zh": "發音大致準確"})])
+        self.llm = FakeLlm([json.dumps({"analysis_zh": "發音大致準確"})])
 
     def test_feedback_includes_transcript_match_pace_and_chinese_feedback(self) -> None:
         feedback = evaluate_tuesday_reply(
@@ -270,8 +270,8 @@ class EvaluateTuesdayReplyTest(unittest.TestCase):
         self.assertIn("Pace:", feedback)
         self.assertIn("changed", feedback)
         self.assertIn("everything", feedback)
-        self.assertIn("中文翻譯：我記得很清楚", feedback)
         self.assertIn("中文分析：發音大致準確", feedback)
+        self.assertNotIn("中文翻譯", feedback)
 
     def test_perfect_match_has_no_missing_or_extra_lines(self) -> None:
         feedback = evaluate_tuesday_reply(
