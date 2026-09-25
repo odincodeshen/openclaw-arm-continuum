@@ -266,6 +266,7 @@ def dispatch_pending_reply(
         )
     if kind == "eng_tue":
         return evaluate_tuesday_reply(
+            llm,
             pending["reference_text"],
             transcribed_reply,
             reply_duration_seconds,

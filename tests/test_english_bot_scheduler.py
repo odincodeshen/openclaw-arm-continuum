@@ -233,11 +233,12 @@ class DispatchPendingReplyTest(unittest.TestCase):
 
     @patch("openclaw_runtime.english_bot_scheduler.evaluate_tuesday_reply", return_value="tue feedback")
     def test_eng_tue_dispatches_with_reference_text(self, evaluate_tuesday_reply) -> None:
+        llm = MagicMock()
         result = dispatch_pending_reply(
             pending={"kind": "eng_tue", "week_number": 5, "reference_text": "raw stretch"},
             transcribed_reply="echoed stretch",
             reply_duration_seconds=12.5,
-            llm=MagicMock(),
+            llm=llm,
             qdrant=MagicMock(),
             embeddings=MagicMock(),
             collection="coll",
@@ -245,9 +246,10 @@ class DispatchPendingReplyTest(unittest.TestCase):
         )
         self.assertEqual(result, "tue feedback")
         args, kwargs = evaluate_tuesday_reply.call_args
-        self.assertEqual(args[0], "raw stretch")
-        self.assertEqual(args[1], "echoed stretch")
-        self.assertEqual(args[2], 12.5)
+        self.assertEqual(args[0], llm)
+        self.assertEqual(args[1], "raw stretch")
+        self.assertEqual(args[2], "echoed stretch")
+        self.assertEqual(args[3], 12.5)
 
     @patch("openclaw_runtime.english_bot_scheduler.evaluate_wednesday_reply", return_value="wed feedback")
     def test_eng_wed_dispatches_with_cue_card_and_part3(self, evaluate_wednesday_reply) -> None:

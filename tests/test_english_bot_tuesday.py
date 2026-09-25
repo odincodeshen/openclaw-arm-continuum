@@ -9,6 +9,7 @@ from openclaw_runtime.skills.english_bot import (
     build_tuesday_message,
     compute_wpm,
     evaluate_tuesday_reply,
+    explain_tuesday_shadowing_in_chinese,
     read_this_week_payload,
     run_tuesday_task,
     select_longest_guest_stretch,
@@ -51,11 +52,31 @@ class AnnotateForShadowingTest(unittest.TestCase):
         self.assertIn("not an analysis of the actual audio", prompt.lower())
 
 
+class ExplainTuesdayShadowingInChineseTest(unittest.TestCase):
+    def test_parses_translation_and_analysis_and_prompt_asks_for_traditional_chinese(self) -> None:
+        llm = FakeLlm([json.dumps({"translation_zh": "我記得很清楚", "analysis_zh": "發音掌握得不錯"})])
+        diff = word_level_diff("I remember it well", "I remember well")
+        feedback = explain_tuesday_shadowing_in_chinese(llm, "I remember it well", "I remember well", diff, 90.0)
+        self.assertEqual(feedback["translation_zh"], "我記得很清楚")
+        self.assertEqual(feedback["analysis_zh"], "發音掌握得不錯")
+        prompt, schema_name = llm.calls[0]
+        self.assertEqual(schema_name, "tuesday_chinese_feedback")
+        self.assertIn("繁體中文", prompt)
+        self.assertIn("it", prompt)  # the missing word is in the prompt
+
+
 class BuildTuesdayMessageTest(unittest.TestCase):
     def test_message_includes_annotation_and_instructions(self) -> None:
         message = build_tuesday_message("I **remember** it / well")
         self.assertIn("I **remember** it / well", message)
         self.assertIn("voice message", message.lower())
+
+    def test_push_message_is_english_only_no_chinese(self) -> None:
+        """Spec change: Chinese content moved from the push to the
+        evaluation step -- the Tuesday push stays English + stress
+        annotation only."""
+        message = build_tuesday_message("I **remember** it / well")
+        self.assertNotIn("中文", message)
 
 
 class ReadThisWeekPayloadTest(unittest.TestCase):
@@ -159,6 +180,7 @@ class RunTuesdayTaskTest(unittest.TestCase):
         self.assertEqual(len(self.sent_messages), 2)
         self.assertEqual(len(self.sent_audio), 2)
         self.assertIn("remember", self.sent_messages[0][1])
+        self.assertNotIn("中文", self.sent_messages[0][1])
         self.assertEqual(self.sent_audio[0][1], self.workspace_dir / "tuesday_clip.mp3")
 
 
@@ -229,9 +251,11 @@ class EvaluateTuesdayReplyTest(unittest.TestCase):
         self.qdrant.scroll_by_filters.return_value = [
             {"id": "pushed-point-1", "payload": {"completed": False}}
         ]
+        self.llm = FakeLlm([json.dumps({"translation_zh": "我記得很清楚", "analysis_zh": "發音大致準確"})])
 
-    def test_feedback_includes_transcript_match_and_pace(self) -> None:
+    def test_feedback_includes_transcript_match_pace_and_chinese_feedback(self) -> None:
         feedback = evaluate_tuesday_reply(
+            self.llm,
             "I remember it well and it changed everything",
             "I remember it well",
             4.0,
@@ -246,17 +270,33 @@ class EvaluateTuesdayReplyTest(unittest.TestCase):
         self.assertIn("Pace:", feedback)
         self.assertIn("changed", feedback)
         self.assertIn("everything", feedback)
+        self.assertIn("中文翻譯：我記得很清楚", feedback)
+        self.assertIn("中文分析：發音大致準確", feedback)
 
     def test_perfect_match_has_no_missing_or_extra_lines(self) -> None:
         feedback = evaluate_tuesday_reply(
-            "hello world", "hello world", 2.0, qdrant=self.qdrant, collection="coll", owner="owner-a", week_number=1
+            self.llm,
+            "hello world",
+            "hello world",
+            2.0,
+            qdrant=self.qdrant,
+            collection="coll",
+            owner="owner-a",
+            week_number=1,
         )
         self.assertNotIn("Missing/changed:", feedback)
         self.assertNotIn("Extra words:", feedback)
 
     def test_marks_tuesday_task_completed(self) -> None:
         evaluate_tuesday_reply(
-            "hello world", "hello world", 2.0, qdrant=self.qdrant, collection="coll", owner="owner-a", week_number=1
+            self.llm,
+            "hello world",
+            "hello world",
+            2.0,
+            qdrant=self.qdrant,
+            collection="coll",
+            owner="owner-a",
+            week_number=1,
         )
         self.qdrant.set_payload.assert_called_once_with("coll", "pushed-point-1", {"completed": True})
 
