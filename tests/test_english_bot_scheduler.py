@@ -296,19 +296,22 @@ class DispatchPendingReplyTest(unittest.TestCase):
         self.assertEqual(result, "fri feedback")
 
     @patch("openclaw_runtime.english_bot_scheduler.evaluate_saturday_answers", return_value="sat feedback")
-    def test_eng_saturday_quiz_dispatches_with_phrases(self, evaluate_saturday_answers) -> None:
+    def test_eng_saturday_quiz_dispatches_with_questions(self, evaluate_saturday_answers) -> None:
+        llm = MagicMock()
+        questions = [{"phrase": "take a gamble on", "prompt_text": "We ____ it."}]
         dispatch_pending_reply(
-            pending={"kind": "eng_saturday_quiz", "week_number": 5, "phrases": ["take a gamble on"]},
+            pending={"kind": "eng_saturday_quiz", "week_number": 5, "questions": questions},
             transcribed_reply="take a gamble on",
             reply_duration_seconds=0.0,
-            llm=MagicMock(),
+            llm=llm,
             qdrant=MagicMock(),
             embeddings=MagicMock(),
             collection="coll",
             owner="owner-a",
         )
         args, kwargs = evaluate_saturday_answers.call_args
-        self.assertEqual(args[5], ["take a gamble on"])
+        self.assertEqual(args[0], llm)
+        self.assertEqual(args[6], questions)
 
     def test_unknown_kind_raises(self) -> None:
         with self.assertRaises(ValueError):

@@ -1,3 +1,4 @@
+import json
 import unittest
 from unittest.mock import MagicMock
 
@@ -7,9 +8,19 @@ from openclaw_runtime.skills.english_bot import (
     build_saturday_message,
     evaluate_saturday_answers,
     generate_cloze,
-    judge_cloze_answer,
+    judge_cloze_answers_with_llm,
     run_saturday_task,
 )
+
+
+class FakeLlm:
+    def __init__(self, responses: list[str]) -> None:
+        self.responses = list(responses)
+        self.calls: list[tuple[str, str]] = []
+
+    def chat_json(self, prompt, schema, *, schema_name, max_tokens=None):
+        self.calls.append((prompt, schema_name))
+        return self.responses.pop(0)
 
 
 class GenerateClozeTest(unittest.TestCase):
@@ -62,18 +73,48 @@ class GenerateClozeTest(unittest.TestCase):
         self.assertIsNone(generate_cloze("take a gamble on", "We are taking a gamble on the new design."))
 
 
-class JudgeClozeAnswerTest(unittest.TestCase):
-    def test_correct_answer_with_exact_phrase(self) -> None:
-        self.assertTrue(judge_cloze_answer("take a gamble on", "take a gamble on"))
+def _fake_cloze_result(correct: bool) -> dict:
+    return {
+        "correct": correct,
+        "explanation_zh": "說明文字",
+        "example_sentence": "An example sentence.",
+    }
 
-    def test_correct_answer_with_morphology(self) -> None:
-        self.assertTrue(judge_cloze_answer("spread oneself too thin", "spreading myself too thin"))
 
-    def test_wrong_answer(self) -> None:
-        self.assertFalse(judge_cloze_answer("take a gamble on", "make a decision about"))
+class JudgeClozeAnswersWithLlmTest(unittest.TestCase):
+    def test_returns_one_result_per_question_in_order(self) -> None:
+        llm = FakeLlm([json.dumps({"results": [_fake_cloze_result(True), _fake_cloze_result(False)]})])
+        questions = [
+            {"phrase": "move on", "prompt_text": "We had to ____."},
+            {"phrase": "bust down the door", "prompt_text": "They ____ to get in."},
+        ]
+        results = judge_cloze_answers_with_llm(llm, questions, "1. Move on 2. Something wrong")
+        self.assertEqual([r["correct"] for r in results], [True, False])
+        self.assertIn("explanation_zh", results[0])
+        self.assertIn("example_sentence", results[0])
+        prompt, schema_name = llm.calls[0]
+        self.assertEqual(schema_name, "saturday_cloze_judge")
 
-    def test_empty_answer_is_wrong(self) -> None:
-        self.assertFalse(judge_cloze_answer("take a gamble on", ""))
+    def test_prompt_warns_against_position_agnostic_matching(self) -> None:
+        """The whole point of this function: catch an answer that mentions
+        the right phrase but for the WRONG blank -- the prompt must tell
+        the LLM position matters, not just presence anywhere."""
+        llm = FakeLlm([json.dumps({"results": [_fake_cloze_result(False), _fake_cloze_result(False)]})])
+        questions = [
+            {"phrase": "move on", "prompt_text": "We had to ____."},
+            {"phrase": "bust down the door", "prompt_text": "They ____ to get in."},
+        ]
+        judge_cloze_answers_with_llm(llm, questions, "1. Bust down the door 2. Move on")
+        prompt, _ = llm.calls[0]
+        self.assertIn("position matters", prompt.lower())
+
+    def test_prompt_asks_for_chinese_explanation_and_example_sentence(self) -> None:
+        llm = FakeLlm([json.dumps({"results": [_fake_cloze_result(True)]})])
+        questions = [{"phrase": "move on", "prompt_text": "We had to ____."}]
+        judge_cloze_answers_with_llm(llm, questions, "Move on")
+        prompt, _ = llm.calls[0]
+        self.assertIn("繁體中文", prompt)
+        self.assertIn("example sentence", prompt.lower())
 
 
 class BuildClozeQuestionTest(unittest.TestCase):
@@ -143,7 +184,15 @@ class RunSaturdayTaskTest(unittest.TestCase):
         self.assertEqual(len(sent), 2)
         self.assertEqual(len(pending), 2)
         self.assertEqual(pending[0][1]["kind"], "eng_saturday_quiz")
-        self.assertEqual(pending[0][1]["phrases"], ["take a gamble on"])
+        self.assertEqual(
+            pending[0][1]["questions"],
+            [
+                {
+                    "phrase": "take a gamble on",
+                    "prompt_text": '(no example sentence on file) Use "take a gamble on" correctly in a sentence.',
+                }
+            ],
+        )
 
 
 class EvaluateSaturdayAnswersTest(unittest.TestCase):
@@ -152,20 +201,54 @@ class EvaluateSaturdayAnswersTest(unittest.TestCase):
         qdrant.scroll_by_filters.return_value = []
         embeddings = MagicMock()
         embeddings.embed.return_value = [0.1]
+        llm = FakeLlm(
+            [json.dumps({"results": [_fake_cloze_result(True), _fake_cloze_result(False)]})]
+        )
+        questions = [
+            {"phrase": "take a gamble on", "prompt_text": "We ____ the plan."},
+            {"phrase": "spread oneself too thin", "prompt_text": "I was ____."},
+        ]
 
         report = evaluate_saturday_answers(
+            llm,
             qdrant,
             embeddings,
             "coll",
             "owner-a",
             1,
-            ["take a gamble on", "spread oneself too thin"],
+            questions,
             "I have taken a gamble on it but I have no idea about the second one.",
         )
 
         self.assertIn("take a gamble on: correct", report)
         self.assertIn("spread oneself too thin: needs review", report)
+        self.assertIn("說明文字", report)
+        self.assertIn("An example sentence.", report)
         self.assertEqual(qdrant.upsert_text.call_count, 2)
+
+    def test_position_swapped_phrase_is_not_credited(self) -> None:
+        """Regression test for the real bug found live: an answer that
+        mentions the right phrase for the WRONG question must not be
+        credited -- the LLM judge (unlike the old substring-anywhere
+        check) is told which result goes with which question."""
+        qdrant = MagicMock()
+        qdrant.scroll_by_filters.return_value = []
+        embeddings = MagicMock()
+        embeddings.embed.return_value = [0.1]
+        llm = FakeLlm(
+            [json.dumps({"results": [_fake_cloze_result(False), _fake_cloze_result(False)]})]
+        )
+        questions = [
+            {"phrase": "move on", "prompt_text": "We had to ____."},
+            {"phrase": "bust down the door", "prompt_text": "They ____ to get in."},
+        ]
+
+        report = evaluate_saturday_answers(
+            llm, qdrant, embeddings, "coll", "owner-a", 1, questions, "1. Bust down the door 2. Move on"
+        )
+
+        self.assertIn("move on: needs review", report)
+        self.assertIn("bust down the door: needs review", report)
 
     def test_marks_saturday_task_completed(self) -> None:
         qdrant = MagicMock()
@@ -178,10 +261,10 @@ class EvaluateSaturdayAnswersTest(unittest.TestCase):
         qdrant.scroll_by_filters.side_effect = scroll_by_filters
         embeddings = MagicMock()
         embeddings.embed.return_value = [0.1]
+        llm = FakeLlm([json.dumps({"results": [_fake_cloze_result(True)]})])
+        questions = [{"phrase": "take a gamble on", "prompt_text": "We ____ it."}]
 
-        evaluate_saturday_answers(
-            qdrant, embeddings, "coll", "owner-a", 1, ["take a gamble on"], "I take a gamble on it."
-        )
+        evaluate_saturday_answers(llm, qdrant, embeddings, "coll", "owner-a", 1, questions, "I take a gamble on it.")
 
         qdrant.set_payload.assert_any_call("coll", "pushed-point-1", {"completed": True})
 

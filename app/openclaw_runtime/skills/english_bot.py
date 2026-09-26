@@ -1602,15 +1602,6 @@ def generate_cloze(phrase: str, sentence: str) -> str | None:
     return sentence[: match.start()] + "____" + sentence[match.end() :]
 
 
-def judge_cloze_answer(phrase: str, user_answer: str) -> bool:
-    """Deterministic check: does the answer contain a recognizable form of
-    the target phrase (same tolerance as generate_cloze)? Simpler and more
-    reliable than an LLM call for checking one known target string."""
-    if not phrase or not user_answer:
-        return False
-    return bool(_build_phrase_pattern(phrase).search(user_answer))
-
-
 @dataclass(frozen=True)
 class ClozeQuestion:
     phrase: str
@@ -1676,24 +1667,93 @@ def run_saturday_task(
         mark_task_pushed(qdrant, collection, week_number, "sat", owner, vector)
         set_pending_answer(
             owner,
-            {"kind": "eng_saturday_quiz", "week_number": week_number, "phrases": [q.phrase for q in questions]},
+            {
+                "kind": "eng_saturday_quiz",
+                "week_number": week_number,
+                "questions": [{"phrase": q.phrase, "prompt_text": q.prompt_text} for q in questions],
+            },
         )
         result[owner] = questions
     return result
 
 
+SATURDAY_CLOZE_JUDGE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "results": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "correct": {"type": "boolean"},
+                    "explanation_zh": {"type": "string", "minLength": 1},
+                    "example_sentence": {"type": "string", "minLength": 1},
+                },
+                "required": ["correct", "explanation_zh", "example_sentence"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["results"],
+    "additionalProperties": False,
+}
+
+
+def judge_cloze_answers_with_llm(llm: LlmClient, questions: list[dict], transcribed_answer: str) -> list[dict]:
+    """LLM judges each numbered question's answer by which part of the
+    learner's reply corresponds to which blank -- fixes a real bug where
+    the old deterministic judge_cloze_answer() checked whether a phrase
+    appeared ANYWHERE in the whole multi-blank reply, so answers swapped
+    to the wrong blank (or any correct phrase mentioned anywhere) were
+    wrongly credited regardless of position. Also generates a short
+    Chinese explanation and a correct-usage example sentence for every
+    question (not just wrong ones) -- reinforces learning instead of a
+    bare correct/needs-review verdict, and covers phrase_only questions
+    that had no example sentence on file at all. Returns one result dict
+    per question, in the same order as `questions`."""
+    numbered = "\n".join(f"{i + 1}. {q['prompt_text']}" for i, q in enumerate(questions))
+    phrase_list = ", ".join(f'{i + 1}. "{q["phrase"]}"' for i, q in enumerate(questions))
+    prompt = (
+        "This is a fill-in-the-blank (cloze) quiz with numbered questions, "
+        "each blank expecting a specific target phrase.\n\n"
+        f"Questions:\n{numbered}\n\n"
+        f"Target phrase for each question, in order:\n{phrase_list}\n\n"
+        f'The learner\'s reply (may or may not be numbered/ordered):\n"{transcribed_answer}"\n\n'
+        "For EACH numbered question: (1) judge whether the part of the "
+        "reply that answers THAT SPECIFIC question correctly uses its "
+        "target phrase -- match reply segments to questions by number if "
+        "the reply is numbered, otherwise by order; a phrase used for the "
+        "wrong question is NOT correct for that question, even if it "
+        "appears somewhere in the reply, position matters, not just "
+        "whether the phrase is present anywhere; (2) in Traditional "
+        "Chinese (繁體中文), briefly explain why it's right or wrong, to "
+        "help the learner understand the mistake, not just see a verdict; "
+        "(3) give one natural English example sentence correctly using "
+        "the target phrase, so the learner has a model to learn from. "
+        "IMPORTANT: your response is parsed as JSON -- if you need to "
+        "quote a phrase inside explanation_zh, use Chinese corner "
+        "brackets 「」, never a literal double-quote character (\"), "
+        "which would break the JSON string."
+    )
+    raw = llm.chat_json(prompt, SATURDAY_CLOZE_JUDGE_SCHEMA, schema_name="saturday_cloze_judge", max_tokens=900)
+    return json.loads(raw)["results"]
+
+
 def evaluate_saturday_answers(
+    llm: LlmClient,
     qdrant: QdrantClient,
     embeddings: EmbeddingClient,
     collection: str,
     owner: str,
     week_number: int,
-    phrases: list[str],
+    questions: list[dict],
     transcribed_answer: str,
 ) -> str:
     lines = ["Saturday review results:", f'- Your answer: "{transcribed_answer}"', ""]
-    for phrase in phrases:
-        correct = judge_cloze_answer(phrase, transcribed_answer)
+    results = judge_cloze_answers_with_llm(llm, questions, transcribed_answer)
+    for question, result in zip(questions, results):
+        phrase = question["phrase"]
+        correct = result["correct"]
         record_chunk_usage(
             qdrant,
             embeddings,
@@ -1706,6 +1766,8 @@ def evaluate_saturday_answers(
             source="",
         )
         lines.append(f"- {phrase}: {'correct' if correct else 'needs review'}")
+        lines.append(f"  {result['explanation_zh']}")
+        lines.append(f'  Example: "{result["example_sentence"]}"')
     mark_task_completed(qdrant, collection, week_number, "sat", owner)
     return "\n".join(lines)
 

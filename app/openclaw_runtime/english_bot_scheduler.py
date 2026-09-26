@@ -303,6 +303,6 @@ def dispatch_pending_reply(
         )
     if kind == "eng_saturday_quiz":
         return evaluate_saturday_answers(
-            qdrant, embeddings, collection, owner, week_number, pending["phrases"], transcribed_reply
+            llm, qdrant, embeddings, collection, owner, week_number, pending["questions"], transcribed_reply
         )
     raise ValueError(f"unknown pending-answer kind: {kind!r}")

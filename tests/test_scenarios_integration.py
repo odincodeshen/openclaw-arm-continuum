@@ -554,9 +554,33 @@ class EnglishLearningScenario(QdrantScenarioBase):
         self.assertIn("deployment pipeline", question.prompt_text)
 
         # A wrong Saturday answer flips needs_review, even though Friday's
-        # use of the same chunk this week was correct.
+        # use of the same chunk this week was correct. evaluate_saturday_answers
+        # now judges via an LLM call (see english_bot.py); a fake returning
+        # a fixed False keeps this test's focus on the deterministic
+        # needs_review persistence, not LLM judgment quality.
+        class _FakeLlm:
+            def chat_json(self, prompt, schema, *, schema_name, max_tokens=None):
+                return json.dumps(
+                    {
+                        "results": [
+                            {
+                                "correct": False,
+                                "explanation_zh": "測試用假回覆",
+                                "example_sentence": "A test example sentence.",
+                            }
+                        ]
+                    }
+                )
+
         evaluate_saturday_answers(
-            self.qdrant, self.embeddings, self.tracker, "owner-a", week_number, [phrase], "I have no idea."
+            _FakeLlm(),
+            self.qdrant,
+            self.embeddings,
+            self.tracker,
+            "owner-a",
+            week_number,
+            [{"phrase": phrase, "prompt_text": question.prompt_text}],
+            "I have no idea.",
         )
         after = read_chunk_progress(self.qdrant, self.tracker, "owner-a", week_number, phrase)
         self.assertTrue(after["needs_review"])
