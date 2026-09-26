@@ -132,10 +132,18 @@ PENDING_ANSWER_LOCK = threading.Lock()
 PENDING_ANSWER: dict[int, dict] = {}
 
 # Below this, a voice reply to a pending English-bot task is treated as a
-# non-attempt (accidental tap, misfire) rather than a real answer -- see
-# handle_english_bot_pending_reply, which restores the pending task instead
-# of consuming the user's only chance to answer that day.
-MIN_ENGLISH_BOT_VOICE_REPLY_SECONDS = 5.0
+# non-attempt (accidental tap, misfire) rather than a real practice attempt
+# -- see handle_english_bot_pending_reply.
+MIN_ENGLISH_BOT_VOICE_REPLY_SECONDS = 10.0
+
+# Ends a day's practice session (see handle_english_bot_pending_reply):
+# every qualifying voice/text reply after a day's task is pushed is
+# evaluated AND persisted (evaluate_<day>_reply already overwrites the same
+# tracked record on each call, so the last attempt before /Done is what
+# ends up recorded -- no separate "final answer" bookkeeping needed). Must
+# match the whole message, not a substring, so ordinary practice text
+# mentioning "done" never accidentally closes the session.
+ENGLISH_BOT_DONE_COMMAND = "/done"
 
 
 def set_pending_answer(chat_id: int, item: dict) -> None:
@@ -146,6 +154,11 @@ def set_pending_answer(chat_id: int, item: dict) -> None:
 def pop_pending_answer(chat_id: int) -> dict | None:
     with PENDING_ANSWER_LOCK:
         return PENDING_ANSWER.pop(chat_id, None)
+
+
+def peek_pending_answer(chat_id: int) -> dict | None:
+    with PENDING_ANSWER_LOCK:
+        return PENDING_ANSWER.get(chat_id)
 
 
 def has_pending_answer(chat_id: int) -> bool:
@@ -766,12 +779,18 @@ def handle_english_bot_pending_reply(chat_id: int, message: dict) -> bool:
     """If this chat has a pending English-bot task awaiting an answer
     (PENDING_ANSWER, set by the daily scheduler loop -- see
     _english_bot_scheduler_loop near main()), treat this message -- voice
-    or text, transcribed if voice -- as that answer. Runs before the
-    generic document/photo/voice handling in handle_message() so a voice
-    reply doesn't get swallowed into the normal voice-chat flow (which
-    would transcribe it and route it through the general skill router
-    instead of evaluating it as today's English-bot task, per
-    process_voice_message)."""
+    or text, transcribed if voice -- as a practice attempt at it. Runs
+    before the generic document/photo/voice handling in handle_message() so
+    a voice reply doesn't get swallowed into the normal voice-chat flow.
+
+    A day's task is repeatable, not single-shot: every qualifying attempt
+    (voice >= MIN_ENGLISH_BOT_VOICE_REPLY_SECONDS, or any text that isn't
+    /Done) is evaluated AND persisted via the same evaluate_<day>_reply
+    used before -- it already overwrites the same tracked record on each
+    call, so the LAST attempt naturally ends up as what's recorded, with no
+    separate bookkeeping needed. The task stays pending (peeked, not
+    popped) until the user sends /Done, which closes it out without being
+    evaluated itself."""
     if not settings.english_bot_enabled:
         return False
     if not has_pending_answer(chat_id):
@@ -782,7 +801,15 @@ def handle_english_bot_pending_reply(chat_id: int, message: dict) -> bool:
     if not voice and not text:
         return False  # e.g. a stray photo/document -- leave the pending answer intact
 
-    pending = pop_pending_answer(chat_id)
+    if text.lower() == ENGLISH_BOT_DONE_COMMAND:
+        pending = pop_pending_answer(chat_id)
+        if pending is None:
+            return False
+        send_message(chat_id, "Got it -- today's task is closed out. See you next time!")
+        log(f"[english_bot] practice session closed chat_id={chat_id} kind={pending.get('kind')}")
+        return True
+
+    pending = peek_pending_answer(chat_id)
     if pending is None:
         return False
 
@@ -793,14 +820,14 @@ def handle_english_bot_pending_reply(chat_id: int, message: dict) -> bool:
             return True
         duration = float(voice.get("duration") or 0.0)
         if duration < MIN_ENGLISH_BOT_VOICE_REPLY_SECONDS:
-            # Too short to be a real answer (accidental tap, misfire, etc.)
-            # -- restore the pending task rather than burning the user's
-            # only chance to answer today on a non-attempt.
-            set_pending_answer(chat_id, pending)
+            # Too short to be a real practice attempt (accidental tap,
+            # misfire, etc.) -- nothing was popped, so the task is already
+            # still open; just tell the user.
             send_message(
                 chat_id,
                 f"That voice reply was only {duration:.0f}s -- needs to be at least "
-                f"{MIN_ENGLISH_BOT_VOICE_REPLY_SECONDS:.0f}s. Today's task is still waiting, try again.",
+                f"{MIN_ENGLISH_BOT_VOICE_REPLY_SECONDS:.0f}s to count as a practice attempt. "
+                "Today's task is still open, try again (or send /Done to finish).",
             )
             return True
         file_info = telegram_file_info(file_id)
@@ -816,33 +843,31 @@ def handle_english_bot_pending_reply(chat_id: int, message: dict) -> bool:
                 transcript = transcriber.transcribe(downloaded_path)
             except Exception as exc:
                 log(f"[english_bot] transcription error chat_id={chat_id}: {exc}")
-                set_pending_answer(chat_id, pending)
                 send_message(
                     chat_id,
-                    f"Voice reply saved, but Whisper transcription failed: {exc} "
-                    "-- today's task is still waiting, try again.",
+                    f"Voice reply saved, but Whisper transcription failed: {exc} -- "
+                    "today's task is still open, try again.",
                 )
                 return
             if not transcript:
-                set_pending_answer(chat_id, pending)
                 send_message(
                     chat_id,
                     "Whisper did not produce any text from this voice reply -- "
-                    "today's task is still waiting, try again.",
+                    "today's task is still open, try again.",
                 )
                 return
             _process_english_bot_reply(chat_id, pending, transcript, duration)
 
         worker = threading.Thread(target=_transcribe_and_evaluate, daemon=True)
         worker.start()
-        log(f"[english_bot] voice reply queued chat_id={chat_id} kind={pending.get('kind')}")
+        log(f"[english_bot] voice practice attempt queued chat_id={chat_id} kind={pending.get('kind')}")
         return True
 
     worker = threading.Thread(
         target=_process_english_bot_reply, args=(chat_id, pending, text, 0.0), daemon=True
     )
     worker.start()
-    log(f"[english_bot] text reply queued chat_id={chat_id} kind={pending.get('kind')}")
+    log(f"[english_bot] text practice attempt queued chat_id={chat_id} kind={pending.get('kind')}")
     return True
 
 

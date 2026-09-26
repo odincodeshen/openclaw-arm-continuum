@@ -36,6 +36,17 @@ class PendingAnswerTest(unittest.TestCase):
         item = gateway.pop_pending_answer(1)
         self.assertEqual(item["chunk"], "b")
 
+    def test_peek_returns_without_clearing(self) -> None:
+        gateway.set_pending_answer(1, {"kind": "cloze_quiz", "chunk": "a"})
+        item = gateway.peek_pending_answer(1)
+        self.assertEqual(item, {"kind": "cloze_quiz", "chunk": "a"})
+        self.assertTrue(gateway.has_pending_answer(1))
+        # a second peek returns the same thing -- unlike pop, it's repeatable
+        self.assertEqual(gateway.peek_pending_answer(1), item)
+
+    def test_peek_returns_none_when_nothing_pending(self) -> None:
+        self.assertIsNone(gateway.peek_pending_answer(1))
+
     def test_does_not_interfere_with_pending_category(self) -> None:
         with gateway.PENDING_CATEGORY_LOCK:
             gateway.PENDING_CATEGORY.clear()
