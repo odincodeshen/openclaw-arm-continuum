@@ -196,12 +196,16 @@ class ExtractArticleTextTest(unittest.TestCase):
 
 class SummarizeSundayArticleTest(unittest.TestCase):
     def test_grounds_summary_in_real_fetched_text_not_title_alone(self) -> None:
-        llm = FakeLlm([json.dumps({"summary": "A witty column about garden chaos."})])
-        summary = summarize_sunday_article(llm, "The full real article text about a chaotic garden.")
+        llm = FakeLlm(
+            [json.dumps({"summary": "A witty column about garden chaos.", "summary_zh": "一篇關於花園混亂的幽默專欄。"})]
+        )
+        summary, summary_zh = summarize_sunday_article(llm, "The full real article text about a chaotic garden.")
         self.assertEqual(summary, "A witty column about garden chaos.")
+        self.assertEqual(summary_zh, "一篇關於花園混亂的幽默專欄。")
         prompt, schema_name = llm.calls[0]
         self.assertEqual(schema_name, "sunday_summary")
         self.assertIn("The full real article text about a chaotic garden.", prompt)
+        self.assertIn("繁體中文", prompt)
 
 
 class BuildSundayMessageTest(unittest.TestCase):
@@ -210,13 +214,20 @@ class BuildSundayMessageTest(unittest.TestCase):
         self.assertIn("https://guardian.com/a", message)
         self.assertIn("A nice summary.", message)
         self.assertIn("no dictionary, no notes", message.lower())
+        self.assertNotIn("Chinese translation", message)
+
+    def test_includes_chinese_translation_after_the_english_summary(self) -> None:
+        message = build_sunday_message("https://guardian.com/a", "A nice summary.", "一段不錯的摘要。")
+        self.assertIn("Chinese translation:\n一段不錯的摘要。", message)
+        self.assertLess(message.index("A nice summary."), message.index("Chinese translation:"))
+        self.assertLess(message.index("Chinese translation:"), message.index("Read for the gist"))
 
 
 class RunSundayTaskTest(unittest.TestCase):
     def test_pushes_summary_marks_article_and_task_completed(self) -> None:
         rss_xml = _rss([("Piece", "https://guardian.com/piece", _rfc2822(NOW - timedelta(days=1)))])
         article_html = "<article><p>Real article content here.</p></article>"
-        llm = FakeLlm([json.dumps({"summary": "Fifty word summary."})])
+        llm = FakeLlm([json.dumps({"summary": "Fifty word summary.", "summary_zh": "五十字摘要。"})])
         qdrant = MagicMock()
 
         def scroll_side_effect(collection, filters, limit=64):
@@ -247,6 +258,7 @@ class RunSundayTaskTest(unittest.TestCase):
         self.assertEqual(summary, "Fifty word summary.")
         self.assertEqual(len(sent), 2)
         self.assertTrue(all("https://guardian.com/piece" in text for _, text in sent))
+        self.assertTrue(all("五十字摘要。" in text for _, text in sent))
         # article dedup mark + at least the two mark_task_pushed/mark_task_completed writes
         self.assertGreaterEqual(qdrant.upsert_text.call_count, 3)
         # Sunday has no reply to evaluate, so completion is marked immediately

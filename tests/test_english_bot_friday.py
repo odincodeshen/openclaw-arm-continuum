@@ -212,7 +212,8 @@ class EvaluateFridayReplyTest(unittest.TestCase):
                             },
                             {"phrase": "spread oneself too thin", "used_correctly": False, "user_sentence": ""},
                             {"phrase": "get to grips with", "used_correctly": False, "user_sentence": ""},
-                        ]
+                        ],
+                        "model_answer": "Honestly, I took a gamble on the new job...",
                     }
                 )
             ]
@@ -228,6 +229,10 @@ class EvaluateFridayReplyTest(unittest.TestCase):
         first_call_payload = qdrant.upsert_text.call_args_list[0].args[3]
         self.assertEqual(first_call_payload["user_sentence"], "I took a gamble on the new job.")
         self.assertEqual(first_call_payload["user_sentence_source"], "fri_voice")
+        self.assertTrue(report.endswith("Model ramble (all chunks):\nHonestly, I took a gamble on the new job..."))
+        self.assertLess(report.index("not detected"), report.index("Model ramble"))
+        prompt, _ = llm.calls[0]
+        self.assertIn("model_answer", prompt)
 
 
 if __name__ == "__main__":

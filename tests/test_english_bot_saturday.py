@@ -224,7 +224,42 @@ class EvaluateSaturdayAnswersTest(unittest.TestCase):
         self.assertIn("spread oneself too thin: needs review", report)
         self.assertIn("說明文字", report)
         self.assertIn("An example sentence.", report)
+        self.assertNotIn("Model answers", report)
         self.assertEqual(qdrant.upsert_text.call_count, 2)
+
+    def test_appends_model_answers_with_blanks_filled_in(self) -> None:
+        qdrant = MagicMock()
+        qdrant.scroll_by_filters.return_value = []
+        embeddings = MagicMock()
+        embeddings.embed.return_value = [0.1]
+        llm = FakeLlm(
+            [
+                json.dumps(
+                    {
+                        "results": [
+                            {**_fake_cloze_result(True), "model_answer": "We had to move on."},
+                            {**_fake_cloze_result(False), "model_answer": "They busted down the door to get in."},
+                        ]
+                    }
+                )
+            ]
+        )
+        questions = [
+            {"phrase": "move on", "prompt_text": "We had to ____."},
+            {"phrase": "bust down the door", "prompt_text": "They ____ to get in."},
+        ]
+
+        report = evaluate_saturday_answers(
+            llm, qdrant, embeddings, "coll", "owner-a", 1, questions, "1. move on 2. no idea"
+        )
+
+        self.assertTrue(
+            report.endswith(
+                "Model answers (blanks filled in):\n1. We had to move on.\n2. They busted down the door to get in."
+            )
+        )
+        prompt, _ = llm.calls[0]
+        self.assertIn("model_answer", prompt)
 
     def test_position_swapped_phrase_is_not_credited(self) -> None:
         """Regression test for the real bug found live: an answer that

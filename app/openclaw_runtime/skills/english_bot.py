@@ -1474,9 +1474,10 @@ FRIDAY_EVAL_SCHEMA = {
                 "required": ["phrase", "used_correctly", "user_sentence"],
                 "additionalProperties": False,
             },
-        }
+        },
+        "model_answer": {"type": "string", "minLength": 1},
     },
-    "required": ["chunk_results"],
+    "required": ["chunk_results", "model_answer"],
     "additionalProperties": False,
 }
 
@@ -1527,9 +1528,13 @@ def evaluate_chunk_usage(llm: LlmClient, chunks: list[dict], transcribed_reply: 
         "spreading myself too thin\" -- that still counts as correct use. "
         "If used, quote the exact sentence or snippet from the reply "
         "containing it as user_sentence; leave user_sentence as an empty "
-        "string if the chunk was not used."
+        "string if the chunk was not used. Then write model_answer: a "
+        "natural 1-minute spoken ramble (120-160 words) on the same topic "
+        "the speaker chose that works in ALL of this week's chunks "
+        "naturally, reusing the speaker's own ideas where they gave any -- "
+        "a reference the speaker can compare their ramble against."
     )
-    raw = llm.chat_json(prompt, FRIDAY_EVAL_SCHEMA, schema_name="friday_chunk_usage", max_tokens=600)
+    raw = llm.chat_json(prompt, FRIDAY_EVAL_SCHEMA, schema_name="friday_chunk_usage", max_tokens=1000)
     return json.loads(raw)
 
 
@@ -1562,6 +1567,7 @@ def evaluate_friday_reply(
         )
         status = "used correctly" if used else "not detected / not used naturally"
         lines.append(f"- {phrase}: {status}")
+    _append_model_answer(lines, "Model ramble (all chunks)", chunk_usage)
     mark_task_completed(qdrant, collection, week_number, "fri", owner)
     return "\n".join(lines)
 
@@ -1720,8 +1726,9 @@ SATURDAY_CLOZE_JUDGE_SCHEMA = {
                     "correct": {"type": "boolean"},
                     "explanation_zh": {"type": "string", "minLength": 1},
                     "example_sentence": {"type": "string", "minLength": 1},
+                    "model_answer": {"type": "string", "minLength": 1},
                 },
-                "required": ["correct", "explanation_zh", "example_sentence"],
+                "required": ["correct", "explanation_zh", "example_sentence", "model_answer"],
                 "additionalProperties": False,
             },
         },
@@ -1761,13 +1768,17 @@ def judge_cloze_answers_with_llm(llm: LlmClient, questions: list[dict], transcri
         "Chinese (繁體中文), briefly explain why it's right or wrong, to "
         "help the learner understand the mistake, not just see a verdict; "
         "(3) give one natural English example sentence correctly using "
-        "the target phrase, so the learner has a model to learn from. "
+        "the target phrase, so the learner has a model to learn from; "
+        "(4) model_answer: the question's own sentence with the blank "
+        "correctly filled in, the target phrase in the right tense/form "
+        "for that sentence (if the question has no blank, write one "
+        "sentence correctly using the phrase). "
         "IMPORTANT: your response is parsed as JSON -- if you need to "
         "quote a phrase inside explanation_zh, use Chinese corner "
         "brackets 「」, never a literal double-quote character (\"), "
         "which would break the JSON string."
     )
-    raw = llm.chat_json(prompt, SATURDAY_CLOZE_JUDGE_SCHEMA, schema_name="saturday_cloze_judge", max_tokens=900)
+    raw = llm.chat_json(prompt, SATURDAY_CLOZE_JUDGE_SCHEMA, schema_name="saturday_cloze_judge", max_tokens=1300)
     return json.loads(raw)["results"]
 
 
@@ -1800,6 +1811,13 @@ def evaluate_saturday_answers(
         lines.append(f"- {phrase}: {'correct' if correct else 'needs review'}")
         lines.append(f"  {result['explanation_zh']}")
         lines.append(f'  Example: "{result["example_sentence"]}"')
+    model_answers = [(r.get("model_answer") or "").strip() for r in results]
+    if any(model_answers):
+        lines.append("")
+        lines.append("Model answers (blanks filled in):")
+        for index, model_answer in enumerate(model_answers, start=1):
+            if model_answer:
+                lines.append(f"{index}. {model_answer}")
     mark_task_completed(qdrant, collection, week_number, "sat", owner)
     return "\n".join(lines)
 
@@ -1833,8 +1851,11 @@ DESKTOP_USER_AGENT = (
 
 SUNDAY_SUMMARY_SCHEMA = {
     "type": "object",
-    "properties": {"summary": {"type": "string", "minLength": 1, "maxLength": 400}},
-    "required": ["summary"],
+    "properties": {
+        "summary": {"type": "string", "minLength": 1, "maxLength": 400},
+        "summary_zh": {"type": "string", "minLength": 1, "maxLength": 300},
+    },
+    "required": ["summary", "summary_zh"],
     "additionalProperties": False,
 }
 
@@ -1958,27 +1979,33 @@ def extract_article_text(html: str) -> str:
     return parser.text
 
 
-def summarize_sunday_article(llm: LlmClient, article_text: str) -> str:
+def summarize_sunday_article(llm: LlmClient, article_text: str) -> tuple[str, str]:
     """LLM reads the real fetched article text and writes a ~50-word
     cultural-background summary -- explicitly grounded in the actual
-    content, not guessed from the title/URL (spec 2.7 point 4)."""
+    content, not guessed from the title/URL (spec 2.7 point 4). Returns
+    (English summary, its Traditional Chinese translation)."""
     prompt = (
         "This is the full text of a British lifestyle/culture newspaper "
         "column. Write a roughly 50-word summary in English that gives a "
         "Traditional-Chinese-speaking reader enough cultural background to "
         "understand and enjoy the piece -- don't retell the whole plot, "
-        "just orient them.\n\n"
+        "just orient them. Also give summary_zh: a faithful Traditional "
+        "Chinese (繁體中文) translation of that English summary, so the "
+        "reader can check their understanding of it.\n\n"
         f"Article text:\n{article_text}"
     )
-    raw = llm.chat_json(prompt, SUNDAY_SUMMARY_SCHEMA, schema_name="sunday_summary", max_tokens=200)
-    return json.loads(raw)["summary"]
+    raw = llm.chat_json(prompt, SUNDAY_SUMMARY_SCHEMA, schema_name="sunday_summary", max_tokens=500)
+    data = json.loads(raw)
+    return data["summary"], (data.get("summary_zh") or "").strip()
 
 
-def build_sunday_message(article_url: str, summary: str) -> str:
+def build_sunday_message(article_url: str, summary: str, summary_zh: str = "") -> str:
+    translation = f"Chinese translation:\n{summary_zh}\n\n" if summary_zh else ""
     return (
         "Sunday painless reading\n\n"
         f"{article_url}\n\n"
         f"{summary}\n\n"
+        f"{translation}"
         "Read for the gist -- no dictionary, no notes. Understanding "
         "70-80% of it is the goal."
     )
@@ -2004,8 +2031,8 @@ def run_sunday_task(
     if not article_text:
         raise ValueError(f"could not extract any <article>/<p> text from {article.link}")
 
-    summary = summarize_sunday_article(llm, article_text)
-    message = build_sunday_message(article.link, summary)
+    summary, summary_zh = summarize_sunday_article(llm, article_text)
+    message = build_sunday_message(article.link, summary, summary_zh)
     vector = embeddings.embed(message)
     mark_article_pushed(qdrant, embeddings, collection, article.link)
     for owner in owners:
