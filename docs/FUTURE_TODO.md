@@ -1,7 +1,7 @@
 # Future TODO List
 
 This document tracks candidate work items for `openclaw-arm-continuum`.
-Current release: **v1.10**.
+Current release: **v1.16**.
 
 The runtime is intentionally stable and text-first. The items below are
 future-facing and should be implemented incrementally without breaking the
@@ -93,6 +93,22 @@ v1.2 baseline. What has actually shipped since then:
   stale-git-tag privacy issue: the `v1.9` tag on origin still pointed at
   pre-rebase history containing a leaked identifier even though `main` had
   already been scrubbed -- retagged to the corresponding clean commit.
+- **v1.16 — English-learning bot.** An opt-in, per-bot daily English
+  coach (`OPENCLAW_ENGLISH_BOT_*`), built as internal milestones
+  v1.11-v1.16 with no intermediate release tags. A day-of-week scheduler in
+  the gateway pushes one task a day and routes the voice or text reply to
+  that day's evaluator: Monday BBC podcast listening + 3 chunk extraction,
+  Tuesday shadowing with a word-level (WER) comparison, Wednesday IELTS
+  Speaking Part 2 with a STAR check (Part 2 + Part 3 argument check from
+  week 18), Thursday British small talk with an Anchor & Bounce check and
+  a text banter reply, Friday chunk activation, Saturday a cloze review
+  judged by position, and Sunday a Guardian reading pick with an English
+  summary plus a Traditional Chinese translation. Wednesday to Saturday
+  feedback ends with a model answer to compare against. Each day's task
+  can be practised repeatedly until `/Done`; voice replies under 10 seconds
+  don't count. Records are owner-scoped in Qdrant, with a 21:00 sweep that
+  marks unanswered days skipped. New outbound `sendAudio`, audio clipping
+  in the Whisper service, and an RSS parser support it.
 
 Still open from the original list, re-baselined against v1.6:
 
