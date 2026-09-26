@@ -200,10 +200,19 @@ def save_job_report(settings: Settings, now: datetime, job: dict, report: str) -
 
 
 def run_daily_report(settings: Settings, tasks: dict, router: SkillRouter, llm: LlmClient, now: datetime) -> Path:
+    """One bad recipient (chat not found, blocked the bot, etc.) must not
+    stop delivery to the others, and must not leave the report un-marked-
+    sent -- an un-marked report gets retried by main()'s poll loop every
+    cron_poll_seconds until the due window closes, which previously spammed
+    every WORKING recipient with a fresh duplicate on every retry while the
+    broken one kept failing the same way forever."""
     report = build_daily_report(settings, tasks, router, llm, now)
     path = save_report(settings, now, report)
     for chat_id in recipients(settings):
-        send_message(settings, chat_id, report)
+        try:
+            send_message(settings, chat_id, report)
+        except Exception:
+            log(f"[cron] daily report delivery failed chat_id={chat_id}: {traceback.format_exc()}")
     return path
 
 
