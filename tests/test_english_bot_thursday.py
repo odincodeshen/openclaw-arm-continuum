@@ -143,6 +143,32 @@ class EvaluateThursdayReplyTest(unittest.TestCase):
         self.assertIn("Colleague text reply (Pub Banter):", report)
         self.assertIn("Haha, tell me about it! Same here.", report)
         self.assertNotIn("Suggestion:", report)
+        self.assertNotIn("Model reply", report)
+
+    def test_appends_model_reply_after_the_banter_reply(self) -> None:
+        llm = FakeLlm(
+            [
+                json.dumps(
+                    {
+                        "anchor_present": True,
+                        "bounce_present": False,
+                        "vocabulary_original": "",
+                        "vocabulary_replacement": "",
+                        "banter_reply": "Ah well, could be worse!",
+                        "model_answer": "Absolutely soaked, mate. Got any plans if it clears up?",
+                    }
+                )
+            ]
+        )
+        report = self._eval(llm, "Did you get caught in that rain?", "Yes I was wet.")
+        self.assertTrue(
+            report.endswith(
+                "Model reply (Anchor & Bounce):\nAbsolutely soaked, mate. Got any plans if it clears up?"
+            )
+        )
+        self.assertLess(report.index("Colleague text reply"), report.index("Model reply"))
+        prompt, _ = llm.calls[0]
+        self.assertIn("model_answer", prompt)
 
     def test_missing_bounce_is_reported(self) -> None:
         llm = FakeLlm(

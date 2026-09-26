@@ -845,6 +845,7 @@ STAR_EVAL_SCHEMA = {
                 "additionalProperties": False,
             },
         },
+        "model_answer": {"type": "string", "minLength": 1},
     },
     "required": [
         "situation_present",
@@ -852,6 +853,7 @@ STAR_EVAL_SCHEMA = {
         "action_present",
         "result_present",
         "overused_words",
+        "model_answer",
     ],
     "additionalProperties": False,
 }
@@ -950,8 +952,9 @@ ARGUMENT_EVAL_SCHEMA = {
         "claim_present": {"type": "boolean"},
         "concession_present": {"type": "boolean"},
         "conclusion_present": {"type": "boolean"},
+        "model_answer": {"type": "string", "minLength": 1},
     },
-    "required": ["claim_present", "concession_present", "conclusion_present"],
+    "required": ["claim_present", "concession_present", "conclusion_present", "model_answer"],
     "additionalProperties": False,
 }
 
@@ -988,10 +991,14 @@ def evaluate_part3_argument(llm: LlmClient, part3_question: str, transcribed_rep
         "Judge whether each of these three argument-structure elements is "
         "present: Claim (a clear position/opinion is stated), Concession "
         "or counter-argument (acknowledges the other side or a "
-        "limitation), Conclusion (wraps up with a final judgment)."
+        "limitation), Conclusion (wraps up with a final judgment). Then "
+        "write model_answer: an IELTS band 8 spoken answer to the same "
+        "question (about 1 minute, 120-160 words) with a clear Claim, "
+        "Concession and Conclusion, in natural spoken English -- a "
+        "reference the speaker can compare their own answer against."
     )
     raw = llm.chat_json(
-        prompt, ARGUMENT_EVAL_SCHEMA, schema_name="part3_argument_evaluation", max_tokens=300
+        prompt, ARGUMENT_EVAL_SCHEMA, schema_name="part3_argument_evaluation", max_tokens=800
     )
     return json.loads(raw)
 
@@ -1025,6 +1032,14 @@ def run_wednesday_task(
     return result
 
 
+def _append_model_answer(lines: list[str], heading: str, data: dict) -> None:
+    model_answer = (data.get("model_answer") or "").strip()
+    if model_answer:
+        lines.append("")
+        lines.append(f"{heading}:")
+        lines.append(model_answer)
+
+
 def evaluate_wednesday_reply(
     llm: LlmClient,
     cue_card: str,
@@ -1052,9 +1067,16 @@ def evaluate_wednesday_reply(
         "Situation (context/background), Task (what needed to be done), "
         "Action (what the speaker actually did), Result (the outcome and "
         "how they felt). Also identify basic/simple words that were "
-        "overused and suggest an IELTS band-7.5+ alternative for each."
+        "overused and suggest an IELTS band-7.5+ alternative for each. "
+        "Finally, write model_answer: an IELTS band 8 spoken answer to the "
+        "same cue card (about 2 minutes, 250-300 words) that covers every "
+        "cue-card point and all four STAR elements, in natural spoken "
+        "English rather than written prose. Build it on the speaker's own "
+        "story and details where they gave any, so it reads as a better "
+        "version of their answer, and use the suggested band-7.5+ "
+        "alternatives where they fit."
     )
-    raw = llm.chat_json(prompt, STAR_EVAL_SCHEMA, schema_name="star_evaluation", max_tokens=500)
+    raw = llm.chat_json(prompt, STAR_EVAL_SCHEMA, schema_name="star_evaluation", max_tokens=1200)
     data = json.loads(raw)
 
     star_elements = {
@@ -1075,6 +1097,7 @@ def evaluate_wednesday_reply(
         lines.append("STAR structure: complete (Situation, Task, Action, Result all present)")
     for item in data["overused_words"]:
         lines.append(f'Overused: "{item["word"]}" -> try "{item["replacement"]}" (band 7.5+)')
+    _append_model_answer(lines, "Part 2 model answer (band 8)" if part3_question else "Model answer (band 8)", data)
 
     if part3_question:
         argument = evaluate_part3_argument(llm, part3_question, transcribed_reply)
@@ -1094,6 +1117,7 @@ def evaluate_wednesday_reply(
                 "Argument structure: complete (Claim, Concession/counter-argument, "
                 "Conclusion all present)"
             )
+        _append_model_answer(lines, "Part 3 model answer (band 8)", argument)
 
     mark_task_completed(qdrant, collection, week_number, "wed", owner)
     return "\n".join(lines)
@@ -1201,6 +1225,7 @@ THURSDAY_EVAL_SCHEMA = {
         "vocabulary_original": {"type": "string"},
         "vocabulary_replacement": {"type": "string"},
         "banter_reply": {"type": "string", "minLength": 1},
+        "model_answer": {"type": "string", "minLength": 1},
     },
     "required": [
         "anchor_present",
@@ -1208,6 +1233,7 @@ THURSDAY_EVAL_SCHEMA = {
         "vocabulary_original",
         "vocabulary_replacement",
         "banter_reply",
+        "model_answer",
     ],
     "additionalProperties": False,
 }
@@ -1298,9 +1324,14 @@ def evaluate_thursday_reply(
         "as empty strings if the reply is already natural). Finally, write "
         "a short, authentic British colleague-style text reply (Pub Banter "
         "tone, understated and self-deprecating, not TTS -- just text) as "
-        "if you were the colleague responding to what they just said."
+        "if you were the colleague responding to what they just said. "
+        "Then write model_answer: a strong example reply to the opener "
+        "(3-5 sentences, natural spoken British English) with a clear "
+        "Anchor and Bounce, built on the speaker's own situation where "
+        "they gave one -- a reference the speaker can compare their reply "
+        "against."
     )
-    raw = llm.chat_json(prompt, THURSDAY_EVAL_SCHEMA, schema_name="thursday_evaluation", max_tokens=500)
+    raw = llm.chat_json(prompt, THURSDAY_EVAL_SCHEMA, schema_name="thursday_evaluation", max_tokens=800)
     data = json.loads(raw)
 
     lines = [
@@ -1324,6 +1355,7 @@ def evaluate_thursday_reply(
     lines.append("")
     lines.append("Colleague text reply (Pub Banter):")
     lines.append(f'"{data["banter_reply"]}"')
+    _append_model_answer(lines, "Model reply (Anchor & Bounce)", data)
     mark_task_completed(qdrant, collection, week_number, "thu", owner)
     return "\n".join(lines)
 

@@ -180,6 +180,7 @@ class EvaluateWednesdayReplyTest(unittest.TestCase):
                         "action_present": True,
                         "result_present": True,
                         "overused_words": [{"word": "good", "replacement": "commendable"}],
+                        "model_answer": "One weekend I decided to...",
                     }
                 )
             ]
@@ -189,6 +190,49 @@ class EvaluateWednesdayReplyTest(unittest.TestCase):
         )
         self.assertIn("complete (Situation, Task, Action, Result all present)", feedback)
         self.assertIn('"good" -> try "commendable" (band 7.5+)', feedback)
+
+    def test_appends_model_answer_after_the_evaluation(self) -> None:
+        llm = FakeLlm(
+            [
+                json.dumps(
+                    {
+                        "situation_present": True,
+                        "task_present": False,
+                        "action_present": True,
+                        "result_present": False,
+                        "overused_words": [{"word": "good", "replacement": "commendable"}],
+                        "model_answer": "  Last spring I had to organise a surprise party...  ",
+                    }
+                )
+            ]
+        )
+        feedback = evaluate_wednesday_reply(
+            llm, "cue card", "reply text", qdrant=self.qdrant, collection="coll", owner="owner-a", week_number=1
+        )
+        self.assertTrue(feedback.endswith("Model answer (band 8):\nLast spring I had to organise a surprise party..."))
+        self.assertLess(feedback.index("Overused:"), feedback.index("Model answer (band 8):"))
+        prompt, _ = llm.calls[0]
+        self.assertIn("model_answer", prompt)
+        self.assertIn("band 8", prompt)
+
+    def test_missing_model_answer_is_omitted_not_an_error(self) -> None:
+        llm = FakeLlm(
+            [
+                json.dumps(
+                    {
+                        "situation_present": True,
+                        "task_present": True,
+                        "action_present": True,
+                        "result_present": True,
+                        "overused_words": [],
+                    }
+                )
+            ]
+        )
+        feedback = evaluate_wednesday_reply(
+            llm, "cue card", "reply text", qdrant=self.qdrant, collection="coll", owner="owner-a", week_number=1
+        )
+        self.assertNotIn("Model answer", feedback)
 
     def test_marks_wednesday_task_completed(self) -> None:
         llm = FakeLlm(
@@ -315,10 +359,16 @@ class EvaluateWednesdayReplyDualEvaluationTest(unittest.TestCase):
                         "action_present": True,
                         "result_present": True,
                         "overused_words": [],
+                        "model_answer": "Part two story...",
                     }
                 ),
                 json.dumps(
-                    {"claim_present": True, "concession_present": False, "conclusion_present": True}
+                    {
+                        "claim_present": True,
+                        "concession_present": False,
+                        "conclusion_present": True,
+                        "model_answer": "Part three argument...",
+                    }
                 ),
             ]
         )
@@ -336,6 +386,9 @@ class EvaluateWednesdayReplyDualEvaluationTest(unittest.TestCase):
         self.assertIn("complete (Situation, Task, Action, Result all present)", feedback)
         self.assertIn("Part 3 (Argument structure):", feedback)
         self.assertIn("missing Concession/counter-argument", feedback)
+        self.assertIn("Part 2 model answer (band 8):\nPart two story...", feedback)
+        self.assertIn("Part 3 model answer (band 8):\nPart three argument...", feedback)
+        self.assertLess(feedback.index("Part 2 model answer"), feedback.index("Part 3 question:"))
         self.assertEqual(len(llm.calls), 2)
         self.qdrant.set_payload.assert_called_once_with("coll", "pushed-point-1", {"completed": True})
 
