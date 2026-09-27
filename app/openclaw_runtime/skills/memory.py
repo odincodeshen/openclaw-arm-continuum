@@ -31,9 +31,16 @@ _CATEGORY_PREFIX_RE = re.compile(
 )
 _ALL_CATEGORIES_TOKEN = "\x00all\x00"
 
-# A single tag:/since:/before: token, matched per whitespace-split token
-# (so no boundary lookaround needed) for /rag's leading filter-prefix run.
-_RAG_META_TOKEN_RE = re.compile(r"^(tag|since|before):(\S+)$", re.IGNORECASE)
+# A single tag:/since:/before:/source: token, matched per whitespace-split
+# token (so no boundary lookaround needed) for /rag's leading filter-prefix run.
+_RAG_META_TOKEN_RE = re.compile(r"^(tag|since|before|source):(\S+)$", re.IGNORECASE)
+
+# Payload fields that name where a chunk came from -- the same ones behind
+# the "Sources:" line -- which a /rag source:<text> filter matches against.
+_SOURCE_FIELDS = ("original_file_name", "source_url", "doc_title", "file_name")
+# A source filter is applied after the vector search, so fetch this many
+# times the usual number of hits first, or a filter would often leave none.
+_SOURCE_FILTER_OVERFETCH = 4
 
 # due:YYYY-MM-DD / tag:<word> anywhere in a /mem write, as standalone tokens
 # (bounded by whitespace or string edges, so they don't match mid-word).
@@ -120,12 +127,12 @@ def split_category_prefix(query: str) -> tuple[str | None, str]:
 
 
 def split_rag_filter_prefix(query: str) -> tuple[dict[str, str], str]:
-    """Pull a leading run of ``tag:``/``since:``/``before:`` tokens off a
-    /rag query, in any order, e.g. ``since:2026-09-01 tag:work what's due?``.
-    Only recognized before any ``#<category>`` prefix -- tags and dates only
-    exist on tracker_memory (and knowledge, for dates) items, so this only
-    affects the default (no-category) search path; see
-    ``RagRetrieveSkill._run_default``.
+    """Pull a leading run of ``tag:``/``since:``/``before:``/``source:``
+    tokens off a /rag query, in any order, e.g. ``since:2026-09-01 tag:work
+    what's due?``. Only recognized before any ``#<category>`` prefix. Tags
+    and dates only exist on tracker_memory (and knowledge, for dates) items,
+    so they only affect the default (no-category) search path; ``source:``
+    applies to category searches too. See ``RagRetrieveSkill.run``.
 
     Stops at the first token that isn't a recognized, validly-formed prefix:
     a repeated key, or a ``since:``/``before:`` value that isn't a real ISO
@@ -152,6 +159,19 @@ def split_rag_filter_prefix(query: str) -> tuple[dict[str, str], str]:
         consumed += 1
     remaining = " ".join(tokens[consumed:]).strip()
     return filters, remaining
+
+
+def matches_source(payload: dict, term: str) -> bool:
+    """Case-insensitive substring match of ``term`` against any field that
+    names the chunk's source (original filename, URL, title, stored name)."""
+    needle = term.casefold()
+    return any(needle in str(payload.get(field) or "").casefold() for field in _SOURCE_FIELDS)
+
+
+def filter_hits_by_source(hits: list[dict], term: str | None, limit: int) -> list[dict]:
+    if not term:
+        return hits
+    return [hit for hit in hits if matches_source(hit.get("payload") or {}, term)][:limit]
 
 
 def _epoch_for_date(value: str) -> int:
@@ -599,11 +619,21 @@ class RagRetrieveSkill:
         if not query:
             return SkillResult(self.name, "Add the question to look up after /rag.")
 
+        source = prefix_filters.get("source")
         if self.settings.category_rag_enabled and category_token == _ALL_CATEGORIES_TOKEN:
-            return self._run_all_categories(query)
+            return self._run_all_categories(query, source)
         if self.settings.category_rag_enabled and category_token:
-            return self._run_single_category(category_token, query)
+            return self._run_single_category(category_token, query, source)
         return self._run_default(query, prefix_filters)
+
+    def _search(self, collection: str, vector: list[float], source: str | None, limit: int | None = None, **kwargs):
+        """qdrant.search, narrowed to ``source`` when given: over-fetch, then
+        keep the hits whose source matches, capped back to the usual size."""
+        limit = limit or self.settings.retrieval_limit
+        if not source:
+            return self.qdrant.search(collection, vector, limit=limit, **kwargs)
+        hits = self.qdrant.search(collection, vector, limit=limit * _SOURCE_FILTER_OVERFETCH, **kwargs)
+        return filter_hits_by_source(hits, source, limit)
 
     def _knowledge_digest(self) -> SkillResult:
         """Daily knowledge report: every document added yesterday (cron
@@ -636,11 +666,14 @@ class RagRetrieveSkill:
     def _run_default(self, query: str, prefix_filters: dict[str, str] | None = None) -> SkillResult:
         prefix_filters = prefix_filters or {}
         tag = prefix_filters.get("tag")
+        source = prefix_filters.get("source")
         since = _epoch_for_date(prefix_filters["since"]) if "since" in prefix_filters else None
         before = _epoch_for_date(prefix_filters["before"]) if "before" in prefix_filters else None
 
-        file_hits = self._file_hits(
-            query, [self.settings.knowledge_collection, self.settings.tracker_collection]
+        file_hits = filter_hits_by_source(
+            self._file_hits(query, [self.settings.knowledge_collection, self.settings.tracker_collection]),
+            source,
+            limit=50,
         )
         vector = self.embeddings.embed(query)
         # tags only ever live on tracker_memory items (from /mem due:/tag:),
@@ -648,15 +681,20 @@ class RagRetrieveSkill:
         # entirely rather than returning knowledge hits no filter applies to.
         # since:/before: apply to both collections -- both have created_at.
         tracker_filters = {"tags": tag} if tag else None
-        tracker_hits = self.qdrant.search(
-            self.settings.tracker_collection, vector, filters=tracker_filters, since=since, before=before
+        tracker_hits = self._search(
+            self.settings.tracker_collection, vector, source, filters=tracker_filters, since=since, before=before
         )
         sections = [("filename_match", file_hits), (self.settings.tracker_collection, tracker_hits)]
         if not tag:
-            knowledge_hits = self.qdrant.search(
-                self.settings.knowledge_collection, vector, since=since, before=before
+            knowledge_hits = self._search(
+                self.settings.knowledge_collection, vector, source, since=since, before=before
             )
             sections.append((self.settings.knowledge_collection, knowledge_hits))
+            # Most saved material lives in categories, so plain /rag looks
+            # there too (a few hits each, like #all). Skipped under tag:,
+            # which only exists on tracker items.
+            if self.settings.category_rag_enabled and self.settings.rag_include_categories:
+                sections += self._category_sections(vector, source, since=since, before=before)
         answer = self._answer_from(query, sections)
         if answer is None:
             bits = []
@@ -664,11 +702,28 @@ class RagRetrieveSkill:
                 bits.append(f'tagged "{tag}"')
             if since is not None or before is not None:
                 bits.append("in that date range")
+            if source:
+                bits.append(f'from a source matching "{source}"')
             suffix = f" {' and '.join(bits)}" if bits else ""
-            return SkillResult(self.name, f"No relevant memory was found in either Qdrant collection{suffix}.")
+            return SkillResult(self.name, f"No relevant memory or document was found{suffix}.")
         return SkillResult(self.name, answer)
 
-    def _run_single_category(self, token: str, query: str) -> SkillResult:
+    def _category_sections(
+        self, vector: list[float], source: str | None, limit: int = 3, **search_kwargs
+    ) -> list[tuple[str, list[dict]]]:
+        """Top hits from every category collection, labelled per category;
+        a category whose collection is missing or empty is skipped."""
+        sections = []
+        for entry in registry_entries(self.settings):
+            try:
+                hits = self._search(entry["collection"], vector, source, limit=limit, **search_kwargs)
+            except Exception:
+                hits = []
+            if hits:
+                sections.append((f"category:{entry['display']}", hits))
+        return sections
+
+    def _run_single_category(self, token: str, query: str, source: str | None = None) -> SkillResult:
         entry = resolve_category(self.settings, token)
         if not entry or not entry.get("known"):
             names = ", ".join(item["display"] for item in registry_entries(self.settings)) or "(none yet)"
@@ -680,14 +735,18 @@ class RagRetrieveSkill:
         collection = entry["collection"]
         vector = self.embeddings.embed(query)
         try:
-            hits = self.qdrant.search(collection, vector)
+            hits = self._search(collection, vector, source)
         except Exception:
             hits = []
-        file_hits = self._file_hits(query, [collection])
+        file_hits = filter_hits_by_source(self._file_hits(query, [collection]), source, limit=50)
         answer = self._answer_from(
             query, [("filename_match", file_hits), (f"category:{entry['display']}", hits)]
         )
         if answer is None:
+            if source:
+                return SkillResult(
+                    self.name, f"Nothing in category \"{entry['display']}\" comes from a source matching \"{source}\"."
+                )
             return SkillResult(
                 self.name,
                 f"Category \"{entry['display']}\" has no indexed content yet "
@@ -695,22 +754,15 @@ class RagRetrieveSkill:
             )
         return SkillResult(self.name, answer)
 
-    def _run_all_categories(self, query: str) -> SkillResult:
+    def _run_all_categories(self, query: str, source: str | None = None) -> SkillResult:
         entries = registry_entries(self.settings)
         if not entries:
             return SkillResult(self.name, "No categories have been created yet.")
         vector = self.embeddings.embed(query)
-        sections = []
-        for entry in entries:
-            try:
-                hits = self.qdrant.search(entry["collection"], vector, limit=3)
-            except Exception:
-                hits = []
-            if hits:
-                sections.append((f"category:{entry['display']}", hits))
-        answer = self._answer_from(query, sections)
+        answer = self._answer_from(query, self._category_sections(vector, source))
         if answer is None:
-            return SkillResult(self.name, "No relevant content was found in any category.")
+            suffix = f' from a source matching "{source}"' if source else ""
+            return SkillResult(self.name, f"No relevant content was found in any category{suffix}.")
         return SkillResult(self.name, answer)
 
     def _answer_from(self, query: str, labelled_hits: list[tuple[str, list[dict]]]) -> str | None:

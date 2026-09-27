@@ -11,6 +11,9 @@
 # against how they're actually running (under the main .env), and
 # RECREATES them -- which briefly disrupts every other bot too.
 #
+#   bin/openclawctl --profile bot_a start      (status / restart / stop / logs too)
+#
+# which runs, for this bot only:
 #   docker compose --env-file profiles/bot_a/.env -f compose.persona.bot_a.yaml \
 #     up -d --no-deps openclaw-telegram-bot-a openclaw-memory-watcher-bot-a openclaw-cron-bot-a openclaw-gateway-bot-a
 #

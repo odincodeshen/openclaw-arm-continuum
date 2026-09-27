@@ -104,9 +104,12 @@ photo.
 
 - `/rag #<name> <question>` searches **only** that category.
 - `/rag #all <question>` searches every category and merges the results.
-- `/rag <question>` with no `#` is unchanged: it searches the default
-  `personal_tracker_memory` + `personal_knowledge_base` collections and
-  does **not** touch category collections.
+- `/rag <question>` with no `#` searches the default
+  `personal_tracker_memory` + `personal_knowledge_base` collections **and**
+  every category (the top 3 hits of each, like `#all`), since most saved
+  material ends up in a category. `OPENCLAW_RAG_INCLUDE_CATEGORIES=false`
+  restores the older behaviour of leaving categories out. A `tag:` filter
+  keeps the search to tracker memory, where tags live.
 - `/rag tag:<word> <question>` and `/rag since:YYYY-MM-DD [before:YYYY-MM-DD]
   <question>` are separate, unrelated prefixes: they scope the *default*
   (no `#`) search and do not apply to `#<category>` collections (`tag:`
@@ -114,6 +117,16 @@ photo.
   work since category items have `created_at` too, but the prefix is only
   recognized before a `#<category>` token, not combined with one -- see
   `docs/TRACKER_MEMORY.md`).
+
+`/rag source:<text> <question>` uses only material whose source -- the
+original filename, link, title or stored name shown on the `Sources:` line --
+contains `<text>` (case-insensitive). It works on its own, before a
+`#<category>` or `#all`, and alongside `tag:`/`since:`/`before:`:
+
+```
+/rag source:q1-plan what is still open?
+/rag source:youtu.be #影片筆記 what did the talk say about pricing?
+```
 
 `/rag digest` is a daily report rather than a question: every document
 added yesterday (in `OPENCLAW_CRON_TIMEZONE`) to the knowledge base or any

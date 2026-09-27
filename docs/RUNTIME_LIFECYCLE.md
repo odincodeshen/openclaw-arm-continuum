@@ -36,6 +36,31 @@ Overrides (env):
 It does not restructure `compose.yaml` -- it just targets service names, so
 `docker compose` and `openclawctl` stay interchangeable.
 
+### One bot at a time (`--profile`)
+
+When several bots run side by side (`docs/PROFILES.md` "Run Several Bots At
+Once"), each bot is one `compose.persona.<bot>.yaml` + `profiles/<bot>/.env`.
+`--profile` acts on just that bot's four containers (Telegram, memory
+watcher, cron, Gateway), always with `--no-deps`, so the shared vLLM /
+Whisper / scraper services are never touched:
+
+```bash
+bin/openclawctl profiles                        # every bot and its containers
+bin/openclawctl --profile bot_a status
+bin/openclawctl --profile bot_a start           # also applies compose/.env changes
+bin/openclawctl --profile bot_a restart         # reload the code
+bin/openclawctl --profile bot_a stop
+bin/openclawctl --profile bot_a logs cron       # telegram|cron|watcher|gateway, or all four
+bin/openclawctl --profile all restart           # every bot that is running now
+```
+
+`start` first creates the bot's Gateway `state` directory as you, so Docker
+doesn't create it as root (which silently stops the Gateway's
+`admin-http-rpc` plugin from loading). `--profile all` supports
+`status|stop|restart` and skips bots that are stopped; start a bot by name.
+`OPENCLAWCTL_ROOT` overrides the repo root and `OPENCLAWCTL_LOG_LINES` the
+number of log lines (default 50).
+
 ## Boot modes
 
 `bin/openclawctl boot` reads `OPENCLAW_BOOT_MODE` (from the process env; wire it

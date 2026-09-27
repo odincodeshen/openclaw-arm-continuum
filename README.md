@@ -215,7 +215,7 @@ Main commands:
 
 ```text
 /mem      capture, list, edit, snooze, complete, or archive personal memory
-/rag      retrieve memory or document context, optionally scoped by #<category>, tag:<word>, or since:/before:
+/rag      retrieve memory or document context, optionally scoped by #<category>, tag:<word>, since:/before:, or source:<name>
 /cat      manage Category RAG knowledge bases (list, rename, merge)
 /doc      import public Google Docs
 /search   browse with local Playwright worker

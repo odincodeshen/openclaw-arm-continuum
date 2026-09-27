@@ -83,6 +83,8 @@ from openclaw_runtime.transcription_client import TranscriptionClient
 from openclaw_runtime.vision_client import DEFAULT_DESCRIBE_INSTRUCTION, VisionClient, VisionError
 from openclaw_runtime.vocabulary import (
     LOOKUP_USAGE,
+    MAX_LOOKUP_WORDS,
+    TOO_LONG_MESSAGE,
     count_due_words,
     grade_review,
     list_word_list,
@@ -244,6 +246,10 @@ Query local memory and the document knowledge base.
 Example: /rag Which modules is OpenClaw connected to?
 Add #<category> to search one category, or #all for every category.
 Example: /rag #work-notes What are the open action items?
+Add source:<text> to use only material whose source (file name, title
+or link, as shown on the Sources: line) contains that text; works with
+#<category> and #all too.
+Example: /rag source:q1-plan #work-notes What is due this month?
 /rag digest summarizes, in one sentence each, what was added to the
 knowledge base and categories yesterday (not /mem notes).
 Example: /cron add daily 07:05 New knowledge :: /rag digest
@@ -747,6 +753,7 @@ def _relay_video_summary(chat_id: int, video_url: str) -> None:
     payload = {"video_url": video_url}
     if settings.video_summary_relay_secret:
         payload["secret"] = settings.video_summary_relay_secret
+    started = time.time()
     try:
         result = request_json(
             "POST",
@@ -754,10 +761,16 @@ def _relay_video_summary(chat_id: int, video_url: str) -> None:
             payload,
             timeout=settings.video_summary_relay_timeout_seconds,
         )
-        if not result.get("ok"):
-            send_message(chat_id, f"Video summary relay failed: {result.get('error', 'unknown error')}")
     except Exception as exc:
+        log(f"[video] relay unreachable chat_id={chat_id} after={time.time() - started:.0f}s: {exc}")
         send_message(chat_id, f"Could not reach the video summary relay: {exc}")
+        return
+    if not result.get("ok"):
+        error = result.get("error", "unknown error")
+        log(f"[video] relay failed chat_id={chat_id} after={time.time() - started:.0f}s: {error}")
+        send_message(chat_id, f"Video summary relay failed: {error}")
+        return
+    log(f"[video] relay ok chat_id={chat_id} after={time.time() - started:.0f}s")
 
 
 def handle_video_link_message(chat_id: int, text: str) -> bool:
@@ -1610,6 +1623,9 @@ def handle_vocabulary_command(chat_id: int, text: str) -> bool:
         word, sentence = parse_lookup_command(text)
         if not word:
             send_message(chat_id, LOOKUP_USAGE)
+            return True
+        if len(word.split()) > MAX_LOOKUP_WORDS:
+            send_message(chat_id, TOO_LONG_MESSAGE)
             return True
         if not dictionary.available():
             log(f"[vocab] dictionary file missing: {settings.dictionary_path}")

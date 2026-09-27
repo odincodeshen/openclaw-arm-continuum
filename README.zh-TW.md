@@ -188,7 +188,7 @@ curl -I http://127.0.0.1:18789/
 
 ```text
 /mem      寫入、列出、編輯、延期、完成或歸檔個人記憶
-/rag      查詢本地記憶或文件，可用 #<分類>、tag:<字> 或 since:/before: 縮小範圍
+/rag      查詢本地記憶或文件，可用 #<分類>、tag:<字>、since:/before: 或 source:<名稱> 縮小範圍
 /cat      管理分類 RAG 知識庫（列出、改名、合併）
 /doc      匯入公開 Google Doc
 /search   使用本地 browser worker 查網頁

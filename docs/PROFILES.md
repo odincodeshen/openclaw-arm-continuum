@@ -156,9 +156,12 @@ container names and the Gateway its own host port, and `include`s
    `admin-http-rpc` plugin silently fails to load -- the bot's cron then
    can't read jobs set on the Gateway dashboard (`cron.list failed: HTTP
    404`). Fixing the ownership and restarting the Gateway recovers it.
-4. Start only that bot's services, always with `--no-deps` (the command is at
-   the top of the example file). Without it, Compose recreates the shared
-   services with this bot's settings and briefly interrupts every other bot.
+4. Start it with `bin/openclawctl --profile <name> start`. That starts only
+   the bot's own services, always with `--no-deps` -- without it, Compose
+   recreates the shared services with this bot's settings and briefly
+   interrupts every other bot -- and creates the Gateway `state` directory
+   first (step 3). `status`, `restart`, `stop` and `logs` work the same way;
+   see `docs/RUNTIME_LIFECYCLE.md`.
 
 Real `compose.persona.*.yaml` copies are gitignored -- keep them local.
 
@@ -241,8 +244,7 @@ The demo dashboard should not list personal cron jobs.
 
 ## Current Limitation
 
-Running several bots is a compose-authoring exercise (one file per bot, see
-above); there is no tooling for it yet:
+Adding a bot is still a compose-authoring step (copy the example file, see
+above); `bin/openclawctl --profile` then runs it. Not done yet:
 
-- `bin/openclawctl` manages the default stack only -- add `openclawctl --profile`
-- add safe demo reset/seed commands
+- safe demo reset/seed commands

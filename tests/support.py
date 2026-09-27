@@ -93,6 +93,7 @@ def build_settings(**overrides) -> Settings:
         english_bot_force_day_code="",
         dictionary_enabled=False,
         dictionary_path=Path("ecdict.sqlite"),
+        rag_include_categories=False,
     )
     base.update(overrides)
     return Settings(**base)

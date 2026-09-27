@@ -158,9 +158,10 @@ Still open, re-baselined against v1.19:
 - Runtime lifecycle -- **first cut done** (`bin/openclawctl`,
   `OPENCLAW_BOOT_MODE`, graceful degradation when the model is stopped;
   v1.18 made the watcher/cron logs change-only and capped every Docker log
-  at 3 x 10 MB). Not done: `openclawctl --profile <name>` for the per-bot
-  compose files, the remote-endpoint probe for `arm-remote-llm`, and
-  per-platform model-service wiring beyond `openclaw-vllm`.
+  at 3 x 10 MB; `openclawctl --profile <bot|all>` now runs one bot's
+  containers at a time). Not done: the remote-endpoint probe for
+  `arm-remote-llm`, per-platform model-service wiring beyond
+  `openclaw-vllm`, and demo reset/seed commands.
 - Platform presets -- **partially done**: O6 and DGX multi-model configs
   shipped in v1.4; the remaining profiles and per-platform smoke tests are
   not done.
@@ -175,8 +176,10 @@ Still open, re-baselined against v1.19:
   `vlm_description`).
 - Personal memory deepening -- structured `/mem`, reminders, archival, and
   tag/date/category scoping are done; v1.17 added the `/mem upcoming` and
-  `/rag digest` daily reports. Open: filtering a `/rag` query by source,
-  profile show/set flows, and a real calendar source for the schedule report
+  `/rag digest` daily reports, `/rag source:<text>` now narrows a query
+  to one document, link or title, and plain `/rag` also searches every
+  category (`OPENCLAW_RAG_INCLUDE_CATEGORIES`). Open: profile show/set flows, and a real
+  calendar source for the schedule report
   (today it only sees `/mem ... due:` dates, with no times).
 
 **English-learning bot**
@@ -620,11 +623,9 @@ Candidate work still open:
 - Profile show/set flows.
 - A real calendar source (e.g. a read-only calendar feed) for the schedule
   report; `/mem ... due:` only records dates.
-- More precise `/rag` scope filters. Category RAG (`/rag #<category>` and
-  `/rag #all`, shipped v1.4) covers collection-level scoping; `/mem list`,
-  `/rag tag:<word>`, and `/rag since:`/`before:` (all shipped v1.9) cover
-  tag and date scoping; remaining work is filtering *within* a `/rag`
-  query by source.
+- More precise `/rag` scope filters -- **done**: collection (`#<category>`,
+  `#all`, v1.4), tag and date (`tag:`, `since:`/`before:`, v1.9), and
+  source (`source:<text>`, matched against the `Sources:` names).
 ## Future: Runtime Lifecycle and Resource Control
 
 Goal: keep OpenClaw useful even when the main model engine is stopped for other
@@ -751,15 +752,16 @@ Expected work:
 - Add resource and performance notes.
 - Keep secrets and runtime state out of git.
 
-## Concurrent Multi-Bot Personas — delivered; lifecycle tooling still open
+## Concurrent Multi-Bot Personas — delivered
 
 **Status:** running several bots at once works today -- one
 `compose.persona.<name>.yaml` per bot, copied from the tracked
 `compose.persona.example.yaml`, as described in `docs/PROFILES.md` "Run
 Several Bots At Once". Per-bot container names, a per-bot Gateway with its
 own host port, and per-bot collection names/prefixes are all in place.
-**Still open:** `openclawctl --profile <name>` (below). The rest of this
-section is the original design, kept for its reasoning.
+`openclawctl --profile <bot|all>` runs one bot's containers at a time
+(`docs/RUNTIME_LIFECYCLE.md`). The rest of this section is the original
+design, kept for its reasoning.
 
 Goal: run several independent OpenClaw "personas" at once on one host, each
 with its own Telegram bot identity and its own memory scope, sharing one
@@ -796,7 +798,7 @@ What's already free (needs no new code):
   process -- running N bots is N processes, each with its own ordinary
   Settings, not one process juggling N configs.
 
-What needed building (done, except `openclawctl --profile`):
+What needed building (all done):
 - Parameterize `container_name` per bot in compose (`openclaw-telegram`,
   `openclaw-memory-watcher`, `openclaw-cron` -- none of these bind a host
   port, since Telegram bots are outbound long-polling, so this is mostly

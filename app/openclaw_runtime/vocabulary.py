@@ -45,6 +45,16 @@ VOCAB_KIND = "vocab"
 MAX_MEANING_LINES = 4
 LIST_LIMIT = 30
 
+# /w is for a word or short phrase. A whole sentence got saved as a "word"
+# once (the AI fallback explained it); anything longer than this is turned
+# away instead. A bare message (no /w) is already capped at 4 words.
+MAX_LOOKUP_WORDS = 6
+TOO_LONG_MESSAGE = (
+    "That looks like a sentence -- /w looks up a word or a short phrase "
+    f"(up to {MAX_LOOKUP_WORDS} words). To see a word in context, add the sentence after a |:\n"
+    "/w resilient | She's remarkably resilient."
+)
+
 LOOKUP_USAGE = (
     "Usage: /w <word> -- or just send the word on its own.\n"
     "Add the sentence you saw it in after a | to get the meaning in context:\n"

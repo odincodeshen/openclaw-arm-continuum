@@ -12,11 +12,26 @@
 #   openclawctl restart core|model|full
 #   openclawctl boot                   act on OPENCLAW_BOOT_MODE (core|full|manual)
 #
+# Bot personas (one compose.persona.<bot>.yaml + profiles/<bot>/.env each, see
+# docs/PROFILES.md "Run Several Bots At Once"):
+#
+#   openclawctl profiles                           list bots and their containers
+#   openclawctl --profile <bot> status|start|stop|restart
+#   openclawctl --profile <bot> logs [telegram|cron|watcher|gateway]
+#   openclawctl --profile all status|stop|restart  every bot that is running now
+#
+# A bot's commands only touch its own four containers (telegram, memory
+# watcher, cron, gateway) and always pass --no-deps, so the shared vLLM /
+# Whisper / scraper services are never recreated. `start` also applies
+# compose/.env changes; `restart` just reloads the code.
+#
 # Environment overrides:
 #   OPENCLAWCTL_CORE_SERVICES   space-separated core service names
 #   OPENCLAWCTL_MODEL_SERVICES  space-separated model service names (default: openclaw-vllm)
 #   OPENCLAWCTL_COMPOSE         compose command (default: "docker compose")
 #   OPENCLAWCTL_DRY_RUN=1       print the compose commands instead of running them
+#   OPENCLAWCTL_ROOT            repo root for --profile (default: this script's ../)
+#   OPENCLAWCTL_RUNNING_BOTS    space-separated bots treated as running (tests; default: ask docker)
 #   OPENCLAW_BOOT_MODE          core | full | manual   (consumed by 'boot')
 
 set -eu
@@ -24,6 +39,7 @@ set -eu
 CORE_SERVICES="${OPENCLAWCTL_CORE_SERVICES:-openclaw-gateway openclaw-telegram openclaw-cron openclaw-memory-watcher openclaw-browser-scraper openclaw-whisper}"
 MODEL_SERVICES="${OPENCLAWCTL_MODEL_SERVICES:-openclaw-vllm}"
 COMPOSE="${OPENCLAWCTL_COMPOSE:-docker compose}"
+ROOT="${OPENCLAWCTL_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 
 usage() {
     cat >&2 <<'EOF'
@@ -38,6 +54,16 @@ openclawctl -- run OpenClaw core services independently of the model engine.
 core  = gateway, telegram, cron, memory-watcher, browser-scraper, whisper
 model = vLLM (the GPU engine)
 full  = core + model
+
+Bot personas (compose.persona.<bot>.yaml + profiles/<bot>/.env):
+
+  openclawctl profiles                           list bots and their containers
+  openclawctl --profile <bot> status|start|stop|restart
+  openclawctl --profile <bot> logs [telegram|cron|watcher|gateway]
+  openclawctl --profile all status|stop|restart  every bot that is running now
+
+start applies compose/.env changes, restart only reloads the code. 'all'
+leaves stopped bots alone; start a bot by name.
 EOF
     exit "${1:-0}"
 }
@@ -98,12 +124,143 @@ cmd_boot() {
     esac
 }
 
+# ---- bot personas --------------------------------------------------------
+
+list_profiles() {
+    for f in "$ROOT"/compose.persona.*.yaml; do
+        [ -e "$f" ] || continue
+        name=$(basename "$f" .yaml)
+        name=${name#compose.persona.}
+        [ "$name" = "example" ] && continue
+        printf '%s\n' "$name"
+    done
+}
+
+# bot_a -> openclaw-telegram-bot-a ... (container/service names use '-')
+profile_services() {
+    _sfx=$(printf '%s' "$1" | tr '_' '-')
+    printf 'openclaw-telegram-%s openclaw-memory-watcher-%s openclaw-cron-%s openclaw-gateway-%s' \
+        "$_sfx" "$_sfx" "$_sfx" "$_sfx"
+}
+
+profile_compose() {
+    _name="$1"; shift
+    run_compose --env-file "$ROOT/profiles/$_name/.env" -f "$ROOT/compose.persona.$_name.yaml" "$@"
+}
+
+check_profile() {
+    case "$1" in
+        ''|*[!A-Za-z0-9_-]*) echo "openclawctl: invalid bot name '$1'" >&2; exit 2 ;;
+    esac
+    if [ ! -f "$ROOT/compose.persona.$1.yaml" ] || [ ! -f "$ROOT/profiles/$1/.env" ]; then
+        echo "openclawctl: no bot '$1' (needs compose.persona.$1.yaml and profiles/$1/.env)" >&2
+        echo "known bots: $(list_profiles | tr '\n' ' ')" >&2
+        exit 2
+    fi
+}
+
+# Docker creates a missing bind-mount source as root; the Gateway (uid 1000)
+# then can't write its state and silently loses its admin-http-rpc plugin.
+# Create it as the calling user first.
+ensure_gateway_state_dir() {
+    _data=$(sed -n 's/^OPENCLAW_HOST_GATEWAY_DATA=//p' "$ROOT/profiles/$1/.env" | tail -n 1)
+    [ -n "$_data" ] || return 0
+    case "$_data" in /*) ;; *) _data="$ROOT/${_data#./}" ;; esac
+    if [ "${OPENCLAWCTL_DRY_RUN:-0}" = "1" ]; then
+        echo "+ mkdir -p $_data/state"
+    else
+        mkdir -p "$_data/state"
+    fi
+}
+
+profile_action() {
+    _name="$1"; _action="$2"; _svc=$(profile_services "$_name")
+    echo "== $_name =="
+    case "$_action" in
+        # shellcheck disable=SC2086
+        status)  profile_compose "$_name" ps $_svc ;;
+        # shellcheck disable=SC2086
+        start)   ensure_gateway_state_dir "$_name"; profile_compose "$_name" up -d --no-deps $_svc ;;
+        # shellcheck disable=SC2086
+        stop)    profile_compose "$_name" stop $_svc ;;
+        # shellcheck disable=SC2086
+        restart) profile_compose "$_name" restart $_svc ;;
+        *) echo "openclawctl: unknown bot command '$_action' (want: status|start|stop|restart|logs)" >&2; exit 2 ;;
+    esac
+}
+
+profile_logs() {
+    _name="$1"; _which="${2:-}"; _sfx=$(printf '%s' "$_name" | tr '_' '-')
+    case "$_which" in
+        "")       _svc=$(profile_services "$_name") ;;
+        telegram) _svc="openclaw-telegram-$_sfx" ;;
+        cron)     _svc="openclaw-cron-$_sfx" ;;
+        watcher)  _svc="openclaw-memory-watcher-$_sfx" ;;
+        gateway)  _svc="openclaw-gateway-$_sfx" ;;
+        *) echo "openclawctl: unknown service '$_which' (want: telegram|cron|watcher|gateway)" >&2; exit 2 ;;
+    esac
+    # shellcheck disable=SC2086
+    profile_compose "$_name" logs --tail "${OPENCLAWCTL_LOG_LINES:-50}" $_svc
+}
+
+# Bots whose Telegram container is running right now.
+running_profiles() {
+    if [ -n "${OPENCLAWCTL_RUNNING_BOTS+x}" ]; then
+        printf '%s\n' $OPENCLAWCTL_RUNNING_BOTS
+        return
+    fi
+    _up=$(docker ps --format '{{.Names}}' 2>/dev/null || true)
+    for _bot in $(list_profiles); do
+        _sfx=$(printf '%s' "$_bot" | tr '_' '-')
+        printf '%s\n' "$_up" | grep -qx "openclaw-telegram-$_sfx" && printf '%s\n' "$_bot"
+    done
+    return 0
+}
+
+cmd_profile() {
+    [ $# -ge 2 ] || { echo "openclawctl: usage: openclawctl --profile <bot|all> <command>" >&2; exit 2; }
+    _target="$1"; _action="$2"; shift 2
+    if [ "$_target" = "all" ]; then
+        case "$_action" in
+            status|stop|restart) ;;
+            *) echo "openclawctl: 'all' supports status|stop|restart; start or view logs one bot at a time" >&2; exit 2 ;;
+        esac
+        _bots=$(running_profiles)
+        [ -n "$_bots" ] || { echo "no bots are running"; return; }
+        for _bot in $_bots; do
+            check_profile "$_bot"
+            profile_action "$_bot" "$_action"
+        done
+        return
+    fi
+    check_profile "$_target"
+    if [ "$_action" = "logs" ]; then
+        profile_logs "$_target" "${1:-}"
+    else
+        profile_action "$_target" "$_action"
+    fi
+}
+
+cmd_profiles() {
+    _bots=$(list_profiles)
+    [ -n "$_bots" ] || { echo "no bots found (compose.persona.<bot>.yaml)"; return; }
+    for _bot in $_bots; do
+        if [ -f "$ROOT/profiles/$_bot/.env" ]; then
+            profile_action "$_bot" status
+        else
+            echo "== $_bot == (missing profiles/$_bot/.env)"
+        fi
+    done
+}
+
 [ $# -ge 1 ] || usage 2
 action="$1"
 shift || true
 
 case "$action" in
     -h|--help|help) usage 0 ;;
+    --profile) cmd_profile "$@" ;;
+    profiles) cmd_profiles ;;
     status) cmd_status ;;
     boot)   cmd_boot ;;
     start|stop|restart)

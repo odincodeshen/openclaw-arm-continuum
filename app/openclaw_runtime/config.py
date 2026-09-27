@@ -130,6 +130,9 @@ class Settings:
     # the offline dictionary built by scripts/build_dictionary.py.
     dictionary_enabled: bool
     dictionary_path: Path
+    # Plain /rag (no #<category>) also searches every category, a few hits
+    # each, on top of tracker memory and the knowledge base.
+    rag_include_categories: bool
 
 
 def load_settings() -> Settings:
@@ -250,4 +253,5 @@ def load_settings() -> Settings:
         english_bot_force_day_code=os.environ.get("OPENCLAW_ENGLISH_BOT_FORCE_DAY_CODE", "").strip().lower(),
         dictionary_enabled=env_bool("OPENCLAW_DICTIONARY_ENABLED", False),
         dictionary_path=Path(os.environ.get("OPENCLAW_DICTIONARY_PATH", "/workspace/dictionary/ecdict.sqlite")),
+        rag_include_categories=env_bool("OPENCLAW_RAG_INCLUDE_CATEGORIES", True),
     )

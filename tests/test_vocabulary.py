@@ -286,11 +286,14 @@ class GatewayVocabularyCommandTest(unittest.TestCase):
             thread.assert_called_once()
             self.assertEqual(thread.call_args.kwargs["args"], (1, "resilient", "Ok."))
             self.assertTrue(gateway.handle_vocabulary_command(1, "/w"))
+            self.assertTrue(gateway.handle_vocabulary_command(1, "/w office supplies should be limited to stationery"))
+            self.assertEqual(thread.call_count, 1)  # the sentence did not start a lookup
             self.assertTrue(gateway.handle_vocabulary_command(1, "/vocab rm"))
             self.assertFalse(gateway.handle_vocabulary_command(1, "/weather"))
             self.assertIn("/vocab", gateway.help_text())
         self.assertIn("Usage: /w <word>", sent[0])
-        self.assertEqual(sent[1], "Usage: /vocab rm <word>")
+        self.assertIn("looks like a sentence", sent[1])
+        self.assertEqual(sent[2], "Usage: /vocab rm <word>")
 
 
 if __name__ == "__main__":
