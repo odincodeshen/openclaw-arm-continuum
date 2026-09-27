@@ -1,7 +1,7 @@
 # Future TODO List
 
 This document tracks candidate work items for `openclaw-arm-continuum`.
-Current release: **v1.17**.
+Current release: **v1.18**.
 
 The runtime is intentionally stable and text-first. The items below are
 future-facing and should be implemented incrementally without breaking the
@@ -126,6 +126,13 @@ v1.2 baseline. What has actually shipped since then:
   were being indexed back into tracker memory. Running several bots at once
   is documented in `docs/PROFILES.md`, with a tracked
   `compose.persona.example.yaml`.
+- **v1.18 — quieter logs, per-evaluation review flag.** The memory watcher
+  logs each skipped file once instead of on every scan (up to ~190,000
+  identical lines a day per bot), the cron worker logs its job poll only
+  when something changes (it had hidden a week-long Gateway 404), and every
+  compose service caps its Docker log at 3 x 10 MB. English bot: a chunk's
+  "needs review" flag now follows the latest attempt of each evaluation
+  (Monday, Friday, Saturday), so redoing a day can clear that day's miss.
 
 Still open from the original list, re-baselined against v1.6:
 
