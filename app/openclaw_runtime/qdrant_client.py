@@ -112,11 +112,28 @@ class QdrantClient:
         )
         return list(response.get("result") or [])
 
-    def scroll_by_filters(self, collection: str, filters: dict, limit: int = 64) -> list[dict]:
+    def scroll_by_filters(
+        self,
+        collection: str,
+        filters: dict,
+        limit: int = 64,
+        *,
+        since: int | None = None,
+        before: int | None = None,
+    ) -> list[dict]:
         """Scroll every point whose payload matches all ``field: value`` pairs
-        in ``filters`` (AND). Paginates until exhausted or a 512-point safety
-        cap; returns in Qdrant's scroll order, capped to ``limit``."""
+        in ``filters`` (AND), optionally within a created_at range (epoch
+        seconds, since inclusive, before exclusive -- same as search()).
+        Paginates until exhausted or a 512-point safety cap; returns in
+        Qdrant's scroll order, capped to ``limit``."""
         must = [{"key": key, "match": {"value": value}} for key, value in filters.items()]
+        if since is not None or before is not None:
+            date_range = {}
+            if since is not None:
+                date_range["gte"] = since
+            if before is not None:
+                date_range["lt"] = before
+            must.append({"key": "created_at", "range": date_range})
         points: list[dict] = []
         offset = None
         while len(points) < 512:

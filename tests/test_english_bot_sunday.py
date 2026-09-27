@@ -16,6 +16,7 @@ from openclaw_runtime.skills.english_bot import (
     select_sunday_article,
     summarize_sunday_article,
 )
+from tests.card_checks import assert_task_card
 
 
 class FakeLlm:
@@ -210,17 +211,21 @@ class SummarizeSundayArticleTest(unittest.TestCase):
 
 class BuildSundayMessageTest(unittest.TestCase):
     def test_includes_link_summary_and_gist_reminder(self) -> None:
-        message = build_sunday_message("https://guardian.com/a", "A nice summary.")
-        self.assertIn("https://guardian.com/a", message)
+        message = build_sunday_message("Queues & manners", "https://guardian.com/a", "A nice summary.", 2)
+        assert_task_card(self, message, "sun")
+        self.assertIn("<b>Queues &amp; manners</b>\nhttps://guardian.com/a", message)
         self.assertIn("A nice summary.", message)
         self.assertIn("no dictionary, no notes", message.lower())
+        self.assertIn("No reply needed", message)
         self.assertNotIn("Chinese translation", message)
 
     def test_includes_chinese_translation_after_the_english_summary(self) -> None:
-        message = build_sunday_message("https://guardian.com/a", "A nice summary.", "一段不錯的摘要。")
-        self.assertIn("Chinese translation:\n一段不錯的摘要。", message)
-        self.assertLess(message.index("A nice summary."), message.index("Chinese translation:"))
-        self.assertLess(message.index("Chinese translation:"), message.index("Read for the gist"))
+        message = build_sunday_message("Title", "https://guardian.com/a", "A nice summary.", 2, "一段不錯的摘要。")
+        assert_task_card(self, message, "sun")
+        self.assertIn(
+            "Chinese translation (tap to expand)\n<blockquote expandable>一段不錯的摘要。</blockquote>", message
+        )
+        self.assertLess(message.index("A nice summary."), message.index("Chinese translation"))
 
 
 class RunSundayTaskTest(unittest.TestCase):

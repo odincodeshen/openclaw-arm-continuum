@@ -115,6 +115,16 @@ photo.
   recognized before a `#<category>` token, not combined with one -- see
   `docs/TRACKER_MEMORY.md`).
 
+`/rag digest` is a daily report rather than a question: every document
+added yesterday (in `OPENCLAW_CRON_TIMEZONE`) to the knowledge base or any
+category, one sentence each, grouped by category. `/mem` notes are not
+included. It always reports, including "No new knowledge was added
+yesterday.", so it suits a morning push:
+
+```
+/cron add daily 07:05 知識｜昨日新增 :: /rag digest
+```
+
 Every `/rag` answer ends with a `Sources:` line naming the source documents
 the answer drew from. The name shown is the uploader's original filename when
 known (recorded in the `.meta.json` sidecar at upload) -- or a replied-to

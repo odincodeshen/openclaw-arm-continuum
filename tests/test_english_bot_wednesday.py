@@ -15,6 +15,7 @@ from openclaw_runtime.skills.english_bot import (
     pick_ielts_question,
     run_wednesday_task,
 )
+from tests.card_checks import assert_feedback_card, assert_task_card
 
 
 class FakeLlm:
@@ -98,11 +99,22 @@ class MarkIeltsQuestionAskedTest(unittest.TestCase):
 class BuildWednesdayMessageTest(unittest.TestCase):
     def test_includes_cue_card_and_star_and_timing_instructions(self) -> None:
         question = IELTS_QUESTION_BANK[0]
-        message = build_wednesday_message(question)
-        self.assertIn(question["cue_card"], message)
+        message = build_wednesday_message(question, 4)
+        assert_task_card(self, message, "wed")
+        self.assertIn("Week 4", message)
+        self.assertIn("Describe a time when you received bad customer service", message)
+        self.assertIn("• when and where it was", message)
+        self.assertNotIn("- when and where it was", message)
         self.assertIn("STAR", message)
-        self.assertIn("1.5 to 2 minutes", message)
-        self.assertIn("think for 1 minute", message)
+        self.assertIn("Voice, 1.5–2 min", message)
+        self.assertIn("Think for 1 minute", message)
+        self.assertNotIn("Part 3", message)
+
+    def test_combo_week_adds_part3_block_to_the_same_card(self) -> None:
+        message = build_wednesday_message(IELTS_QUESTION_BANK[0], 18, part3_question="Is AI good?")
+        assert_task_card(self, message, "wed")
+        self.assertIn("<b>Part 3</b>\nIs AI good?", message)
+        self.assertIn("One voice message", message)
 
 
 class RunWednesdayTaskTest(unittest.TestCase):
@@ -165,7 +177,9 @@ class EvaluateWednesdayReplyTest(unittest.TestCase):
             owner="owner-a",
             week_number=1,
         )
-        self.assertIn("missing Action, Result", feedback)
+        assert_feedback_card(self, feedback, "wed")
+        self.assertIn("✅ Situation　✅ Task　❌ Action　❌ Result", feedback)
+        self.assertIn("• Add the missing STAR part: Action, Result", feedback)
         prompt, schema_name = llm.calls[0]
         self.assertEqual(schema_name, "star_evaluation")
         self.assertIn("Describe a challenge...", prompt)
@@ -188,8 +202,9 @@ class EvaluateWednesdayReplyTest(unittest.TestCase):
         feedback = evaluate_wednesday_reply(
             llm, "cue card", "reply text", qdrant=self.qdrant, collection="coll", owner="owner-a", week_number=1
         )
-        self.assertIn("complete (Situation, Task, Action, Result all present)", feedback)
-        self.assertIn('"good" -> try "commendable" (band 7.5+)', feedback)
+        assert_feedback_card(self, feedback, "wed")
+        self.assertIn("✅ Situation　✅ Task　✅ Action　✅ Result", feedback)
+        self.assertIn('• "good" → "commendable" (band 7.5+)', feedback)
 
     def test_appends_model_answer_after_the_evaluation(self) -> None:
         llm = FakeLlm(
@@ -209,8 +224,12 @@ class EvaluateWednesdayReplyTest(unittest.TestCase):
         feedback = evaluate_wednesday_reply(
             llm, "cue card", "reply text", qdrant=self.qdrant, collection="coll", owner="owner-a", week_number=1
         )
-        self.assertTrue(feedback.endswith("Model answer (band 8):\nLast spring I had to organise a surprise party..."))
-        self.assertLess(feedback.index("Overused:"), feedback.index("Model answer (band 8):"))
+        assert_feedback_card(self, feedback, "wed")
+        self.assertIn(
+            "<b>Example</b> (tap to expand)\n<blockquote expandable>Last spring I had to organise a surprise party..."
+            "</blockquote>",
+            feedback,
+        )
         prompt, _ = llm.calls[0]
         self.assertIn("model_answer", prompt)
         self.assertIn("band 8", prompt)
@@ -232,7 +251,8 @@ class EvaluateWednesdayReplyTest(unittest.TestCase):
         feedback = evaluate_wednesday_reply(
             llm, "cue card", "reply text", qdrant=self.qdrant, collection="coll", owner="owner-a", week_number=1
         )
-        self.assertNotIn("Model answer", feedback)
+        assert_feedback_card(self, feedback, "wed")
+        self.assertIn("(not available this time)", feedback)
 
     def test_marks_wednesday_task_completed(self) -> None:
         llm = FakeLlm(
@@ -338,8 +358,9 @@ class RunWednesdayTaskComboTest(unittest.TestCase):
         )
 
         self.assertEqual(result["part3_question"], "Does AI enhance or reduce problem-solving skills?")
+        assert_task_card(self, sent[0][1], "wed")
         self.assertIn("Does AI enhance or reduce problem-solving skills?", sent[0][1])
-        self.assertIn("Part 2 + Part 3", sent[0][1])
+        self.assertIn("Part 2 + 3", sent[0][1])
 
 
 class EvaluateWednesdayReplyDualEvaluationTest(unittest.TestCase):
@@ -382,13 +403,15 @@ class EvaluateWednesdayReplyDualEvaluationTest(unittest.TestCase):
             week_number=WEDNESDAY_COMBO_THRESHOLD_WEEK + 1,
             part3_question="Does automation help or hurt problem-solving?",
         )
-        self.assertIn("Part 2 (STAR):", feedback)
-        self.assertIn("complete (Situation, Task, Action, Result all present)", feedback)
-        self.assertIn("Part 3 (Argument structure):", feedback)
-        self.assertIn("missing Concession/counter-argument", feedback)
-        self.assertIn("Part 2 model answer (band 8):\nPart two story...", feedback)
-        self.assertIn("Part 3 model answer (band 8):\nPart three argument...", feedback)
-        self.assertLess(feedback.index("Part 2 model answer"), feedback.index("Part 3 question:"))
+        assert_feedback_card(self, feedback, "wed")
+        self.assertIn("Part 2: ✅ Situation　✅ Task　✅ Action　✅ Result", feedback)
+        self.assertIn("Part 3: ✅ Claim　❌ Concession　✅ Conclusion", feedback)
+        self.assertIn("• Part 3 needs: Concession", feedback)
+        self.assertIn(
+            "Part 2:\nPart two story...\n\nPart 3 — Does automation help or hurt problem-solving?\n"
+            "Part three argument...",
+            feedback,
+        )
         self.assertEqual(len(llm.calls), 2)
         self.qdrant.set_payload.assert_called_once_with("coll", "pushed-point-1", {"completed": True})
 
@@ -415,9 +438,9 @@ class EvaluateWednesdayReplyDualEvaluationTest(unittest.TestCase):
             owner="owner-a",
             week_number=1,
         )
-        self.assertNotIn("Part 2 (STAR):", feedback)
+        assert_feedback_card(self, feedback, "wed")
+        self.assertNotIn("Part 2:", feedback)
         self.assertNotIn("Part 3", feedback)
-        self.assertNotIn("Argument structure", feedback)
         self.assertEqual(len(llm.calls), 1)
         self.qdrant.set_payload.assert_called_once_with("coll", "pushed-point-1", {"completed": True})
 

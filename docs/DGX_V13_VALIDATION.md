@@ -3,7 +3,7 @@
 ## Scope
 
 This validation used the isolated deployment directory
-`/home/lpreview/openclaw-arm-continuum-v1.3` on the DGX GB10 host. Existing
+`~/openclaw-arm-continuum-v1.3` on the DGX GB10 host. Existing
 OpenClaw and unrelated containers were preserved.
 
 The deployment was based on the three-endpoint validation Compose pattern and

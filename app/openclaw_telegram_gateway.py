@@ -71,6 +71,8 @@ from openclaw_runtime.file_ingest import META_SIDECAR_SUFFIX, SUPPORTED_SUFFIXES
 from openclaw_runtime.engineering_review import EngineeringReviewAgent
 from openclaw_runtime.http_client import post_multipart_file, request_json
 from openclaw_runtime.llm_client import VLLM_NOT_READY_MESSAGE
+from openclaw_runtime.dictionary import LocalDictionary
+from openclaw_runtime.message_cards import html_to_plain, split_html_message
 from openclaw_runtime.model_catalog import load_model_registry
 from openclaw_runtime.model_client_factory import ModelClientFactory
 from openclaw_runtime.qdrant_client import QdrantClient
@@ -79,6 +81,22 @@ from openclaw_runtime.source_ingest import save_google_doc
 from openclaw_runtime.task_history import TaskHistory
 from openclaw_runtime.transcription_client import TranscriptionClient
 from openclaw_runtime.vision_client import DEFAULT_DESCRIBE_INSTRUCTION, VisionClient, VisionError
+from openclaw_runtime.vocabulary import (
+    LOOKUP_USAGE,
+    count_due_words,
+    grade_review,
+    list_word_list,
+    lookup_word,
+    parse_bare_lookup,
+    parse_lookup_command,
+    remove_from_word_list,
+    render_lookup_card,
+    render_review_quiz,
+    render_review_reminder,
+    render_word_list,
+    save_to_word_list,
+    start_review,
+)
 
 
 _URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
@@ -96,6 +114,7 @@ qdrant = QdrantClient(settings)
 transcriber = TranscriptionClient(settings)
 embeddings = EmbeddingClient(settings)
 english_bot_clip_client = AudioClipClient(settings)
+dictionary = LocalDictionary(settings.dictionary_path)
 conversation_memory = ConversationMemory(settings, llm)
 skill_router = SkillRouter(settings, llm, model_clients)
 task_history = TaskHistory(settings.task_history_path)
@@ -209,6 +228,11 @@ to get this pushed automatically:
 Example: /cron add daily 08:00 Memory digest :: /mem digest
 A day with nothing due or stale stays silent -- it is not pushed.
 
+/mem upcoming [days]
+Daily schedule report: items due today through the next 3 days (or
+[days]), grouped by day. Always reports, even when nothing is scheduled.
+Example: /cron add daily 07:00 Schedule :: /mem upcoming
+
 /mem archive-stale
 Fully-automatic sweep: archives active, undated items that have gone
 stale (the same test /mem digest uses), out of the default list. No
@@ -220,6 +244,9 @@ Query local memory and the document knowledge base.
 Example: /rag Which modules is OpenClaw connected to?
 Add #<category> to search one category, or #all for every category.
 Example: /rag #work-notes What are the open action items?
+/rag digest summarizes, in one sentence each, what was added to the
+knowledge base and categories yesterday (not /mem notes).
+Example: /cron add daily 07:05 New knowledge :: /rag digest
 Add tag:<word> to scope to /mem items with that tag (tracker only).
 Example: /rag tag:work what did I save about the deadline?
 Add since:YYYY-MM-DD and/or before:YYYY-MM-DD to scope by save date
@@ -771,7 +798,7 @@ def _process_english_bot_reply(chat_id: int, pending: dict, transcribed_reply: s
         log(f"[english_bot] reply dispatch error chat_id={chat_id} kind={pending.get('kind')}: {exc}")
         send_message(chat_id, f"OpenClaw could not evaluate that reply: {exc}")
         return
-    send_message(chat_id, feedback)
+    send_html(chat_id, feedback)
     log(f"[english_bot] reply evaluated chat_id={chat_id} kind={pending.get('kind')}")
 
 
@@ -808,6 +835,12 @@ def handle_english_bot_pending_reply(chat_id: int, message: dict) -> bool:
         send_message(chat_id, "Got it -- today's task is closed out. See you next time!")
         log(f"[english_bot] practice session closed chat_id={chat_id} kind={pending.get('kind')}")
         return True
+
+    if text.startswith("/"):
+        # A command (e.g. /w to look up a word mid-task) is never a practice
+        # attempt -- let the normal command handling take it, and leave the
+        # task open.
+        return False
 
     pending = peek_pending_answer(chat_id)
     if pending is None:
@@ -1439,6 +1472,171 @@ def send_message(chat_id: int, text: str) -> None:
         )
 
 
+def send_html(chat_id: int, html: str) -> None:
+    """Send a message built with openclaw_runtime.message_cards (Telegram
+    HTML parse mode). Long messages are split at blank lines outside any
+    tag; a part Telegram still rejects (bad markup, or a single block over
+    the limit) is resent as plain text, so a formatting problem never loses
+    the content itself."""
+    for part in split_html_message(html, settings.max_reply_chars):
+        if len(part) <= settings.max_reply_chars:
+            try:
+                telegram("sendMessage", {"chat_id": chat_id, "text": part, "parse_mode": "HTML"})
+                continue
+            except urllib.error.HTTPError as exc:
+                log(f"[telegram] HTML message rejected ({exc.code}), resending as plain text chat_id={chat_id}")
+        send_message(chat_id, html_to_plain(part))
+
+
+DICTIONARY_HELP_TEXT = """
+Word lookup
+/w <word>
+Look a word up in the offline dictionary; it's added to your word list.
+You can also just send the word (1-4 English words) without /w.
+Add the sentence you saw it in after a | for the meaning in context.
+Example: /w resilient | She's remarkably resilient.
+
+/vocab
+Show your word list, newest first. /vocab rm <word> removes a word.
+
+/vocab review
+Review the saved words that are due today (spaced repetition): up to 5
+questions, answered in one typed message."""
+
+
+def help_text() -> str:
+    return HELP_TEXT + (DICTIONARY_HELP_TEXT if settings.dictionary_enabled else "")
+
+
+# /vocab review sessions waiting for a typed answer, kept apart from
+# PENDING_ANSWER so a review never replaces an open daily English task.
+# chat_id -> {"questions": [...], "expires_at": monotonic seconds}
+VOCAB_REVIEW_PENDING: dict[int, dict] = {}
+VOCAB_REVIEW_LOCK = threading.Lock()
+# An unanswered review stops capturing typed replies after this long, so it
+# can't swallow tomorrow's answer to a daily task.
+VOCAB_REVIEW_TTL_SECONDS = 60 * 60
+
+
+def _vocab_today():
+    return datetime.now(ZoneInfo(settings.english_bot_timezone)).date()
+
+
+def _start_vocab_review(chat_id: int) -> None:
+    questions = start_review(qdrant, settings.tracker_collection, str(chat_id), _vocab_today())
+    if not questions:
+        send_message(chat_id, "No saved words are due for review today. Look words up with /w to add more.")
+        return
+    with VOCAB_REVIEW_LOCK:
+        VOCAB_REVIEW_PENDING[chat_id] = {
+            "questions": questions,
+            "expires_at": time.monotonic() + VOCAB_REVIEW_TTL_SECONDS,
+        }
+    send_html(chat_id, render_review_quiz(questions))
+
+
+def _grade_vocab_review(chat_id: int, questions: list[dict], answer: str) -> None:
+    try:
+        feedback = grade_review(llm, qdrant, settings.tracker_collection, questions, answer, _vocab_today())
+    except Exception as exc:
+        log(f"[vocab] review grading error chat_id={chat_id}: {exc}")
+        send_message(chat_id, f"OpenClaw could not grade that review: {exc} -- send /vocab review to try again.")
+        return
+    send_html(chat_id, feedback)
+    log(f"[vocab] review graded chat_id={chat_id} words={len(questions)}")
+
+
+def handle_vocab_review_answer(chat_id: int, message: dict) -> bool:
+    """A typed, non-command reply answers an open /vocab review. Voice
+    replies and commands are left alone (voice still answers the daily
+    task), and an expired review is dropped instead of answered."""
+    if not settings.dictionary_enabled:
+        return False
+    text = (message.get("text") or "").strip()
+    if not text or text.startswith("/") or message.get("voice") or message.get("audio"):
+        return False
+    with VOCAB_REVIEW_LOCK:
+        pending = VOCAB_REVIEW_PENDING.pop(chat_id, None)
+    if pending is None:
+        return False
+    if time.monotonic() > pending["expires_at"]:
+        return False
+    threading.Thread(target=_grade_vocab_review, args=(chat_id, pending["questions"], text), daemon=True).start()
+    return True
+
+
+def handle_bare_word_lookup(chat_id: int, message: dict) -> bool:
+    """Look a word up when it's sent on its own, without /w -- see
+    vocabulary.parse_bare_lookup for what counts. Skipped while a file is
+    waiting for its category name, since that reply is plain text too."""
+    if not settings.dictionary_enabled:
+        return False
+    text = (message.get("text") or "").strip()
+    if not text or text.startswith("/"):
+        return False
+    parsed = parse_bare_lookup(text)
+    if parsed is None:
+        return False
+    if settings.category_rag_enabled and has_pending_category(chat_id):
+        return False
+    word, sentence = parsed
+    threading.Thread(target=_lookup_and_reply, args=(chat_id, word, sentence), daemon=True).start()
+    log(f"[vocab] bare-word lookup chat_id={chat_id}")
+    return True
+
+
+def _lookup_and_reply(chat_id: int, word: str, sentence: str) -> None:
+    try:
+        result = lookup_word(dictionary, llm, word, sentence)
+        if result is None:
+            send_message(chat_id, f'Couldn\'t find "{word}" -- check the spelling and try again.')
+            return
+        count = save_to_word_list(
+            qdrant, embeddings, settings.tracker_collection, str(chat_id), result, sentence
+        )
+        send_html(chat_id, render_lookup_card(result, sentence, count))
+    except Exception as exc:
+        log(f"[vocab] lookup error chat_id={chat_id}: {exc}")
+        send_message(chat_id, f"OpenClaw could not look that word up: {exc}")
+
+
+def handle_vocabulary_command(chat_id: int, text: str) -> bool:
+    """/w <word> [| sentence] and /vocab [rm <word>]. Only active when the
+    dictionary is enabled (the English-learning bot)."""
+    if not settings.dictionary_enabled:
+        return False
+    lowered = text.lower()
+    if lowered == "/w" or lowered.startswith("/w "):
+        word, sentence = parse_lookup_command(text)
+        if not word:
+            send_message(chat_id, LOOKUP_USAGE)
+            return True
+        if not dictionary.available():
+            log(f"[vocab] dictionary file missing: {settings.dictionary_path}")
+        threading.Thread(target=_lookup_and_reply, args=(chat_id, word, sentence), daemon=True).start()
+        return True
+    if lowered == "/vocab" or lowered.startswith("/vocab "):
+        parts = text.split(maxsplit=2)
+        owner = str(chat_id)
+        if len(parts) >= 2 and parts[1].lower() == "review":
+            _start_vocab_review(chat_id)
+            return True
+        if len(parts) >= 2 and parts[1].lower() == "rm":
+            word = parts[2] if len(parts) == 3 else ""
+            if not word:
+                send_message(chat_id, "Usage: /vocab rm <word>")
+            elif remove_from_word_list(qdrant, settings.tracker_collection, owner, word):
+                send_message(chat_id, f'Removed "{word}" from your word list.')
+            else:
+                send_message(chat_id, f'"{word}" isn\'t in your word list.')
+            return True
+        entries = list_word_list(qdrant, settings.tracker_collection, owner)
+        due = count_due_words(qdrant, settings.tracker_collection, owner, _vocab_today()) if entries else 0
+        send_html(chat_id, render_word_list(entries, due))
+        return True
+    return False
+
+
 def cron_help_text() -> str:
     return """OpenClaw dynamic cron schedules
 
@@ -1781,6 +1979,11 @@ def setup_bot_commands() -> None:
         {"command": "review", "description": "Run a bounded private engineering review"},
         {"command": "start", "description": "Show status and usage"},
     ]
+    if settings.dictionary_enabled:
+        commands[1:1] = [
+            {"command": "w", "description": "Look up a word (added to your word list)"},
+            {"command": "vocab", "description": "Show your word list"},
+        ]
     telegram("setMyCommands", {"commands": commands}, timeout=20)
 
 
@@ -1857,6 +2060,10 @@ def handle_message(message: dict) -> None:
             log(f"[category] sweep error: {exc}")
 
     try:
+        if handle_vocab_review_answer(chat_id, message):
+            return
+        if handle_bare_word_lookup(chat_id, message):
+            return
         if handle_english_bot_pending_reply(chat_id, message):
             return
     except Exception as exc:
@@ -1897,7 +2104,10 @@ def handle_message(message: dict) -> None:
         return
 
     if text in {"/start", "/help"}:
-        send_message(chat_id, HELP_TEXT)
+        send_message(chat_id, help_text())
+        return
+
+    if handle_vocabulary_command(chat_id, text):
         return
 
     if text.lower() in {"/new", "/reset"}:
@@ -1974,7 +2184,17 @@ def handle_message(message: dict) -> None:
 
 
 def _english_bot_send_message(owner: str, text: str) -> None:
-    send_message(int(owner), text)
+    """Daily task cards. With the word list enabled, a Word review block is
+    added at the end for whoever has saved words due -- counted per owner,
+    since each person's list is their own."""
+    if settings.dictionary_enabled:
+        try:
+            text += render_review_reminder(
+                count_due_words(qdrant, settings.tracker_collection, owner, _vocab_today())
+            )
+        except Exception as exc:  # noqa: BLE001 - never let the reminder block the day's task
+            log(f"[vocab] due-word count failed owner={owner}: {exc}")
+    send_html(int(owner), text)
 
 
 def _english_bot_send_audio(owner: str, path: Path, caption: str) -> None:

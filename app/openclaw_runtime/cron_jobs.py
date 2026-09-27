@@ -332,10 +332,9 @@ def is_due(job: dict, now: datetime, state: dict, window_minutes: int = DEFAULT_
     return False
 
 
-def mark_ran(job: dict, now: datetime, state: dict, path: Path) -> None:
+def mark_ran(job: dict, now: datetime, state: dict) -> None:
     job_id = job["id"]
     state.setdefault("job_last_runs", {})[job_id] = {
         "date": now.strftime("%Y-%m-%d"),
         "timestamp": int(now.timestamp()),
-        "path": str(path),
     }

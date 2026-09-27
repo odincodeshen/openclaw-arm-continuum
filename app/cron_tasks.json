@@ -1,9 +1,0 @@
-{
-  "daily_briefing": {
-    "enabled": false,
-    "title": "OpenClaw Daily Briefing",
-    "weather_questions": [],
-    "product_queries": [],
-    "english_queries": []
-  }
-}

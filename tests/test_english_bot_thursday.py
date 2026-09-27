@@ -10,6 +10,7 @@ from openclaw_runtime.skills.english_bot import (
     generate_thursday_opener,
     run_thursday_task,
 )
+from tests.card_checks import assert_feedback_card, assert_task_card
 
 
 class FakeLlm:
@@ -82,10 +83,11 @@ class GenerateThursdayOpenerPromptContentTest(unittest.TestCase):
 
 class BuildThursdayMessageTest(unittest.TestCase):
     def test_includes_opener_and_anchor_bounce_instructions(self) -> None:
-        message = build_thursday_message("pub_meetup", "Fancy a swift one?")
-        self.assertIn("Fancy a swift one?", message)
-        self.assertIn("Anchor & Bounce", message)
-        self.assertIn("pub meetup", message)
+        message = build_thursday_message("pub_meetup", "Fancy a swift one?", 2)
+        assert_task_card(self, message, "thu")
+        self.assertIn("<i>“Fancy a swift one?”</i>", message)
+        self.assertIn("Anchor &amp; Bounce", message)
+        self.assertIn("Topic: pub meetup", message)
 
 
 class RunThursdayTaskTest(unittest.TestCase):
@@ -139,10 +141,11 @@ class EvaluateThursdayReplyTest(unittest.TestCase):
             ]
         )
         report = self._eval(llm, "Did you get caught in that rain?", "Yeah drenched, you?")
-        self.assertIn("complete (empathy, own situation, and a bounce-back question)", report)
-        self.assertIn("Colleague text reply (Pub Banter):", report)
-        self.assertIn("Haha, tell me about it! Same here.", report)
-        self.assertNotIn("Suggestion:", report)
+        assert_feedback_card(self, report, "thu")
+        self.assertIn("✅ Anchor", report)
+        self.assertIn("✅ Bounce", report)
+        self.assertIn("Your colleague might say:\nHaha, tell me about it! Same here.", report)
+        self.assertIn("• Nothing to flag.", report)
         self.assertNotIn("Model reply", report)
 
     def test_appends_model_reply_after_the_banter_reply(self) -> None:
@@ -161,12 +164,12 @@ class EvaluateThursdayReplyTest(unittest.TestCase):
             ]
         )
         report = self._eval(llm, "Did you get caught in that rain?", "Yes I was wet.")
-        self.assertTrue(
-            report.endswith(
-                "Model reply (Anchor & Bounce):\nAbsolutely soaked, mate. Got any plans if it clears up?"
-            )
+        assert_feedback_card(self, report, "thu")
+        self.assertIn(
+            "Model reply:\nAbsolutely soaked, mate. Got any plans if it clears up?\n\n"
+            "Your colleague might say:\nAh well, could be worse!",
+            report,
         )
-        self.assertLess(report.index("Colleague text reply"), report.index("Model reply"))
         prompt, _ = llm.calls[0]
         self.assertIn("model_answer", prompt)
 
@@ -185,7 +188,9 @@ class EvaluateThursdayReplyTest(unittest.TestCase):
             ]
         )
         report = self._eval(llm, "opener", "reply with no question back")
-        self.assertIn("missing Bounce (an open question thrown back)", report)
+        assert_feedback_card(self, report, "thu")
+        self.assertIn("❌ Bounce (no question back)", report)
+        self.assertIn("• End with an open question to keep the chat going", report)
 
     def test_vocabulary_suggestion_included_when_present(self) -> None:
         llm = FakeLlm(
@@ -202,8 +207,8 @@ class EvaluateThursdayReplyTest(unittest.TestCase):
             ]
         )
         report = self._eval(llm, "opener", "reply")
-        self.assertIn('Original: "I think the garden is very bad."', report)
-        self.assertIn('More natural: "The lawn is a bit of a nightmare at the moment."', report)
+        assert_feedback_card(self, report, "thu")
+        self.assertIn('• "I think the garden is very bad." → "The lawn is a bit of a nightmare at the moment."', report)
 
     def test_prompt_never_mentions_tts_as_something_to_do(self) -> None:
         llm = FakeLlm(

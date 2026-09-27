@@ -11,6 +11,7 @@ from openclaw_runtime.skills.english_bot import (
     record_chunk_usage,
     run_friday_task,
 )
+from tests.card_checks import assert_feedback_card, assert_task_card
 
 
 class FakeLlm:
@@ -47,8 +48,9 @@ class ReadThisWeekChunksTest(unittest.TestCase):
 
 class BuildFridayMessageTest(unittest.TestCase):
     def test_lists_chunks_and_asks_for_voice_ramble(self) -> None:
-        message = build_friday_message(CHUNKS)
-        self.assertIn("take a gamble on", message)
+        message = build_friday_message(CHUNKS, 2)
+        assert_task_card(self, message, "fri")
+        self.assertIn("• <b>take a gamble on</b> — 冒險一試", message)
         self.assertIn("spread oneself too thin", message)
         self.assertIn("get to grips with", message)
         self.assertIn("voice", message.lower())
@@ -223,14 +225,15 @@ class EvaluateFridayReplyTest(unittest.TestCase):
             qdrant, embeddings, llm, "coll", "owner-a", 1, CHUNKS, "I took a gamble on the new job."
         )
 
-        self.assertIn("used correctly", report)
-        self.assertIn("not detected", report)
+        assert_feedback_card(self, report, "fri")
+        self.assertIn("✅ take a gamble on", report)
+        self.assertIn("❌ spread oneself too thin (not used, or not used naturally)", report)
+        self.assertIn("• Next time, try working in: spread oneself too thin, get to grips with", report)
         self.assertEqual(qdrant.upsert_text.call_count, 3)
         first_call_payload = qdrant.upsert_text.call_args_list[0].args[3]
         self.assertEqual(first_call_payload["user_sentence"], "I took a gamble on the new job.")
         self.assertEqual(first_call_payload["user_sentence_source"], "fri_voice")
-        self.assertTrue(report.endswith("Model ramble (all chunks):\nHonestly, I took a gamble on the new job..."))
-        self.assertLess(report.index("not detected"), report.index("Model ramble"))
+        self.assertIn("<blockquote expandable>Honestly, I took a gamble on the new job...</blockquote>", report)
         prompt, _ = llm.calls[0]
         self.assertIn("model_answer", prompt)
 

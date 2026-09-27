@@ -9,52 +9,6 @@ from openclaw_runtime.skills.base import SkillResult
 from tests.support import build_settings
 
 
-class ShouldRunDueWindowTest(unittest.TestCase):
-    def test_missed_window_does_not_catch_up(self) -> None:
-        # Container was down all day and restarts at 20:00, never ran today.
-        settings = build_settings(cron_daily_report_time="07:00")
-        self.assertFalse(cron_worker.should_run(datetime(2026, 7, 4, 20, 0), settings, {}))
-
-    def test_within_window_runs(self) -> None:
-        settings = build_settings(cron_daily_report_time="07:00")
-        self.assertTrue(cron_worker.should_run(datetime(2026, 7, 4, 7, 5), settings, {}))
-
-    def test_exact_due_time_runs(self) -> None:
-        settings = build_settings(cron_daily_report_time="07:00")
-        self.assertTrue(cron_worker.should_run(datetime(2026, 7, 4, 7, 0), settings, {}))
-
-    def test_past_default_window_does_not_run(self) -> None:
-        settings = build_settings(cron_daily_report_time="07:00")
-        self.assertFalse(cron_worker.should_run(datetime(2026, 7, 4, 7, 20), settings, {}))
-
-    def test_before_due_time_does_not_run(self) -> None:
-        settings = build_settings(cron_daily_report_time="07:00")
-        self.assertFalse(cron_worker.should_run(datetime(2026, 7, 4, 6, 59), settings, {}))
-
-    def test_does_not_run_twice_same_day(self) -> None:
-        settings = build_settings(cron_daily_report_time="07:00")
-        state = {"last_daily_report_date": "2026-07-04"}
-        self.assertFalse(cron_worker.should_run(datetime(2026, 7, 4, 7, 5), settings, state))
-
-    def test_runs_again_next_day(self) -> None:
-        settings = build_settings(cron_daily_report_time="07:00")
-        state = {"last_daily_report_date": "2026-07-04"}
-        self.assertTrue(cron_worker.should_run(datetime(2026, 7, 5, 7, 5), settings, state))
-
-    def test_custom_window_minutes(self) -> None:
-        settings = build_settings(cron_daily_report_time="07:00", cron_due_window_minutes=60)
-        self.assertTrue(cron_worker.should_run(datetime(2026, 7, 4, 7, 45), settings, {}))
-
-    def test_run_on_start_bypasses_window_once(self) -> None:
-        settings = build_settings(cron_daily_report_time="07:00", cron_run_on_start=True)
-        self.assertTrue(cron_worker.should_run(datetime(2026, 7, 4, 20, 0), settings, {}))
-
-    def test_run_on_start_does_not_repeat_after_startup_done(self) -> None:
-        settings = build_settings(cron_daily_report_time="07:00", cron_run_on_start=True)
-        state = {"startup_run_done": True}
-        self.assertFalse(cron_worker.should_run(datetime(2026, 7, 4, 20, 0), settings, state))
-
-
 class _FakeRouter:
     def __init__(self, result: SkillResult) -> None:
         self.result = result
@@ -92,7 +46,21 @@ class RunDynamicJobTest(unittest.TestCase):
         self.assertEqual(result["status"], "skipped")
         self.assertFalse(result["delivered"])
         self.assertEqual(self.sent, [])
-        self.assertTrue(Path(result["path"]).is_file())
+
+    def test_result_is_pushed_but_never_saved_to_the_inbox(self) -> None:
+        router = _FakeRouter(SkillResult("memory_write", "3 things due this week"))
+        cron_worker.run_dynamic_job(self.settings, router, datetime(2026, 1, 1, 8, 0), self._job())
+        self.assertEqual(list(Path(self.tmp.name).rglob("*")), [])
+
+    def test_message_is_just_the_name_and_result(self) -> None:
+        router = _FakeRouter(SkillResult("memory_write", "3 things due this week"))
+        cron_worker.run_dynamic_job(self.settings, router, datetime(2026, 1, 1, 8, 0), self._job())
+        self.assertEqual(self.sent[0][1], "Memory digest\n\n3 things due this week")
+
+    def test_result_that_already_carries_the_title_is_not_prefixed_twice(self) -> None:
+        router = _FakeRouter(SkillResult("memory_write", "Memory digest\n---\nnothing"))
+        cron_worker.run_dynamic_job(self.settings, router, datetime(2026, 1, 1, 8, 0), self._job())
+        self.assertEqual(self.sent[0][1], "Memory digest\n---\nnothing")
 
     def test_router_exception_is_an_error_not_a_skip(self) -> None:
         # An error still gets delivered (you want to know a job failed) --

@@ -1,0 +1,137 @@
+# Example bot persona: one extra Telegram bot running alongside the others on
+# the same host. Copy to compose.persona.<name>.yaml, then replace every
+# "bot-a" / "bot_a" with that name and give the Gateway its own host port.
+# Real per-bot copies are gitignored (their names can say who a bot is for);
+# only this example is tracked. See docs/PROFILES.md "Run Several Bots At
+# Once".
+#
+# IMPORTANT -- always include --no-deps. Without it, `up` also recomputes
+# the shared services this file `include`s (openclaw-vllm/whisper/
+# browser-scraper) using THIS profile's --env-file, sees a config diff
+# against how they're actually running (under the main .env), and
+# RECREATES them -- which briefly disrupts every other bot too.
+#
+#   docker compose --env-file profiles/bot_a/.env -f compose.persona.bot_a.yaml \
+#     up -d --no-deps openclaw-telegram-bot-a openclaw-memory-watcher-bot-a openclaw-cron-bot-a openclaw-gateway-bot-a
+#
+# Shared with every other bot (not redefined here): openclaw-vllm,
+# openclaw-whisper, openclaw-browser-scraper, and Qdrant (host service).
+# Pulled in via `include` so depends_on can reference them.
+
+include:
+  - compose.yaml
+
+services:
+  openclaw-telegram-bot-a:
+    image: python:3.12-slim
+    container_name: openclaw-telegram-bot-a
+    working_dir: /app
+    command: ["python", "-u", "openclaw_telegram_gateway.py"]
+    env_file:
+      - path: ${OPENCLAW_ENV_FILE:-.env}
+        required: false
+    environment:
+      OPENCLAW_VLLM_BASE_URL: ${OPENCLAW_VLLM_BASE_URL:-http://openclaw-vllm:8000/v1}
+      OPENCLAW_VLM_BASE_URL: ${OPENCLAW_VLM_BASE_URL:-http://openclaw-vllm:8000/v1}
+      OPENCLAW_OLLAMA_BASE_URL: ${OPENCLAW_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OPENCLAW_QDRANT_BASE_URL: ${OPENCLAW_QDRANT_BASE_URL:-http://host.docker.internal:6333}
+      OPENCLAW_WHISPER_BASE_URL: http://openclaw-whisper:8765
+      OPENCLAW_GATEWAY_RPC_URL: http://openclaw-gateway-bot-a:18789/api/v1/admin/rpc
+      OPENCLAW_GATEWAY_STATE_DB: /gateway-state/openclaw.sqlite
+      OPENCLAW_SCRAPER_BASE_URL: http://openclaw-browser-scraper:8787
+      OPENCLAW_TASK_HISTORY_PATH: /workspace/.openclaw/task_history.jsonl
+    volumes:
+      - ./app:/app:ro
+      - ${OPENCLAW_HOST_WORKSPACE:-./workspace}:/workspace
+      - ${OPENCLAW_HOST_GATEWAY_DATA:-./gateway-data}/state:/gateway-state
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - openclaw-vllm
+      - openclaw-whisper
+      - openclaw-gateway-bot-a
+      - openclaw-browser-scraper
+    restart: unless-stopped
+
+  openclaw-memory-watcher-bot-a:
+    build:
+      context: ./runtime
+    container_name: openclaw-memory-watcher-bot-a
+    working_dir: /app
+    command: ["python", "-u", "openclaw_memory_watcher.py"]
+    env_file:
+      - path: ${OPENCLAW_ENV_FILE:-.env}
+        required: false
+    environment:
+      OPENCLAW_OLLAMA_BASE_URL: ${OPENCLAW_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OPENCLAW_QDRANT_BASE_URL: ${OPENCLAW_QDRANT_BASE_URL:-http://host.docker.internal:6333}
+    volumes:
+      - ./app:/app:ro
+      - ${OPENCLAW_HOST_WORKSPACE:-./workspace}:/workspace
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  openclaw-cron-bot-a:
+    image: python:3.12-slim
+    container_name: openclaw-cron-bot-a
+    working_dir: /app
+    command: ["python", "-u", "openclaw_cron_worker.py"]
+    env_file:
+      - path: ${OPENCLAW_ENV_FILE:-.env}
+        required: false
+    environment:
+      OPENCLAW_VLLM_BASE_URL: ${OPENCLAW_VLLM_BASE_URL:-http://openclaw-vllm:8000/v1}
+      OPENCLAW_OLLAMA_BASE_URL: ${OPENCLAW_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OPENCLAW_QDRANT_BASE_URL: ${OPENCLAW_QDRANT_BASE_URL:-http://host.docker.internal:6333}
+      OPENCLAW_SCRAPER_BASE_URL: http://openclaw-browser-scraper:8787
+      OPENCLAW_CRON_TIMEZONE: ${OPENCLAW_CRON_TIMEZONE:-UTC}
+      OPENCLAW_CRON_JOBS_PATH: /workspace/.openclaw/cron_jobs.json
+      OPENCLAW_CRON_STATE_PATH: /workspace/.openclaw/cron_state.json
+      OPENCLAW_GATEWAY_RPC_URL: http://openclaw-gateway-bot-a:18789/api/v1/admin/rpc
+      OPENCLAW_GATEWAY_STATE_DB: /gateway-state/openclaw.sqlite
+    volumes:
+      - ./app:/app:ro
+      - ${OPENCLAW_HOST_WORKSPACE:-./workspace}:/workspace
+      - ${OPENCLAW_HOST_GATEWAY_DATA:-./gateway-data}/state:/gateway-state
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - openclaw-vllm
+      - openclaw-memory-watcher-bot-a
+      - openclaw-gateway-bot-a
+      - openclaw-browser-scraper
+    restart: unless-stopped
+
+  openclaw-gateway-bot-a:
+    image: openclaw/openclaw:latest
+    container_name: openclaw-gateway-bot-a
+    working_dir: /app
+    command:
+      - sh
+      - -lc
+      - >
+        node openclaw.mjs plugins enable admin-http-rpc || true;
+        exec node openclaw.mjs gateway run
+        --allow-unconfigured
+        --bind lan
+        --auth token
+        --token "${OPENCLAW_GATEWAY_TOKEN:?OPENCLAW_GATEWAY_TOKEN is required}"
+        --port 18789
+    env_file:
+      - path: ${OPENCLAW_ENV_FILE:-.env}
+        required: false
+    environment:
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:?OPENCLAW_GATEWAY_TOKEN is required}
+      OPENCLAW_VLLM_BASE_URL: ${OPENCLAW_VLLM_BASE_URL:-http://openclaw-vllm:8000/v1}
+      OPENCLAW_VLLM_MODEL: ${OPENCLAW_VLLM_MODEL:-Qwen/Qwen3.6-27B-FP8}
+    ports:
+      - "127.0.0.1:18791:18789"
+    volumes:
+      - ${OPENCLAW_HOST_GATEWAY_DATA:-./gateway-data}:/home/node/.openclaw
+      - ${OPENCLAW_HOST_WORKSPACE:-./workspace}:/workspace
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - openclaw-vllm
+    restart: unless-stopped

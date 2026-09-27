@@ -11,6 +11,7 @@ from openclaw_runtime.skills.english_bot import (
     judge_cloze_answers_with_llm,
     run_saturday_task,
 )
+from tests.card_checks import assert_feedback_card, assert_task_card
 
 
 class FakeLlm:
@@ -151,9 +152,11 @@ class BuildSaturdayMessageTest(unittest.TestCase):
             ClozeQuestion(phrase="a", prompt_text="Blank 1 ____ here.", source="context_sentence"),
             ClozeQuestion(phrase="b", prompt_text="Blank 2 ____ here.", source="context_sentence"),
         ]
-        message = build_saturday_message(questions)
-        self.assertIn("1. Blank 1", message)
-        self.assertIn("2. Blank 2", message)
+        message = build_saturday_message(questions, 2)
+        assert_task_card(self, message, "sat")
+        self.assertIn("<b>1.</b> Blank 1 ____ here.", message)
+        self.assertIn("<b>2.</b> Blank 2 ____ here.", message)
+        self.assertIn("Answer all 2 in one message", message)
         self.assertIn("text or voice", message.lower())
 
 
@@ -220,11 +223,12 @@ class EvaluateSaturdayAnswersTest(unittest.TestCase):
             "I have taken a gamble on it but I have no idea about the second one.",
         )
 
-        self.assertIn("take a gamble on: correct", report)
-        self.assertIn("spread oneself too thin: needs review", report)
+        assert_feedback_card(self, report, "sat")
+        self.assertIn("✅ 1. take a gamble on", report)
+        self.assertIn("❌ 2. spread oneself too thin", report)
         self.assertIn("說明文字", report)
-        self.assertIn("An example sentence.", report)
-        self.assertNotIn("Model answers", report)
+        self.assertIn("• take a gamble on: An example sentence.", report)
+        self.assertIn("(not available this time)", report)
         self.assertEqual(qdrant.upsert_text.call_count, 2)
 
     def test_appends_model_answers_with_blanks_filled_in(self) -> None:
@@ -253,10 +257,10 @@ class EvaluateSaturdayAnswersTest(unittest.TestCase):
             llm, qdrant, embeddings, "coll", "owner-a", 1, questions, "1. move on 2. no idea"
         )
 
-        self.assertTrue(
-            report.endswith(
-                "Model answers (blanks filled in):\n1. We had to move on.\n2. They busted down the door to get in."
-            )
+        assert_feedback_card(self, report, "sat")
+        self.assertIn(
+            "<blockquote expandable>1. We had to move on.\n2. They busted down the door to get in.</blockquote>",
+            report,
         )
         prompt, _ = llm.calls[0]
         self.assertIn("model_answer", prompt)
@@ -282,8 +286,8 @@ class EvaluateSaturdayAnswersTest(unittest.TestCase):
             llm, qdrant, embeddings, "coll", "owner-a", 1, questions, "1. Bust down the door 2. Move on"
         )
 
-        self.assertIn("move on: needs review", report)
-        self.assertIn("bust down the door: needs review", report)
+        self.assertIn("❌ 1. move on", report)
+        self.assertIn("❌ 2. bust down the door", report)
 
     def test_marks_saturday_task_completed(self) -> None:
         qdrant = MagicMock()

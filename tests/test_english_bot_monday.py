@@ -18,6 +18,7 @@ from openclaw_runtime.skills.english_bot import (
     store_weekly_content,
 )
 from openclaw_runtime.transcription_client import TimestampedTranscript, TranscriptSegment
+from tests.card_checks import assert_feedback_card, assert_task_card
 
 
 BBC_RSS = """<?xml version="1.0"?>
@@ -219,11 +220,29 @@ class BuildMondayMessageTest(unittest.TestCase):
             window_segments=[],
         )
         message = build_monday_message(content)
+        assert_task_card(self, message, "mon")
+        self.assertIn("Week 1", message)
         self.assertIn("Demis Hassabis", message)
-        self.assertIn("300s", message)
-        self.assertIn("480s", message)
-        self.assertIn("take a gamble on", message)
+        self.assertIn("Listen: 5:00 – 8:00", message)
+        self.assertIn("<b>1. take a gamble on</b>", message)
         self.assertIn("冒險一試", message)
+        self.assertIn("<i>We took a gamble on it.</i>", message)
+
+    def test_llm_and_rss_text_is_escaped(self) -> None:
+        content = WeeklyContent(
+            week_number=2,
+            episode_title="Tom & Jerry <live>",
+            episode_guid="urn:x",
+            segment_start=0.0,
+            segment_end=60.0,
+            transcript_excerpt="excerpt",
+            chunks=[Chunk("a < b", "x & y", "<b>not bold</b>")],
+            window_segments=[],
+        )
+        message = build_monday_message(content)
+        assert_task_card(self, message, "mon")
+        self.assertIn("Tom &amp; Jerry &lt;live&gt;", message)
+        self.assertIn("&lt;b&gt;not bold&lt;/b&gt;", message)
 
 
 class RunMondayTaskTest(unittest.TestCase):
@@ -389,7 +408,8 @@ class EvaluateMondayReplyTest(unittest.TestCase):
                             },
                             {"phrase": "spread oneself too thin", "used_correctly": False, "user_sentence": ""},
                             {"phrase": "get to grips with", "used_correctly": False, "user_sentence": ""},
-                        ]
+                        ],
+                        "model_answer": "I took a gamble on a new hobby this year.",
                     }
                 )
             ]
@@ -399,7 +419,12 @@ class EvaluateMondayReplyTest(unittest.TestCase):
             self.qdrant, self.embeddings, llm, "coll", "owner-a", 1, CHUNKS, "I take a gamble on the new job."
         )
 
-        self.assertIn("thanks", message.lower())
+        assert_feedback_card(self, message, "mon")
+        self.assertIn("✅ take a gamble on — used correctly", message)
+        self.assertIn("I took a gamble on a new hobby this year.", message)
+        self.assertIn("I take a gamble on the new job.", message)
+        prompt, _ = llm.calls[0]
+        self.assertIn("one natural real-life example sentence for each chunk", prompt)
         self.qdrant.upsert_text.assert_called_once()
         payload = self.qdrant.upsert_text.call_args.args[3]
         self.assertEqual(payload["user_sentence"], "I take a gamble on the new job.")
@@ -422,7 +447,8 @@ class EvaluateMondayReplyTest(unittest.TestCase):
             self.qdrant, self.embeddings, llm, "coll", "owner-a", 1, CHUNKS, "just rambling, no chunk here"
         )
 
-        self.assertIn("couldn't spot", message)
+        assert_feedback_card(self, message, "mon")
+        self.assertIn("❌ No chunk from this week spotted", message)
         self.qdrant.upsert_text.assert_not_called()
 
     def test_marks_monday_task_completed(self) -> None:

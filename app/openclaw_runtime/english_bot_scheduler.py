@@ -4,8 +4,8 @@ day-of-week dispatch, daily push/sweep due-checking, and reply dispatch.
 Kept separate from app/openclaw_runtime/skills/english_bot.py (pure,
 already-tested per-day logic) -- this module is the "which day is it,
 call the right function, remember what's pending" glue, a different
-concern. Mirrors app/openclaw_cron_worker.py's own load_json/write_json/
-today_key/should_run pattern for its local due-check state file, since
+concern. Keeps a small local JSON state file for the daily due-check
+(same load_json/write_json shape as app/openclaw_cron_worker.py), since
 this is operational scheduler state (did today's push/sweep already run),
 not English-learning content -- that stays in Qdrant, per spec Section 0
 point 1.
@@ -67,8 +67,7 @@ def _today_key(now: datetime) -> str:
 
 
 def _is_due(now: datetime, due_time: str, *, window_minutes: int = 30) -> bool:
-    """Same due-window shape as openclaw_cron_worker.should_run: fires once
-    the clock passes due_time, stays "due" for window_minutes so a delayed
+    """Fires once the clock passes due_time, stays "due" for window_minutes so a delayed
     poll tick still catches it, then stops being due (today's date-key
     dedup, set by the caller, is what actually prevents a double-fire)."""
     hour_text, minute_text = due_time.split(":", 1)

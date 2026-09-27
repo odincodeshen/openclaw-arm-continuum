@@ -4,9 +4,9 @@ OpenClaw can run multiple logical profiles from the same repository checkout.
 This is useful when a private personal assistant and a public demo assistant
 must not share runtime data.
 
-The current profile support focuses on data isolation. It does not yet support
-running two profiles at the same time on one host, because service names and
-host ports are still shared.
+A profile is a data-isolation unit. One profile can run on its own (see
+"Start One Profile"), or several can run at the same time as separate
+Telegram bots sharing one model engine (see "Run Several Bots At Once").
 
 ## What A Profile Separates
 
@@ -133,6 +133,35 @@ OPENCLAW_HOST_GATEWAY_DATA=./profiles/demo/gateway-data
 
 For the personal profile, use `profiles/personal/...` paths instead.
 
+## Run Several Bots At Once
+
+Each extra bot is a profile plus its own compose file,
+`compose.persona.<name>.yaml`, copied from the tracked
+`compose.persona.example.yaml`. That file gives the bot's four
+per-bot services (Telegram, memory watcher, cron, Gateway) their own
+container names and the Gateway its own host port, and `include`s
+`compose.yaml` for the services every bot shares: `openclaw-vllm`,
+`openclaw-whisper`, `openclaw-browser-scraper`, and the host's Qdrant.
+
+1. Create `profiles/<name>/.env` with the bot's own token, chat IDs, Gateway
+   token, `OPENCLAW_HOST_WORKSPACE` / `OPENCLAW_HOST_GATEWAY_DATA`, and its own
+   `OPENCLAW_TRACKER_COLLECTION`, `OPENCLAW_KNOWLEDGE_COLLECTION` and
+   `OPENCLAW_CATEGORY_COLLECTION_PREFIX`.
+2. Copy `compose.persona.example.yaml` to `compose.persona.<name>.yaml`,
+   replace `bot-a` / `bot_a` with the name, and pick an unused Gateway host
+   port.
+3. Create the Gateway data directory as your own user **before** the first
+   start: `mkdir -p profiles/<name>/gateway-data/state`. If Docker creates it
+   instead, it's owned by root, the Gateway can't write its state, and its
+   `admin-http-rpc` plugin silently fails to load -- the bot's cron then
+   can't read jobs set on the Gateway dashboard (`cron.list failed: HTTP
+   404`). Fixing the ownership and restarting the Gateway recovers it.
+4. Start only that bot's services, always with `--no-deps` (the command is at
+   the top of the example file). Without it, Compose recreates the shared
+   services with this bot's settings and briefly interrupts every other bot.
+
+Real `compose.persona.*.yaml` copies are gitignored -- keep them local.
+
 ## Stop The Current Profile
 
 ```bash
@@ -212,11 +241,8 @@ The demo dashboard should not list personal cron jobs.
 
 ## Current Limitation
 
-The first profile implementation is intended for switching between personal and
-demo profiles. Running both at the same time still requires a future lifecycle
-and port-isolation layer:
+Running several bots is a compose-authoring exercise (one file per bot, see
+above); there is no tooling for it yet:
 
-- remove or parameterize `container_name`
-- parameterize host ports
-- add `openclawctl --profile`
+- `bin/openclawctl` manages the default stack only -- add `openclawctl --profile`
 - add safe demo reset/seed commands

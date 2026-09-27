@@ -130,8 +130,8 @@ Example: `/rag since:2026-09-01 what have I saved this month?`
 
 ## Reserved sub-commands
 
-`list`, `done`, `rm` / `delete`, `snooze`, `edit`, `digest`, and
-`archive-stale` are reserved only as the exact first whitespace-delimited
+`list`, `done`, `rm` / `delete`, `snooze`, `edit`, `digest`, `upcoming`,
+and `archive-stale` are reserved only as the exact first whitespace-delimited
 word of the content. `/mem listen to the new episode` still saves
 normally -- `listen` is not `list`.
 
@@ -212,6 +212,28 @@ records the run (`lastRunStatus: "skipped"`, `consecutiveSkipped`
 increments), but does **not** push a Telegram message -- so a day with
 nothing due or stale is silent, not a "nothing to report" ping every
 morning.
+
+### Daily schedule report
+
+`/mem upcoming [days]` lists active items due today through the next 3
+days (or `[days]`, 1-31), grouped by day, with each item's short ID so it
+can be marked done. "Today" is a date in `OPENCLAW_CRON_TIMEZONE`. Unlike
+the digest, it always reports -- "No schedule in the next 3 days." still
+gets pushed -- so a morning schedule push arrives every day:
+
+```text
+/cron add daily 07:00 行程｜未來3天 :: /mem upcoming
+```
+
+Naming the job with the report's own title line (as above) keeps the push
+from carrying the title twice.
+
+### What a /cron push saves
+
+Nothing. A `/cron` job's result is pushed to Telegram and recorded in the
+Gateway run history, but no longer written to `inbox/tracker/cron/` --
+the memory watcher would index every run into tracker memory, filling
+`/rag` with copies of content that already lives there.
 
 ### Archival
 

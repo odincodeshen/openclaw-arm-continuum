@@ -5,6 +5,15 @@ from datetime import date, datetime, timedelta, timezone
 
 from openclaw_runtime.categories import registry_entries, resolve_category
 from openclaw_runtime.config import Settings
+from openclaw_runtime.daily_reports import (
+    KNOWLEDGE_DIGEST_MAX_DOCS,
+    UPCOMING_DEFAULT_DAYS,
+    documents_added_on,
+    local_today,
+    render_knowledge_digest,
+    render_upcoming,
+    summarize_document,
+)
 from openclaw_runtime.embedding_client import EmbeddingClient
 from openclaw_runtime.http_client import is_reachable
 from openclaw_runtime.llm_client import LlmClient
@@ -175,7 +184,7 @@ class MemoryWriteSkill:
                 self.name,
                 "Add the content to save after /mem, or use:\n"
                 "/mem list [done|archived] [tag:<word>]\n/mem done <id>\n/mem rm <id>\n"
-                "/mem digest [tag:<word>]\n/mem archive-stale\n"
+                "/mem digest [tag:<word>]\n/mem upcoming [days]\n/mem archive-stale\n"
                 "/mem snooze <id> <3d|1w|YYYY-MM-DD>\n/mem edit <id> <new text>\n"
                 "Add due:YYYY-MM-DD and/or tag:<word> anywhere in the text to save them.",
             )
@@ -190,6 +199,8 @@ class MemoryWriteSkill:
             return self._remove(rest.strip())
         if keyword == "digest":
             return self._digest(rest.strip())
+        if keyword == "upcoming":
+            return self._upcoming(rest.strip())
         if keyword == "archive-stale":
             return self._archive_stale()
         if keyword == "snooze":
@@ -457,6 +468,19 @@ class MemoryWriteSkill:
             )
         return SkillResult(self.name, "\n\n".join(sections))
 
+    def _upcoming(self, arg: str = "") -> SkillResult:
+        """Daily schedule report: active items due today through the next
+        few days (default 3), in the cron timezone. Always returns a report,
+        including "nothing scheduled", so a morning /cron push arrives every
+        day."""
+        digits = arg.lower().rstrip("d")
+        days = int(digits) if digits.isdigit() and 1 <= int(digits) <= 31 else UPCOMING_DEFAULT_DAYS
+        hits = self.qdrant.scroll_by_filters(
+            self.settings.tracker_collection, {"kind": "tracker_memory", "status": "active"}, limit=500
+        )
+        payloads = [hit.get("payload") or {} for hit in hits]
+        return SkillResult(self.name, render_upcoming(payloads, local_today(self.settings.cron_timezone), days))
+
     @staticmethod
     def _digest_section(title: str, hits: list[dict]) -> str:
         lines = [f"{title} ({len(hits)}):"]
@@ -568,6 +592,8 @@ class RagRetrieveSkill:
 
     def run(self, text: str) -> SkillResult:
         raw_query = self._strip_command(text)
+        if raw_query.strip().lower() == "digest":
+            return self._knowledge_digest()
         prefix_filters, raw_query = split_rag_filter_prefix(raw_query)
         category_token, query = split_category_prefix(raw_query)
         if not query:
@@ -578,6 +604,34 @@ class RagRetrieveSkill:
         if self.settings.category_rag_enabled and category_token:
             return self._run_single_category(category_token, query)
         return self._run_default(query, prefix_filters)
+
+    def _knowledge_digest(self) -> SkillResult:
+        """Daily knowledge report: every document added yesterday (cron
+        timezone) to the knowledge base or a Category RAG collection, one
+        sentence each. Tracker memory (/mem notes, saved /cron output) is
+        deliberately not included. Always returns a report, even when
+        nothing was added."""
+        yesterday = local_today(self.settings.cron_timezone) - timedelta(days=1)
+        sources = [("Knowledge base", self.settings.knowledge_collection)]
+        if self.settings.category_rag_enabled:
+            sources += [(f"#{entry['display']}", entry["collection"]) for entry in registry_entries(self.settings)]
+        documents = []
+        for label, collection in sources:
+            try:
+                documents += documents_added_on(self.qdrant, [(label, collection)], yesterday, self.settings.cron_timezone)
+            except Exception as exc:  # noqa: BLE001 - a missing collection shouldn't sink the whole report
+                print(f"[rag] digest skipped {collection}: {exc}", flush=True)
+        shown = documents[:KNOWLEDGE_DIGEST_MAX_DOCS]
+        summaries = []
+        for document in shown:
+            try:
+                summary = summarize_document(self.llm, document, self.settings.reply_language)
+            except Exception:  # noqa: BLE001 - fall back to the document's opening text
+                summary = ""
+            summaries.append((document, summary or " ".join(document.text.split())[:120]))
+        return SkillResult(
+            self.name, render_knowledge_digest(yesterday, summaries, more=len(documents) - len(shown))
+        )
 
     def _run_default(self, query: str, prefix_filters: dict[str, str] | None = None) -> SkillResult:
         prefix_filters = prefix_filters or {}

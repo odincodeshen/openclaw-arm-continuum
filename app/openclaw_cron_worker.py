@@ -70,153 +70,20 @@ def recipients(settings: Settings) -> list[int]:
     return sorted(chat_ids)
 
 
-def default_tasks() -> dict:
-    return {
-        "daily_briefing": {
-            "enabled": True,
-            "title": "OpenClaw Daily Briefing",
-            "weather_questions": [
-                "What's the weather like in the UK today?",
-                "What's the weather like in the UK tomorrow?",
-            ],
-            "product_queries": [],
-            "english_queries": [
-                {
-                    "name": "BBC Learning English",
-                    "query": "BBC Learning English latest vocabulary lesson",
-                }
-            ],
-        }
-    }
-
-
-def today_key(now: datetime) -> str:
-    return now.strftime("%Y-%m-%d")
-
-
-def should_run(now: datetime, settings: Settings, state: dict) -> bool:
-    if settings.cron_run_on_start and not state.get("startup_run_done"):
-        return True
-
-    hour_text, minute_text = settings.cron_daily_report_time.split(":", 1)
-    due_hour = int(hour_text)
-    due_minute = int(minute_text)
-    if (now.hour, now.minute) < (due_hour, due_minute):
-        return False
-    now_minutes = now.hour * 60 + now.minute
-    due_minutes = due_hour * 60 + due_minute
-    if now_minutes - due_minutes > settings.cron_due_window_minutes:
-        return False
-    return state.get("last_daily_report_date") != today_key(now)
-
-
-def route_question(router: SkillRouter, text: str) -> str:
-    try:
-        result = router.route(text)
-    except Exception as exc:
-        return f"Query failed: {exc}"
-    return result.answer or "No reply was returned."
-
-
-def section(title: str, body: str) -> str:
-    return f"## {title}\n{body.strip()}\n"
-
-
-def build_daily_report(settings: Settings, tasks: dict, router: SkillRouter, llm: LlmClient, now: datetime) -> str:
-    daily = tasks.get("daily_briefing", {})
-    title = daily.get("title", "OpenClaw Daily Briefing")
-    lines = [
-        f"# {title}",
-        "",
-        f"- Generated at: {now.strftime('%Y-%m-%d %H:%M')} {settings.cron_timezone}",
-        f"- Runtime host: {settings.runtime_label} cron worker",
-        "",
-    ]
-
-    weather_questions = daily.get("weather_questions", [])
-    if weather_questions:
-        weather_blocks = []
-        for question in weather_questions:
-            weather_blocks.append(f"- {question}: {route_question(router, question)}")
-        lines.append(section("Weather", "\n".join(weather_blocks)))
-
-    product_queries = daily.get("product_queries", [])
-    if product_queries:
-        product_blocks = []
-        for item in product_queries:
-            name = item.get("name", item.get("query", "Product"))
-            query = item.get("query", name)
-            answer = route_question(router, "/search " + query)
-            product_blocks.append(f"### {name}\n{answer}")
-        lines.append(section("Price Tracking", "\n\n".join(product_blocks)))
-    else:
-        lines.append(section("Price Tracking", "No tracked items configured yet. Add product names and search queries to `product_queries` in `/app/cron_tasks.json`."))
-
-    english_queries = daily.get("english_queries", [])
-    if english_queries:
-        english_blocks = []
-        for item in english_queries:
-            name = item.get("name", item.get("query", "English lesson"))
-            query = item.get("query", name)
-            search_answer = route_question(router, "/search " + query)
-            lesson_prompt = (
-                "Based on the following material, produce a 5-minute English study lesson. "
-                "Include: three practical words or phrases, two example sentences, one read-aloud "
-                "practice line, and one key takeaway.\n\n"
-                f"Topic: {name}\nMaterial: {search_answer}"
-            )
-            try:
-                lesson = llm.chat(lesson_prompt, max_tokens=360)
-            except Exception as exc:
-                lesson = (
-                    f"Failed to prepare the English lesson: {exc}\n\n"
-                    "Keeping the raw search summary below so the whole briefing isn't interrupted:\n"
-                    f"{search_answer}"
-                )
-            english_blocks.append(f"### {name}\n{lesson}")
-        lines.append(section("English Lesson", "\n\n".join(english_blocks)))
-    else:
-        lines.append(section("English Lesson", "No English lesson source configured yet."))
-
-    lines.append("## Memory Status\nThis report is saved to the tracker inbox; the memory watcher will index it into `personal_tracker_memory` automatically.")
-    return "\n".join(lines).strip() + "\n"
-
-
-def save_report(settings: Settings, now: datetime, report: str) -> Path:
-    directory = settings.inbox_path / "tracker" / "cron"
-    directory.mkdir(parents=True, exist_ok=True)
-    path = directory / f"{now.strftime('%Y%m%d')}-daily-briefing.md"
-    path.write_text(report, encoding="utf-8")
-    return path
-
-
-def save_job_report(settings: Settings, now: datetime, job: dict, report: str) -> Path:
-    directory = settings.inbox_path / "tracker" / "cron"
-    directory.mkdir(parents=True, exist_ok=True)
-    safe_id = str(job.get("id", "job")).replace("/", "-")
-    path = directory / f"{now.strftime('%Y%m%d-%H%M%S')}-{safe_id}.md"
-    path.write_text(report, encoding="utf-8")
-    return path
-
-
-def run_daily_report(settings: Settings, tasks: dict, router: SkillRouter, llm: LlmClient, now: datetime) -> Path:
-    """One bad recipient (chat not found, blocked the bot, etc.) must not
-    stop delivery to the others, and must not leave the report un-marked-
-    sent -- an un-marked report gets retried by main()'s poll loop every
-    cron_poll_seconds until the due window closes, which previously spammed
-    every WORKING recipient with a fresh duplicate on every retry while the
-    broken one kept failing the same way forever."""
-    report = build_daily_report(settings, tasks, router, llm, now)
-    path = save_report(settings, now, report)
-    for chat_id in recipients(settings):
-        try:
-            send_message(settings, chat_id, report)
-        except Exception:
-            log(f"[cron] daily report delivery failed chat_id={chat_id}: {traceback.format_exc()}")
-    return path
+def format_job_message(title: str, answer: str) -> str:
+    """Just the result, headed by the job name -- unless the result already
+    opens with it (the daily reports carry their own title line)."""
+    body = answer.strip()
+    if body.startswith(title):
+        return body
+    return f"{title}\n\n{body}"
 
 
 def run_dynamic_job(settings: Settings, router: SkillRouter, now: datetime, job: dict) -> dict:
+    """Run one /cron job and push its result to Telegram. The result is not
+    written anywhere else: saving it into the inbox would have the memory
+    watcher index every run into tracker memory, filling /rag with copies of
+    content that already lives there."""
     started = time.time()
     prompt = str(job.get("prompt", "")).strip()
     title = str(job.get("name", job.get("id", "OpenClaw cron job"))).strip()
@@ -229,25 +96,13 @@ def run_dynamic_job(settings: Settings, router: SkillRouter, now: datetime, job:
     try:
         result = router.route(prompt)
         answer = result.answer or "The OpenClaw runtime returned an empty reply."
-        skill_name = result.skill_name
         suppressed = bool(getattr(result, "suppress_if_routine", False))
     except Exception as exc:
         status = "error"
         error = str(exc)
         answer = f"Task failed: {exc}"
-        skill_name = "error"
 
-    report = (
-        f"# {title}\n\n"
-        f"- Job ID: {job.get('id')}\n"
-        f"- Generated at: {now.strftime('%Y-%m-%d %H:%M')} {settings.cron_timezone}\n"
-        f"- Skill: {skill_name}\n\n"
-        "## Task\n"
-        f"{prompt}\n\n"
-        "## Result\n"
-        f"{answer.strip()}\n"
-    )
-    path = save_job_report(settings, now, job, report)
+    report = format_job_message(title, answer)
     delivered = False
     if suppressed:
         # A routine "nothing new" result (e.g. a reminder digest with
@@ -262,7 +117,6 @@ def run_dynamic_job(settings: Settings, router: SkillRouter, now: datetime, job:
             status = "error"
             error = f"{error}; Telegram delivery failed: {exc}" if error else f"Telegram delivery failed: {exc}"
     return {
-        "path": path,
         "status": status,
         "error": error,
         "summary": answer.strip()[:1200],
@@ -362,14 +216,10 @@ def main() -> int:
     signal.signal(signal.SIGTERM, stop)
 
     tz = ZoneInfo(settings.cron_timezone)
-    tasks = load_json(settings.cron_tasks_config_path, default_tasks())
     state = load_json(settings.cron_state_path, {})
     llm = LlmClient(settings)
     router = SkillRouter(settings, llm)
-    log(
-        f"[cron] started timezone={settings.cron_timezone} "
-        f"daily={settings.cron_daily_report_time} recipients={recipients(settings)}"
-    )
+    log(f"[cron] started timezone={settings.cron_timezone} recipients={recipients(settings)}")
 
     while RUNNING:
         try:
@@ -377,19 +227,10 @@ def main() -> int:
             for job in load_dynamic_jobs(settings):
                 if is_due(job, now, state, window_minutes=settings.cron_due_window_minutes):
                     result = run_dynamic_job(settings, router, now, job)
-                    report_path = result["path"]
-                    mark_ran(job, now, state, report_path)
+                    mark_ran(job, now, state)
                     write_gateway_runback(settings, job, now, result)
                     write_json(settings.cron_state_path, state)
-                    log(f"[cron] dynamic job sent id={job.get('id')} path={report_path}")
-            if should_run(now, settings, state):
-                report_path = run_daily_report(settings, tasks, router, llm, now)
-                state["last_daily_report_date"] = today_key(now)
-                state["startup_run_done"] = True
-                state["last_report_path"] = str(report_path)
-                state["last_report_at"] = now.isoformat()
-                write_json(settings.cron_state_path, state)
-                log(f"[cron] daily report sent path={report_path}")
+                    log(f"[cron] dynamic job id={job.get('id')} status={result['status']}")
         except Exception:
             log(traceback.format_exc())
         time.sleep(settings.cron_poll_seconds)

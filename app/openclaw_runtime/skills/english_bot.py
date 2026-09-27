@@ -30,6 +30,18 @@ from openclaw_runtime.daily_task_tracking import mark_task_completed, mark_task_
 from openclaw_runtime.embedding_client import EmbeddingClient
 from openclaw_runtime.http_client import get_bytes, get_text
 from openclaw_runtime.llm_client import LlmClient
+from openclaw_runtime.message_cards import (
+    DONE_STEP,
+    FeedbackCard,
+    TaskCard,
+    bold,
+    esc,
+    expandable,
+    italic,
+    markdown_bold_to_html,
+    render_feedback_card,
+    render_task_card,
+)
 from openclaw_runtime.owned_records import read_owned_points, write_owned_point
 from openclaw_runtime.qdrant_client import QdrantClient
 from openclaw_runtime.rss_client import RssItem, parse_rss_items
@@ -282,18 +294,37 @@ def read_this_week_chunks(qdrant: QdrantClient, collection: str, week_number: in
     return [p["payload"] for p in points]
 
 
+def _mmss(seconds: float) -> str:
+    total = int(round(seconds))
+    return f"{total // 60}:{total % 60:02d}"
+
+
 def build_monday_message(content: WeeklyContent) -> str:
-    lines = [
-        f"This week's listening: {content.episode_title}",
-        f"Listen to {content.segment_start:.0f}s-{content.segment_end:.0f}s in this week's episode.",
-        "",
-        "This week's chunks:",
+    chunk_blocks = [
+        f"{bold(f'{index}. {chunk.phrase}')}\n{esc(chunk.definition)}\n{italic(chunk.context_sentence)}"
+        for index, chunk in enumerate(content.chunks, start=1)
     ]
-    for chunk in content.chunks:
-        lines.append(f"- {chunk.phrase} ({chunk.definition}): {chunk.context_sentence}")
-    lines.append("")
-    lines.append("Pick one chunk and reply with your own real-life example sentence after listening.")
-    return "\n".join(lines)
+    content_html = "\n".join(
+        [
+            f"Episode: {esc(content.episode_title)}",
+            f"Listen: {_mmss(content.segment_start)} – {_mmss(content.segment_end)}",
+        ]
+    ) + "\n\n" + "\n\n".join(chunk_blocks)
+    return render_task_card(
+        TaskCard(
+            day_code="mon",
+            week_number=content.week_number,
+            goal="Understand one interview clip and learn 3 chunks",
+            duration="~20 min",
+            reply_mode="Text or voice",
+            content_html=content_html,
+            steps=[
+                "Listen to that part of this week's episode",
+                "Pick one chunk and use it in your own real-life sentence",
+                DONE_STEP,
+            ],
+        )
+    )
 
 
 def run_monday_task(
@@ -374,14 +405,16 @@ def evaluate_monday_reply(
     -- without it Monday could never be marked completed, so it would
     always show up in Saturday's skipped-task list even when the user did
     reply -- added here while wiring up full daily-completion tracking."""
-    chunk_usage = evaluate_chunk_usage(llm, chunks, transcribed_reply)
-    used_any = False
+    chunk_usage = evaluate_chunk_usage(
+        llm, chunks, transcribed_reply, model_answer_instruction=MONDAY_MODEL_ANSWER_INSTRUCTION
+    )
+    used_phrases: list[str] = []
     for result in chunk_usage["chunk_results"]:
         used = bool(result["used_correctly"])
         sentence = (result.get("user_sentence") or "").strip()
         if not used:
             continue
-        used_any = True
+        used_phrases.append(result["phrase"])
         record_chunk_usage(
             qdrant,
             embeddings,
@@ -394,11 +427,20 @@ def evaluate_monday_reply(
             source="mon_reply",
         )
     mark_task_completed(qdrant, collection, week_number, "mon", owner)
-    if used_any:
-        return "Nice -- got it, thanks for the example sentence."
-    return (
-        "Thanks for the reply -- I couldn't spot one of this week's chunks in there, "
-        "but no worries, you'll get more chances this week."
+    if used_phrases:
+        result_lines = [f"✅ {phrase} — used correctly" for phrase in used_phrases]
+        tips: list[str] = []
+    else:
+        result_lines = ["❌ No chunk from this week spotted"]
+        tips = ["Use one of this week's chunks in a sentence about your own life"]
+    return render_feedback_card(
+        FeedbackCard(
+            day_code="mon",
+            result_lines=result_lines,
+            tip_lines=tips,
+            example=chunk_usage.get("model_answer") or "",
+            answer=transcribed_reply,
+        )
     )
 
 
@@ -445,14 +487,25 @@ def annotate_for_shadowing(llm: LlmClient, stretch_text: str) -> str:
 
 
 
-def build_tuesday_message(annotated_text: str) -> str:
-    return (
-        "Shadowing practice\n\n"
-        f"{annotated_text}\n\n"
-        "Stress is **bold**, `/` marks a natural pause, and (schwa) notes are "
-        "a linguistic best guess from the text -- not a measurement of the "
-        "actual recording. Listen to the clip above, then reply with a voice "
-        "message echoing it as closely as you can."
+def build_tuesday_message(annotated_text: str, week_number: int) -> str:
+    content_html = (
+        "(The audio clip is sent just before this message.)\n\n"
+        f"{markdown_bold_to_html(annotated_text)}\n\n"
+        + italic(
+            "Bold = stress, / = natural pause, (schwa) = weak form. A best guess "
+            "from general pronunciation rules, not a measurement of the recording."
+        )
+    )
+    return render_task_card(
+        TaskCard(
+            day_code="tue",
+            week_number=week_number,
+            goal="Copy the stress and pauses",
+            duration="~10 min",
+            reply_mode="Voice",
+            content_html=content_html,
+            steps=["Listen to the clip twice", "Shadow it and record a voice message", DONE_STEP],
+        )
     )
 
 
@@ -504,11 +557,13 @@ def run_tuesday_task(
     clip_path = workspace_dir / "tuesday_clip.mp3"
     clip_client.clip(window_path, float(stretch["start_seconds"]), float(stretch["end_seconds"]), clip_path)
 
-    message = build_tuesday_message(annotated)
+    message = build_tuesday_message(annotated, week_number)
     vector = embeddings.embed(message)
     for owner in owners:
-        send_message(owner, message)
+        # Audio first: the task card below refers to "the clip sent just
+        # before this message".
         send_audio(owner, clip_path, "Shadow this clip -- listen, then record yourself echoing it.")
+        send_message(owner, message)
         mark_task_pushed(qdrant, collection, week_number, "tue", owner, vector)
 
     return TuesdayTask(annotated=annotated, stretch_text=stretch["stretch_text"])
@@ -647,23 +702,25 @@ def evaluate_tuesday_reply(
     diff = word_level_diff(reference_text, transcribed_reply)
     wpm = compute_wpm(transcribed_reply, reply_duration_seconds)
     match_pct = max(0.0, 1 - diff.error_rate) * 100
-    lines = [
-        f'Transcribed: "{transcribed_reply}"',
-        f"Word match: {match_pct:.0f}% (word-level, not letter-level)",
-    ]
+    result_lines = [f"Word match {match_pct:.0f}% (word-level, not letter-level)"]
     if diff.missing_words:
-        lines.append(f"Missing/changed: {', '.join(diff.missing_words[:8])}")
+        result_lines.append(f"❌ Missed/changed: {', '.join(diff.missing_words[:8])}")
     if diff.extra_words:
-        lines.append(f"Extra words: {', '.join(diff.extra_words[:8])}")
-    lines.append(
-        f"Pace: {wpm} WPM (this is shadowing -- aim to match the original clip's pace, "
-        "not a fixed target)"
-    )
+        result_lines.append(f"❌ Extra: {', '.join(diff.extra_words[:8])}")
+    if not diff.missing_words and not diff.extra_words:
+        result_lines.append("✅ No missed or extra words")
+    result_lines.append(f"Pace: {wpm} WPM (aim to match the clip, not a fixed target)")
     feedback_zh = analyze_tuesday_shadowing_in_chinese(llm, reference_text, transcribed_reply, diff, wpm)
-    lines.append("")
-    lines.append(f"中文分析：{feedback_zh['analysis_zh']}")
     mark_task_completed(qdrant, collection, week_number, "tue", owner)
-    return "\n".join(lines)
+    return render_feedback_card(
+        FeedbackCard(
+            day_code="tue",
+            result_lines=result_lines,
+            tip_lines=[feedback_zh["analysis_zh"]],
+            example=reference_text,
+            answer=transcribed_reply,
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -887,28 +944,47 @@ def mark_ielts_question_asked(
     )
 
 
-def build_wednesday_message(question: dict, part3_question: str | None = None) -> str:
-    if part3_question:
-        return (
-            "IELTS Speaking Part 2 + Part 3\n\n"
-            f"{question['cue_card']}\n\n"
-            "Use the STAR principle (Situation, Task, Action, Result). Don't "
-            "write a draft -- think for 1 minute, then speak for about 1 "
-            "minute on Part 2.\n\n"
-            f"Then, Part 3: {part3_question}\n\n"
-            "Speak for about 1 more minute on Part 3 -- state a claim, "
-            "acknowledge a counter-argument or limitation, then give your "
-            "conclusion. Send both parts as one voice message, about 2 "
-            "minutes total."
-        )
-    return (
-        "IELTS Speaking Part 2\n\n"
-        f"{question['cue_card']}\n\n"
-        "Use the STAR principle (Situation, Task, Action, Result). Don't "
-        "write a draft -- think for 1 minute, then speak continuously for "
-        "1.5 to 2 minutes and send it as a voice message."
-    )
+def _cue_card_html(cue_card: str) -> str:
+    """The bank's cue cards use "- " bullets; show them as "• "."""
+    lines = []
+    for line in cue_card.splitlines():
+        lines.append(f"• {esc(line[2:])}" if line.startswith("- ") else esc(line))
+    return "\n".join(lines)
 
+
+def build_wednesday_message(question: dict, week_number: int, part3_question: str | None = None) -> str:
+    content_html = _cue_card_html(question["cue_card"])
+    if part3_question:
+        content_html += f"\n\n{bold('Part 3')}\n{esc(part3_question)}"
+        card = TaskCard(
+            day_code="wed",
+            week_number=week_number,
+            goal="Tell one STAR story, then argue one side (Part 2 + 3)",
+            duration="~6 min",
+            reply_mode="One voice message, ~2 min",
+            content_html=content_html,
+            steps=[
+                "Think for 1 minute — no written draft",
+                "Speak ~1 min on Part 2 (Situation, Task, Action, Result), then ~1 min on "
+                "Part 3 (claim, counter-argument, conclusion)",
+                DONE_STEP,
+            ],
+        )
+    else:
+        card = TaskCard(
+            day_code="wed",
+            week_number=week_number,
+            goal="Tell one complete story using STAR",
+            duration="~5 min",
+            reply_mode="Voice, 1.5–2 min",
+            content_html=content_html,
+            steps=[
+                "Think for 1 minute — no written draft",
+                "Record 1.5–2 minutes covering Situation, Task, Action, Result",
+                DONE_STEP,
+            ],
+        )
+    return render_task_card(card)
 
 # ---------------------------------------------------------------------------
 # v1.16: from week_number > 17 (~month 5 of the 9-month plan), Wednesday
@@ -1020,7 +1096,7 @@ def run_wednesday_task(
     if is_part2_3_combo_week(week_number):
         part3_question = generate_part3_question(llm, question["cue_card"])
 
-    message = build_wednesday_message(question, part3_question=part3_question)
+    message = build_wednesday_message(question, week_number, part3_question=part3_question)
     vector = embeddings.embed(message)
     for owner in owners:
         send_message(owner, message)
@@ -1030,14 +1106,6 @@ def run_wednesday_task(
     if part3_question:
         result["part3_question"] = part3_question
     return result
-
-
-def _append_model_answer(lines: list[str], heading: str, data: dict) -> None:
-    model_answer = (data.get("model_answer") or "").strip()
-    if model_answer:
-        lines.append("")
-        lines.append(f"{heading}:")
-        lines.append(model_answer)
 
 
 def evaluate_wednesday_reply(
@@ -1085,43 +1153,40 @@ def evaluate_wednesday_reply(
         "Action": data["action_present"],
         "Result": data["result_present"],
     }
+    star_line = "　".join(f"{'✅' if present else '❌'} {name}" for name, present in star_elements.items())
     missing = [name for name, present in star_elements.items() if not present]
-
-    lines = [f'Transcribed: "{transcribed_reply}"']
-    if part3_question:
-        lines.append("")
-        lines.append("Part 2 (STAR):")
-    if missing:
-        lines.append(f"STAR structure: missing {', '.join(missing)}")
-    else:
-        lines.append("STAR structure: complete (Situation, Task, Action, Result all present)")
-    for item in data["overused_words"]:
-        lines.append(f'Overused: "{item["word"]}" -> try "{item["replacement"]}" (band 7.5+)')
-    _append_model_answer(lines, "Part 2 model answer (band 8)" if part3_question else "Model answer (band 8)", data)
+    result_lines = [f"Part 2: {star_line}" if part3_question else star_line]
+    tips = [f"Add the missing STAR part: {', '.join(missing)}"] if missing else []
+    tips += [f'"{item["word"]}" → "{item["replacement"]}" (band 7.5+)' for item in data["overused_words"]]
+    example = (data.get("model_answer") or "").strip()
 
     if part3_question:
         argument = evaluate_part3_argument(llm, part3_question, transcribed_reply)
         argument_elements = {
             "Claim": argument["claim_present"],
-            "Concession/counter-argument": argument["concession_present"],
+            "Concession": argument["concession_present"],
             "Conclusion": argument["conclusion_present"],
         }
+        result_lines.append(
+            "Part 3: "
+            + "　".join(f"{'✅' if present else '❌'} {name}" for name, present in argument_elements.items())
+        )
         argument_missing = [name for name, present in argument_elements.items() if not present]
-        lines.append("")
-        lines.append(f'Part 3 question: "{part3_question}"')
-        lines.append("Part 3 (Argument structure):")
         if argument_missing:
-            lines.append(f"Argument structure: missing {', '.join(argument_missing)}")
-        else:
-            lines.append(
-                "Argument structure: complete (Claim, Concession/counter-argument, "
-                "Conclusion all present)"
-            )
-        _append_model_answer(lines, "Part 3 model answer (band 8)", argument)
+            tips.append(f"Part 3 needs: {', '.join(argument_missing)}")
+        part3_example = (argument.get("model_answer") or "").strip()
+        example = f"Part 2:\n{example}\n\nPart 3 — {part3_question}\n{part3_example}"
 
     mark_task_completed(qdrant, collection, week_number, "wed", owner)
-    return "\n".join(lines)
-
+    return render_feedback_card(
+        FeedbackCard(
+            day_code="wed",
+            result_lines=result_lines,
+            tip_lines=tips,
+            example=example,
+            answer=transcribed_reply,
+        )
+    )
 
 # ---------------------------------------------------------------------------
 # Thursday: British social small talk (spec 2.4). 7 fixed topic categories,
@@ -1268,12 +1333,22 @@ def generate_thursday_opener(llm: LlmClient, category: str) -> str:
     return json.loads(raw)["opener"]
 
 
-def build_thursday_message(category: str, opener: str) -> str:
-    return (
-        f"British small talk ({category.replace('_', ' ')})\n\n"
-        f"{opener}\n\n"
-        "Reply with a voice message using Anchor & Bounce: acknowledge it, "
-        "share your own situation, then bounce back an open question."
+def build_thursday_message(category: str, opener: str, week_number: int) -> str:
+    content_html = f"Topic: {esc(category.replace('_', ' '))}\n\n{italic(f'“{opener}”')}"
+    return render_task_card(
+        TaskCard(
+            day_code="thu",
+            week_number=week_number,
+            goal="Keep the chat going with Anchor & Bounce",
+            duration="~3 min",
+            reply_mode="Voice",
+            content_html=content_html,
+            steps=[
+                "Respond to what they said (Anchor)",
+                "Share your own situation, then ask something back (Bounce)",
+                DONE_STEP,
+            ],
+        )
     )
 
 
@@ -1289,7 +1364,7 @@ def run_thursday_task(
 ) -> str:
     category = random.choice(THURSDAY_CATEGORIES)
     opener = generate_thursday_opener(llm, category)
-    message = build_thursday_message(category, opener)
+    message = build_thursday_message(category, opener, week_number)
     vector = embeddings.embed(message)
     for owner in owners:
         send_message(owner, message)
@@ -1334,31 +1409,31 @@ def evaluate_thursday_reply(
     raw = llm.chat_json(prompt, THURSDAY_EVAL_SCHEMA, schema_name="thursday_evaluation", max_tokens=800)
     data = json.loads(raw)
 
-    lines = [
-        "Social Bounce evaluation report:",
-        f'- Transcribed: "{transcribed_reply}"',
+    result_lines = [
+        "✅ Anchor (responded and shared your situation)"
+        if data["anchor_present"]
+        else "❌ Anchor (respond to them and share your own situation)",
+        "✅ Bounce (asked something back)" if data["bounce_present"] else "❌ Bounce (no question back)",
     ]
-    if data["anchor_present"] and data["bounce_present"]:
-        lines.append("- Anchor & Bounce structure: complete (empathy, own situation, and a bounce-back question)")
-    else:
-        missing = []
-        if not data["anchor_present"]:
-            missing.append("Anchor (empathy + your own situation)")
-        if not data["bounce_present"]:
-            missing.append("Bounce (an open question thrown back)")
-        lines.append(f"- Anchor & Bounce structure: missing {', '.join(missing)}")
+    tips = []
     if data.get("vocabulary_original"):
-        lines.append("")
-        lines.append("Suggestion:")
-        lines.append(f'  - Original: "{data["vocabulary_original"]}"')
-        lines.append(f'  - More natural: "{data["vocabulary_replacement"]}"')
-    lines.append("")
-    lines.append("Colleague text reply (Pub Banter):")
-    lines.append(f'"{data["banter_reply"]}"')
-    _append_model_answer(lines, "Model reply (Anchor & Bounce)", data)
+        tips.append(f'"{data["vocabulary_original"]}" → "{data["vocabulary_replacement"]}"')
+    if not data["bounce_present"]:
+        tips.append("End with an open question to keep the chat going")
+    model_reply = (data.get("model_answer") or "").strip()
+    example = f"Your colleague might say:\n{data['banter_reply']}"
+    if model_reply:
+        example = f"Model reply:\n{model_reply}\n\n{example}"
     mark_task_completed(qdrant, collection, week_number, "thu", owner)
-    return "\n".join(lines)
-
+    return render_feedback_card(
+        FeedbackCard(
+            day_code="thu",
+            result_lines=result_lines,
+            tip_lines=tips,
+            example=example,
+            answer=transcribed_reply,
+        )
+    )
 
 # ---------------------------------------------------------------------------
 # Shared per-chunk-per-owner progress (spec 2.5/2.6/Section 4). Friday and
@@ -1482,16 +1557,23 @@ FRIDAY_EVAL_SCHEMA = {
 }
 
 
-def build_friday_message(chunks: list[dict]) -> str:
-    lines = ["Friday chunk activation", "", "This week's chunks:"]
-    for chunk in chunks:
-        lines.append(f"- {chunk['phrase']} ({chunk['definition']})")
-    lines.append("")
-    lines.append(
-        "Record a 1-minute impromptu voice ramble on anything -- naturally "
-        "work in at least 2 of these chunks."
+def build_friday_message(chunks: list[dict], week_number: int) -> str:
+    chunk_lines = [f"• {bold(chunk['phrase'])} — {esc(chunk['definition'])}" for chunk in chunks]
+    return render_task_card(
+        TaskCard(
+            day_code="fri",
+            week_number=week_number,
+            goal="Use at least 2 chunks in free speech",
+            duration="~3 min",
+            reply_mode="Voice, 1 min",
+            content_html="This week's chunks:\n" + "\n".join(chunk_lines),
+            steps=[
+                "Talk about anything for 1 minute",
+                "Work in at least 2 chunks (any tense is fine)",
+                DONE_STEP,
+            ],
+        )
     )
-    return "\n".join(lines)
 
 
 def run_friday_task(
@@ -1504,7 +1586,7 @@ def run_friday_task(
     send_message: Callable[[str, str], None],
 ) -> list[dict]:
     chunks = read_this_week_chunks(qdrant, collection, week_number)
-    message = build_friday_message(chunks)
+    message = build_friday_message(chunks, week_number)
     vector = embeddings.embed(message)
     for owner in owners:
         send_message(owner, message)
@@ -1512,11 +1594,29 @@ def run_friday_task(
     return chunks
 
 
-def evaluate_chunk_usage(llm: LlmClient, chunks: list[dict], transcribed_reply: str) -> dict:
+FRIDAY_MODEL_ANSWER_INSTRUCTION = (
+    "a natural 1-minute spoken ramble (120-160 words) on the same topic the "
+    "speaker chose that works in ALL of this week's chunks naturally, reusing "
+    "the speaker's own ideas where they gave any"
+)
+MONDAY_MODEL_ANSWER_INSTRUCTION = (
+    "one natural real-life example sentence for each chunk, one per line, "
+    "reusing the speaker's own situation where they gave one"
+)
+
+
+def evaluate_chunk_usage(
+    llm: LlmClient,
+    chunks: list[dict],
+    transcribed_reply: str,
+    *,
+    model_answer_instruction: str = FRIDAY_MODEL_ANSWER_INSTRUCTION,
+) -> dict:
     """LLM judges chunk usage via semantic understanding, not string
     matching -- spoken chunks morph, e.g. "spread oneself too thin" becomes
     "I was spreading myself too thin" (spec 2.5 point 3). Also extracts the
-    user's actual sentence for each chunk they used."""
+    user's actual sentence for each chunk they used. Monday and Friday share
+    this judgment and differ only in what the model answer should be."""
     phrase_list = "\n".join(f"- {c['phrase']}" for c in chunks)
     prompt = (
         "This week's target English chunks are:\n"
@@ -1528,11 +1628,9 @@ def evaluate_chunk_usage(llm: LlmClient, chunks: list[dict], transcribed_reply: 
         "spreading myself too thin\" -- that still counts as correct use. "
         "If used, quote the exact sentence or snippet from the reply "
         "containing it as user_sentence; leave user_sentence as an empty "
-        "string if the chunk was not used. Then write model_answer: a "
-        "natural 1-minute spoken ramble (120-160 words) on the same topic "
-        "the speaker chose that works in ALL of this week's chunks "
-        "naturally, reusing the speaker's own ideas where they gave any -- "
-        "a reference the speaker can compare their ramble against."
+        "string if the chunk was not used. Then write model_answer: "
+        f"{model_answer_instruction} -- a reference the speaker can compare "
+        "their reply against."
     )
     raw = llm.chat_json(prompt, FRIDAY_EVAL_SCHEMA, schema_name="friday_chunk_usage", max_tokens=1000)
     return json.loads(raw)
@@ -1549,7 +1647,8 @@ def evaluate_friday_reply(
     transcribed_reply: str,
 ) -> str:
     chunk_usage = evaluate_chunk_usage(llm, chunks, transcribed_reply)
-    lines = ["Friday chunk-activation evaluation:", f'- Transcribed: "{transcribed_reply}"', ""]
+    result_lines: list[str] = []
+    unused: list[str] = []
     for result in chunk_usage["chunk_results"]:
         phrase = result["phrase"]
         used = bool(result["used_correctly"])
@@ -1565,11 +1664,22 @@ def evaluate_friday_reply(
             user_sentence=sentence,
             source="fri_voice",
         )
-        status = "used correctly" if used else "not detected / not used naturally"
-        lines.append(f"- {phrase}: {status}")
-    _append_model_answer(lines, "Model ramble (all chunks)", chunk_usage)
+        if used:
+            result_lines.append(f"✅ {phrase}")
+        else:
+            result_lines.append(f"❌ {phrase} (not used, or not used naturally)")
+            unused.append(phrase)
+    tips = [f"Next time, try working in: {', '.join(unused)}"] if unused else []
     mark_task_completed(qdrant, collection, week_number, "fri", owner)
-    return "\n".join(lines)
+    return render_feedback_card(
+        FeedbackCard(
+            day_code="fri",
+            result_lines=result_lines,
+            tip_lines=tips,
+            example=chunk_usage.get("model_answer") or "",
+            answer=transcribed_reply,
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1671,13 +1781,25 @@ def build_cloze_question(chunk_payload: dict, progress_payload: dict | None) -> 
     )
 
 
-def build_saturday_message(questions: list[ClozeQuestion]) -> str:
-    lines = ["Saturday review quiz", "", "Fill in each blank:"]
-    for index, question in enumerate(questions, start=1):
-        lines.append(f"{index}. {question.prompt_text}")
-    lines.append("")
-    lines.append("Reply with your answers (text or voice) -- one message covers all three.")
-    return "\n".join(lines)
+def build_saturday_message(questions: list[ClozeQuestion], week_number: int) -> str:
+    question_lines = [
+        f"{bold(f'{index}.')} {esc(question.prompt_text)}" for index, question in enumerate(questions, start=1)
+    ]
+    return render_task_card(
+        TaskCard(
+            day_code="sat",
+            week_number=week_number,
+            goal="Review this week's chunks",
+            duration="~5 min",
+            reply_mode="Text or voice",
+            content_html="\n".join(question_lines),
+            steps=[
+                f"Answer all {len(questions)} in one message, by number",
+                "Text or voice both work",
+                DONE_STEP,
+            ],
+        )
+    )
 
 
 def run_saturday_task(
@@ -1699,7 +1821,7 @@ def run_saturday_task(
             )
             for chunk in chunks
         ]
-        message = build_saturday_message(questions)
+        message = build_saturday_message(questions, week_number)
         vector = embeddings.embed(message)
         send_message(owner, message)
         mark_task_pushed(qdrant, collection, week_number, "sat", owner, vector)
@@ -1792,9 +1914,10 @@ def evaluate_saturday_answers(
     questions: list[dict],
     transcribed_answer: str,
 ) -> str:
-    lines = ["Saturday review results:", f'- Your answer: "{transcribed_answer}"', ""]
     results = judge_cloze_answers_with_llm(llm, questions, transcribed_answer)
-    for question, result in zip(questions, results):
+    result_lines: list[str] = []
+    tips: list[str] = []
+    for index, (question, result) in enumerate(zip(questions, results), start=1):
         phrase = question["phrase"]
         correct = result["correct"]
         record_chunk_usage(
@@ -1808,18 +1931,24 @@ def evaluate_saturday_answers(
             user_sentence="",
             source="",
         )
-        lines.append(f"- {phrase}: {'correct' if correct else 'needs review'}")
-        lines.append(f"  {result['explanation_zh']}")
-        lines.append(f'  Example: "{result["example_sentence"]}"')
-    model_answers = [(r.get("model_answer") or "").strip() for r in results]
-    if any(model_answers):
-        lines.append("")
-        lines.append("Model answers (blanks filled in):")
-        for index, model_answer in enumerate(model_answers, start=1):
-            if model_answer:
-                lines.append(f"{index}. {model_answer}")
+        result_lines.append(f"{'✅' if correct else '❌'} {index}. {phrase}")
+        result_lines.append(f"    {result['explanation_zh']}")
+        tips.append(f"{phrase}: {result['example_sentence']}")
+    answer_key = "\n".join(
+        f"{index}. {(result.get('model_answer') or '').strip()}"
+        for index, result in enumerate(results, start=1)
+        if (result.get("model_answer") or "").strip()
+    )
     mark_task_completed(qdrant, collection, week_number, "sat", owner)
-    return "\n".join(lines)
+    return render_feedback_card(
+        FeedbackCard(
+            day_code="sat",
+            result_lines=result_lines,
+            tip_lines=tips,
+            example=answer_key,
+            answer=transcribed_answer,
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1999,15 +2128,26 @@ def summarize_sunday_article(llm: LlmClient, article_text: str) -> tuple[str, st
     return data["summary"], (data.get("summary_zh") or "").strip()
 
 
-def build_sunday_message(article_url: str, summary: str, summary_zh: str = "") -> str:
-    translation = f"Chinese translation:\n{summary_zh}\n\n" if summary_zh else ""
-    return (
-        "Sunday painless reading\n\n"
-        f"{article_url}\n\n"
-        f"{summary}\n\n"
-        f"{translation}"
-        "Read for the gist -- no dictionary, no notes. Understanding "
-        "70-80% of it is the goal."
+def build_sunday_message(
+    article_title: str, article_url: str, summary: str, week_number: int, summary_zh: str = ""
+) -> str:
+    content_html = f"{bold(article_title)}\n{esc(article_url)}\n\n{esc(summary)}"
+    if summary_zh:
+        content_html += f"\n\nChinese translation (tap to expand)\n{expandable(esc(summary_zh))}"
+    return render_task_card(
+        TaskCard(
+            day_code="sun",
+            week_number=week_number,
+            goal="Read for the gist — no dictionary, no notes",
+            duration="~10 min",
+            reply_mode="No reply needed",
+            content_html=content_html,
+            steps=[
+                "Read the summary, then open the article",
+                "Aim to understand 70–80% of it",
+                "No reply needed — reading it counts as done",
+            ],
+        )
     )
 
 
@@ -2032,7 +2172,7 @@ def run_sunday_task(
         raise ValueError(f"could not extract any <article>/<p> text from {article.link}")
 
     summary, summary_zh = summarize_sunday_article(llm, article_text)
-    message = build_sunday_message(article.link, summary, summary_zh)
+    message = build_sunday_message(article.title, article.link, summary, week_number, summary_zh)
     vector = embeddings.embed(message)
     mark_article_pushed(qdrant, embeddings, collection, article.link)
     for owner in owners:

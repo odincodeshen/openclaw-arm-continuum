@@ -143,7 +143,7 @@ New: Category RAG
   knowledge base.
 - Photos are indexed by embedding a vision-model description plus any
   transcribed text; the original image is kept alongside it.
-- See docs/CATEGORY_RAG.md and docs/CATEGORY_RAG_MANUAL_TEST.md.
+- See docs/CATEGORY_RAG.md.
 
 New: source attribution in /rag
 - Every /rag answer ends with a "來源：" line naming the documents it drew

@@ -94,12 +94,9 @@ class Settings:
 
     cron_enabled: bool
     cron_timezone: str
-    cron_daily_report_time: str
     cron_poll_seconds: int
     cron_due_window_minutes: int
-    cron_run_on_start: bool
     cron_chat_ids: set[int]
-    cron_tasks_config_path: Path
     cron_jobs_path: Path
     cron_state_path: Path
     task_history_path: Path
@@ -129,6 +126,10 @@ class Settings:
     # without waiting for the real calendar day. Empty (default) means no
     # override -- day_code_for(now) is used as normal.
     english_bot_force_day_code: str
+    # /w word lookup + /vocab word list (English bot). Off by default; needs
+    # the offline dictionary built by scripts/build_dictionary.py.
+    dictionary_enabled: bool
+    dictionary_path: Path
 
 
 def load_settings() -> Settings:
@@ -218,12 +219,9 @@ def load_settings() -> Settings:
         mem_digest_remind_cooldown_days=env_int("OPENCLAW_MEM_DIGEST_REMIND_COOLDOWN_DAYS", 7),
         cron_enabled=env_bool("OPENCLAW_CRON_ENABLED", True),
         cron_timezone=os.environ.get("OPENCLAW_CRON_TIMEZONE", "UTC"),
-        cron_daily_report_time=os.environ.get("OPENCLAW_CRON_DAILY_REPORT_TIME", "07:00"),
         cron_poll_seconds=env_int("OPENCLAW_CRON_POLL_SECONDS", 30),
         cron_due_window_minutes=env_int("OPENCLAW_CRON_DUE_WINDOW_MINUTES", 15),
-        cron_run_on_start=env_bool("OPENCLAW_CRON_RUN_ON_START", False),
         cron_chat_ids=cron_chat_ids,
-        cron_tasks_config_path=Path(os.environ.get("OPENCLAW_CRON_TASKS_CONFIG", "/app/cron_tasks.json")),
         cron_jobs_path=Path(os.environ.get("OPENCLAW_CRON_JOBS_PATH", "/workspace/.openclaw/cron_jobs.json")),
         cron_state_path=Path(os.environ.get("OPENCLAW_CRON_STATE_PATH", "/workspace/.openclaw/cron_state.json")),
         task_history_path=Path(os.environ.get("OPENCLAW_TASK_HISTORY_PATH", "/workspace/.openclaw/task_history.jsonl")),
@@ -250,4 +248,6 @@ def load_settings() -> Settings:
             os.environ.get("OPENCLAW_ENGLISH_BOT_STATE_PATH", "/workspace/.openclaw/english_bot_state.json")
         ),
         english_bot_force_day_code=os.environ.get("OPENCLAW_ENGLISH_BOT_FORCE_DAY_CODE", "").strip().lower(),
+        dictionary_enabled=env_bool("OPENCLAW_DICTIONARY_ENABLED", False),
+        dictionary_path=Path(os.environ.get("OPENCLAW_DICTIONARY_PATH", "/workspace/dictionary/ecdict.sqlite")),
     )

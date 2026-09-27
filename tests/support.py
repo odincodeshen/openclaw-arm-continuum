@@ -66,12 +66,9 @@ def build_settings(**overrides) -> Settings:
         mem_digest_remind_cooldown_days=7,
         cron_enabled=False,
         cron_timezone="UTC",
-        cron_daily_report_time="07:00",
         cron_poll_seconds=30,
         cron_due_window_minutes=15,
-        cron_run_on_start=False,
         cron_chat_ids=set(),
-        cron_tasks_config_path=Path("cron_tasks.json"),
         cron_jobs_path=Path("cron_jobs.json"),
         cron_state_path=Path("cron_state.json"),
         task_history_path=Path("task_history.jsonl"),
@@ -94,6 +91,8 @@ def build_settings(**overrides) -> Settings:
         english_bot_timezone="Europe/London",
         english_bot_state_path=Path("english_bot_state.json"),
         english_bot_force_day_code="",
+        dictionary_enabled=False,
+        dictionary_path=Path("ecdict.sqlite"),
     )
     base.update(overrides)
     return Settings(**base)

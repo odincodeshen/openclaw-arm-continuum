@@ -37,8 +37,7 @@ Run this before pushing:
 ```bash
 rg -n "(<known-private-password-fragment>|<known-private-host>|<known-private-ip>|<known-private-user>@|<known-private-chat-id>|<known-private-token-fragment>)" . \
   -g '!docs/SECURITY.md' \
-  -g '!docs/PUBLISH_CHECKLIST.md' \
-  -g '!PUBLICATION_PRIVACY_REVIEW.md'
+  -g '!docs/PUBLISH_CHECKLIST.md'
 find . -type f \( -name '.env' -o -name '*.sqlite' -o -name '*.db' -o -name '*.jsonl' -o -name '*.tar.gz' -o -name '*.pyc' -o -name '*.exp' \) -print
 ```
 

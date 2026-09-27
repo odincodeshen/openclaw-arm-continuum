@@ -1,0 +1,100 @@
+# English-learning coach bot (optional, per-bot)
+
+A bot can run a daily English coach: one listening or speaking task every
+morning, feedback on each voice or text reply, a word lookup, and
+spaced-repetition review of looked-up words. It's off by default and meant
+for a dedicated bot (see `docs/PROFILES.md` "Run Several Bots At Once").
+
+## The week
+
+Every week starts on Monday with a new BBC *Desert Island Discs* episode;
+the rest of the week builds on it.
+
+| Day | Task | Reply | Feedback |
+|---|---|---|---|
+| Mon | Listen to a guest-led stretch of the episode; learn 3 chunks (phrases) picked from it | Text or voice: use one chunk in your own sentence | Which chunks were used correctly, example sentences |
+| Tue | Shadow a short audio clip of the guest, with stress and pauses marked | Voice | Word-level accuracy (missed/extra words), pace, a short analysis in Traditional Chinese, the reference text |
+| Wed | IELTS Speaking Part 2 cue card; from week 18, Part 2 plus a related Part 3 question | Voice, 1.5–2 min | STAR check (Situation/Task/Action/Result), vocabulary upgrades, a band-8 model answer; Part 3 adds a claim/concession/conclusion check |
+| Thu | British workplace small talk: a colleague's opener | Voice | Anchor & Bounce check, a more natural phrasing, a model reply, the colleague's reply |
+| Fri | Use this week's chunks in a 1-minute ramble on anything | Voice | Which chunks were used, a model ramble using all of them |
+| Sat | Cloze quiz on this week's chunks, from your own sentences when there are any | Text or voice, all answers in one message | Right/wrong per blank (position matters), an explanation and example per chunk, the answer key |
+| Sun | A Guardian lifestyle column to read for the gist | None | — |
+
+The Monday transcript comes from the local Whisper service; the chunk
+choice, annotations and every evaluation come from the local model. Tuesday's
+stress marks are a best guess from the text, not a measurement of the audio.
+
+Sunday picks a recent column not sent before: from Tim Dowling's Guardian
+feed first, then Grace Dent's, then the Guardian lifestyle feed. It sends the
+link with a short English summary and its Traditional Chinese translation.
+
+## Messages
+
+Every task and every piece of feedback uses the same card layout, rendered
+with Telegram HTML:
+
+- task card: short Chinese title and week, then **Goal**, **Time**,
+  **Today** (the only part that differs by day) and **How to**;
+- feedback card: **Result**, **Tips**, **Example** and **Your answer** (both
+  collapsed until tapped), then how to continue.
+
+When the word list is enabled and saved words are due, the task card ends
+with a **Word review** block. See `docs/DICTIONARY.md`.
+
+## Replying
+
+- A day's task stays open until you send `/Done`, so you can try as many
+  times as you like; each attempt is evaluated and recorded. (A chunk that
+  was missed once stays flagged for review that week, even if a later
+  attempt uses it.)
+- Voice replies shorter than 10 seconds are not counted (an accidental tap
+  doesn't use up the task).
+- Commands (anything starting with `/`, except `/Done`) are never treated as
+  an answer, so `/w` works in the middle of a task.
+- Open tasks are held in the Telegram process's memory: restarting that
+  container drops an unanswered task.
+
+At 21:00 every task still not answered that week is marked `skipped`.
+
+## Settings
+
+```text
+OPENCLAW_ENGLISH_BOT_ENABLED=true
+OPENCLAW_ENGLISH_BOT_OWNERS=<chat_id>[,<chat_id>...]
+OPENCLAW_ENGLISH_BOT_PUSH_TIME=07:15
+OPENCLAW_ENGLISH_BOT_SWEEP_TIME=21:00
+OPENCLAW_ENGLISH_BOT_TIMEZONE=Europe/London
+OPENCLAW_ENGLISH_BOT_STATE_PATH=/workspace/.openclaw/english_bot_state.json
+```
+
+The scheduler runs inside the Telegram gateway process. It pushes once a day
+after `PUSH_TIME` and sweeps once after `SWEEP_TIME`, both in `TIMEZONE`, and
+remembers what it already did in `STATE_PATH`.
+
+For testing, `OPENCLAW_ENGLISH_BOT_FORCE_DAY_CODE=mon`…`sun` makes every day
+behave as that weekday. To re-run a push on the same day, also clear
+`last_push_date` from the state file and set `PUSH_TIME` a couple of minutes
+ahead. Remove the override afterwards.
+
+## Data
+
+Everything lives in the bot's tracker collection
+(`OPENCLAW_TRACKER_COLLECTION`):
+
+- **Shared weekly content** (episode, transcript, chunks, which IELTS
+  questions and Sunday articles were already used) has no owner: everyone on
+  `OPENCLAW_ENGLISH_BOT_OWNERS` gets the same week.
+- **Per-person records** (daily completion, chunk progress, your saved
+  sentences, word list) carry an `owner` field, and every read of them must
+  filter by it -- the helpers in `owned_records.py` refuse to run without one.
+
+The week number is the highest week stored so far; Monday's push creates the
+next one. Monday skips the push if the newest episode was already used.
+
+## Requirements
+
+- The Whisper service (`openclaw-whisper`) for Monday's transcript and voice
+  replies; it also cuts the audio clips (PyAV).
+- Outbound HTTPS to the BBC podcast feed and the Guardian.
+- The IELTS Part 2 bank currently has 12 cue cards; once all have been asked,
+  it starts again from the full bank.

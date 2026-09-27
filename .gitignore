@@ -23,7 +23,7 @@ profiles/*/backups/*
 
 # Multi-bot persona compose files: real per-bot files stay local (their
 # names can reveal who/what a deployment is for). Only a generic example
-# is tracked. See docs/FUTURE_TODO.md "Concurrent Multi-Bot Personas".
+# is tracked. See docs/PROFILES.md "Run Several Bots At Once".
 compose.persona.*.yaml
 !compose.persona.example.yaml
 

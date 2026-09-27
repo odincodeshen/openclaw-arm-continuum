@@ -15,6 +15,7 @@ from openclaw_runtime.skills.english_bot import (
     select_longest_guest_stretch,
     word_level_diff,
 )
+from tests.card_checks import assert_feedback_card, assert_task_card
 
 
 class FakeLlm:
@@ -67,15 +68,18 @@ class AnalyzeTuesdayShadowingInChineseTest(unittest.TestCase):
 
 class BuildTuesdayMessageTest(unittest.TestCase):
     def test_message_includes_annotation_and_instructions(self) -> None:
-        message = build_tuesday_message("I **remember** it / well")
-        self.assertIn("I **remember** it / well", message)
+        message = build_tuesday_message("I **remember** it / well", 3)
+        assert_task_card(self, message, "tue")
+        self.assertIn("I <b>remember</b> it / well", message)
+        self.assertNotIn("**", message)
         self.assertIn("voice message", message.lower())
+        self.assertIn("sent just before this message", message)
 
     def test_push_message_is_english_only_no_chinese(self) -> None:
         """Spec change: Chinese content moved from the push to the
         evaluation step -- the Tuesday push stays English + stress
         annotation only."""
-        message = build_tuesday_message("I **remember** it / well")
+        message = build_tuesday_message("I **remember** it / well", 3)
         self.assertNotIn("中文", message)
 
 
@@ -152,6 +156,22 @@ class RunTuesdayTaskTest(unittest.TestCase):
 
         self.send_message = send_message
         self.send_audio = send_audio
+
+    def test_sends_the_audio_clip_before_the_task_card(self) -> None:
+        events: list[str] = []
+        run_tuesday_task(
+            week_number=1,
+            clip_client=self.clip_client,
+            llm=self.llm,
+            qdrant=self.qdrant,
+            embeddings=self.embeddings,
+            collection="coll",
+            owners=["owner-a"],
+            send_message=lambda owner, text: events.append("text"),
+            send_audio=lambda owner, path, caption: events.append("audio"),
+            workspace_dir=self.workspace_dir,
+        )
+        self.assertEqual(events, ["audio", "text"])
 
     def test_reuses_window_mp3_and_sends_text_and_audio(self) -> None:
         task = run_tuesday_task(
@@ -264,14 +284,15 @@ class EvaluateTuesdayReplyTest(unittest.TestCase):
             owner="owner-a",
             week_number=1,
         )
-        self.assertIn("Transcribed:", feedback)
-        self.assertIn("Word match:", feedback)
-        self.assertIn("Missing/changed:", feedback)
+        assert_feedback_card(self, feedback, "tue")
+        self.assertIn("Word match 50%", feedback)
+        self.assertIn("❌ Missed/changed: and, it, changed, everything", feedback)
         self.assertIn("Pace:", feedback)
-        self.assertIn("changed", feedback)
-        self.assertIn("everything", feedback)
-        self.assertIn("中文分析：發音大致準確", feedback)
+        self.assertIn("• 發音大致準確", feedback)
         self.assertNotIn("中文翻譯", feedback)
+        # the reference text is the example, the transcript is "your answer"
+        self.assertIn("I remember it well and it changed everything</blockquote>", feedback)
+        self.assertIn("I remember it well</blockquote>", feedback)
 
     def test_perfect_match_has_no_missing_or_extra_lines(self) -> None:
         feedback = evaluate_tuesday_reply(
@@ -284,8 +305,9 @@ class EvaluateTuesdayReplyTest(unittest.TestCase):
             owner="owner-a",
             week_number=1,
         )
-        self.assertNotIn("Missing/changed:", feedback)
-        self.assertNotIn("Extra words:", feedback)
+        self.assertNotIn("Missed/changed:", feedback)
+        self.assertNotIn("Extra:", feedback)
+        self.assertIn("✅ No missed or extra words", feedback)
 
     def test_marks_tuesday_task_completed(self) -> None:
         evaluate_tuesday_reply(

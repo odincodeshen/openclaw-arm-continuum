@@ -63,6 +63,5 @@ The unit `test` job above runs the same file but its Qdrant-backed cases skip
 
 Model-quality behaviour — intent-router accuracy, the `/review` workflow, a
 real VLM reading an image — is the L3 layer: same scenarios, real vLLM /
-Ollama on the GB10 self-hosted runner. Tracked in `docs/TESTING.md`; manual
-procedures in `docs/CATEGORY_RAG_MANUAL_TEST.md` and
-`docs/DGX_V13_VALIDATION.md`.
+Ollama on the GB10 self-hosted runner. Tracked in `docs/TESTING.md`; a
+recorded manual validation is in `docs/DGX_V13_VALIDATION.md`.
