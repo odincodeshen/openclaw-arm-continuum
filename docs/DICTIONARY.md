@@ -66,6 +66,10 @@ further out; a wrong answer sends it back to box 0, due tomorrow:
 - While a review is open, typed replies go to it and voice replies still go
   to the day's English task, so the two never mix. An unanswered review stops
   capturing replies after 60 minutes.
+- On Sunday the English bot also adds that week's chunks you haven't
+  learned yet (see `docs/ENGLISH_BOT.md`); they're reviewed like looked-up
+  words, from your own sentence when you made one, and don't count as a
+  lookup.
 - When words are due, each daily task card ends with a **Word review** block
   saying how many -- counted per person.
 

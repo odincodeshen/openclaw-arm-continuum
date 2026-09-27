@@ -18,6 +18,7 @@ from typing import Callable
 
 from openclaw_runtime.audio_clip_client import AudioClipClient
 from openclaw_runtime.embedding_client import EmbeddingClient
+from openclaw_runtime.english_weekly import build_weekly_recap
 from openclaw_runtime.llm_client import LlmClient
 from openclaw_runtime.qdrant_client import QdrantClient
 from openclaw_runtime.skills.english_bot import (
@@ -107,6 +108,8 @@ def run_todays_push(
     clip_client: AudioClipClient,
     transcription_client: TranscriptionClient,
     workspace_root: Path,
+    send_report: Callable[[str, str], None] | None = None,
+    vocab_enabled: bool = False,
 ) -> None:
     """Dispatch to the correct run_<day>_task, then set the pending-answer
     payload for each owner (skipped for Sunday, which auto-completes and
@@ -229,6 +232,21 @@ def run_todays_push(
             owners=owners,
             send_message=send_message,
         )
+        # End of the practice week: a recap card per learner, which also
+        # moves chunks that haven't stuck into their /vocab review queue.
+        # Sent through send_report, not send_message, so it doesn't repeat
+        # the Word review reminder already on the reading card. One learner's
+        # failure doesn't block the others' recaps -- and never re-raises,
+        # since the Sunday push itself has already gone out.
+        if send_report is not None:
+            for owner in owners:
+                try:
+                    recap = build_weekly_recap(
+                        qdrant, embeddings, collection, owner, week_number, vocab_enabled=vocab_enabled
+                    )
+                    send_report(owner, recap)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[english_bot] weekly recap failed owner={owner}: {exc}", flush=True)
 
 
 def run_todays_sweep(qdrant: QdrantClient, collection: str, owners: list[str]) -> dict[str, list[str]]:

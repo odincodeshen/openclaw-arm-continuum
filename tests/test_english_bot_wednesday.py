@@ -29,12 +29,24 @@ class FakeLlm:
 
 
 class QuestionBankTest(unittest.TestCase):
-    def test_bank_has_twelve_questions_across_four_categories(self) -> None:
-        self.assertEqual(len(IELTS_QUESTION_BANK), 12)
+    def test_bank_has_112_questions_28_per_category(self) -> None:
+        self.assertEqual(len(IELTS_QUESTION_BANK), 112)
         categories = {q["category"] for q in IELTS_QUESTION_BANK}
         self.assertEqual(categories, {"event", "people", "place", "object"})
         for category in categories:
-            self.assertEqual(sum(1 for q in IELTS_QUESTION_BANK if q["category"] == category), 3)
+            self.assertEqual(sum(1 for q in IELTS_QUESTION_BANK if q["category"] == category), 28)
+
+    def test_ids_and_cue_cards_are_unique_and_ids_match_their_category(self) -> None:
+        self.assertEqual(len({q["id"] for q in IELTS_QUESTION_BANK}), 112)
+        # no two cards share the same "Describe ..." topic line
+        self.assertEqual(len({q["cue_card"].splitlines()[0].lower() for q in IELTS_QUESTION_BANK}), 112)
+        for question in IELTS_QUESTION_BANK:
+            self.assertTrue(question["id"].startswith(f"ielts_p2_{question['category']}_"), question["id"])
+
+    def test_every_cue_card_has_three_points_to_cover(self) -> None:
+        for question in IELTS_QUESTION_BANK:
+            bullets = [line for line in question["cue_card"].splitlines() if line.startswith("- ")]
+            self.assertEqual(len(bullets), 3, question["id"])
 
     def test_every_question_has_standard_cue_card_structure(self) -> None:
         for question in IELTS_QUESTION_BANK:
@@ -49,13 +61,14 @@ class QuestionBankTest(unittest.TestCase):
 
 class PickIeltsQuestionTest(unittest.TestCase):
     def test_excludes_already_asked_questions(self) -> None:
-        asked_ids = {q["id"] for q in IELTS_QUESTION_BANK[:11]}
+        # every question but the last has been asked -> the last is the only pick
+        asked_ids = {q["id"] for q in IELTS_QUESTION_BANK[:-1]}
         qdrant = MagicMock()
         qdrant.scroll_by_filters.return_value = [
             {"payload": {"question_id": qid}} for qid in asked_ids
         ]
         picked = pick_ielts_question(qdrant, "coll")
-        self.assertEqual(picked["id"], IELTS_QUESTION_BANK[11]["id"])
+        self.assertEqual(picked["id"], IELTS_QUESTION_BANK[-1]["id"])
         qdrant.scroll_by_filters.assert_called_once_with("coll", {"tag": "eng_ielts_topics"}, limit=512)
 
     def test_no_questions_asked_yet_picks_from_full_bank(self) -> None:

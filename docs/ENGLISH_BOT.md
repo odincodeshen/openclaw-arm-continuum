@@ -18,11 +18,20 @@ the rest of the week builds on it.
 | Thu | British workplace small talk: a colleague's opener | Voice | Anchor & Bounce check, a more natural phrasing, a model reply, the colleague's reply |
 | Fri | Use this week's chunks in a 1-minute ramble on anything | Voice | Which chunks were used, a model ramble using all of them |
 | Sat | Cloze quiz on this week's chunks, from your own sentences when there are any | Text or voice, all answers in one message | Right/wrong per blank (position matters), an explanation and example per chunk, the answer key |
-| Sun | A Guardian lifestyle column to read for the gist | None | — |
+| Sun | A Guardian lifestyle column to read for the gist, then a weekly recap | None | — |
 
 The Monday transcript comes from the local Whisper service; the chunk
 choice, annotations and every evaluation come from the local model. Tuesday's
 stress marks are a best guess from the text, not a measurement of the audio.
+
+After the reading card, Sunday sends each learner a **weekly recap**: which of
+Monday–Saturday they answered, which of the week's chunks they've learned,
+and -- with the word list enabled -- how many words they looked up. A chunk
+counts as learned when its latest Monday, Friday and Saturday attempts were
+all right; one that's still flagged, or was never practised, moves into that
+learner's `/vocab review` queue (due Monday, then on the usual
+spaced-repetition schedule), quizzed from their own sentence when they made
+one.
 
 Sunday picks a recent column not sent before: from Tim Dowling's Guardian
 feed first, then Grace Dent's, then the Guardian lifestyle feed. It sends the
@@ -97,5 +106,6 @@ next one. Monday skips the push if the newest episode was already used.
 - The Whisper service (`openclaw-whisper`) for Monday's transcript and voice
   replies; it also cuts the audio clips (PyAV).
 - Outbound HTTPS to the BBC podcast feed and the Guardian.
-- The IELTS Part 2 bank currently has 12 cue cards; once all have been asked,
-  it starts again from the full bank.
+- The IELTS Part 2 bank has 112 cue cards (28 each: events, people, places,
+  objects) -- over two years of Wednesdays without a repeat; once all have
+  been asked it starts again from the full bank.

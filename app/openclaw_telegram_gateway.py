@@ -2197,6 +2197,12 @@ def _english_bot_send_message(owner: str, text: str) -> None:
     send_html(int(owner), text)
 
 
+def _english_bot_send_report(owner: str, html: str) -> None:
+    """Cards that aren't the day's task (the Sunday recap): no Word review
+    block appended."""
+    send_html(int(owner), html)
+
+
 def _english_bot_send_audio(owner: str, path: Path, caption: str) -> None:
     send_audio_file(int(owner), path, caption)
 
@@ -2243,6 +2249,8 @@ def _english_bot_scheduler_loop() -> None:
                     clip_client=english_bot_clip_client,
                     transcription_client=transcriber,
                     workspace_root=settings.inbox_path,
+                    send_report=_english_bot_send_report,
+                    vocab_enabled=settings.dictionary_enabled,
                 )
                 mark_pushed_today(now, state)
                 write_english_bot_state(settings.english_bot_state_path, state)

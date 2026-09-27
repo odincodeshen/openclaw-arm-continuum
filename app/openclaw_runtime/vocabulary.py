@@ -216,7 +216,7 @@ def save_to_word_list(
     existing = _find_saved(qdrant, collection, owner, result.word)
     if existing:
         payload = existing.get("payload") or {}
-        count = int(payload.get("lookup_count") or 1) + 1
+        count = int(payload.get("lookup_count") or 0) + 1
         fields = {"lookup_count": count, "last_lookup_at": now.isoformat()}
         if sentence:
             fields["context_sentence"] = sentence
@@ -248,6 +248,56 @@ def save_to_word_list(
         },
     )
     return 1
+
+
+def add_for_review(
+    qdrant: QdrantClient,
+    embeddings: EmbeddingClient,
+    collection: str,
+    owner: str,
+    word: str,
+    meaning: str,
+    sentence: str = "",
+    *,
+    source: str,
+    now: datetime | None = None,
+) -> None:
+    """Put a word in this learner's review queue for tomorrow, without it
+    counting as a lookup -- used for the English bot's weekly chunks that
+    haven't stuck. Already on the list: sent back to box 0, due tomorrow
+    (it was evidently not learned). Not on the list: added as a new word."""
+    now = now or datetime.now(timezone.utc)
+    tomorrow = (now.date() + timedelta(days=1)).isoformat()
+    existing = _find_saved(qdrant, collection, owner, word)
+    if existing:
+        fields = {"review_box": 0, "next_review": tomorrow}
+        if sentence:
+            fields["context_sentence"] = sentence
+        qdrant.set_payload(collection, existing["id"], fields)
+        return
+    text = f"{word}: {meaning}"
+    write_owned_point(
+        qdrant,
+        collection,
+        owner,
+        text,
+        embeddings.embed(text),
+        {
+            "tag": VOCAB_TAG,
+            "kind": VOCAB_KIND,
+            "word": _word_key(word),
+            "display_word": word,
+            "phonetic": "",
+            "meaning": meaning,
+            "context_sentence": sentence,
+            "source": source,
+            "lookup_count": 0,
+            "added_at": now.isoformat(),
+            "last_lookup_at": "",
+            "review_box": 0,
+            "next_review": tomorrow,
+        },
+    )
 
 
 def list_word_list(qdrant: QdrantClient, collection: str, owner: str) -> list[dict]:

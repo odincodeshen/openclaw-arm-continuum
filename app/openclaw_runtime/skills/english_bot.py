@@ -728,13 +728,13 @@ def evaluate_tuesday_reply(
 # Wednesday: IELTS Speaking Part 2 (spec 2.3). Fixed question bank, Part 2
 # only for now -- the week_number > 17 Part 2+3 combo is v1.16, not here.
 #
-# The 12 cue cards below are the verbatim English text the consultant
+# The first 12 cue cards below are the verbatim English text the consultant
 # actually provided (IELTS Liz / IELTS Advantage sourcing, per spec 2.3),
 # not a paraphrase -- the spec file only carries the short Chinese topic
 # summaries, so the literal English wording is transcribed here from the
-# original conversation turn where it was given. The remaining 48
-# questions (to reach the spec's 60-question, zero-repeat-for-38-weeks
-# target) are a content task for later, per spec Section 0.
+# original conversation turn where it was given. The other 100 (added after
+# the list) take the bank to 112, well past the spec's 60-question target,
+# so no cue card repeats across the 38-week plan.
 # ---------------------------------------------------------------------------
 
 IELTS_QUESTION_BANK: list[dict] = [
@@ -884,6 +884,112 @@ IELTS_QUESTION_BANK: list[dict] = [
     },
 ]
 
+# The other 100 cue cards (25 per category), taking the bank past the spec's
+# 60-question target to 112 -- over two years of Wednesdays without a repeat.
+# Same Describe / You should say / and explain shape as the 12 above.
+IELTS_QUESTION_BANK += [
+    {"id": "ielts_p2_event_04", "category": "event", "cue_card": "Describe a time you learned something important from a mistake.\n\nYou should say:\n- when it happened\n- what the mistake was\n- what you did about it\nand explain what you learned from it."},
+    {"id": "ielts_p2_event_05", "category": "event", "cue_card": "Describe a celebration you really enjoyed.\n\nYou should say:\n- what the occasion was\n- where it took place\n- who was there\nand explain why it was so memorable."},
+    {"id": "ielts_p2_event_06", "category": "event", "cue_card": "Describe a time you had to give a presentation or speak in public.\n\nYou should say:\n- when and where it was\n- who the audience was\n- how you prepared\nand explain how you felt before and after."},
+    {"id": "ielts_p2_event_07", "category": "event", "cue_card": "Describe a time you were stuck waiting for a long time.\n\nYou should say:\n- where you were\n- why there was a delay\n- what you did while you waited\nand explain how you dealt with the frustration."},
+    {"id": "ielts_p2_event_08", "category": "event", "cue_card": "Describe a time you disagreed with someone at work or university.\n\nYou should say:\n- who the person was\n- what you disagreed about\n- how it was resolved\nand explain what you would do differently next time."},
+    {"id": "ielts_p2_event_09", "category": "event", "cue_card": "Describe a trip that did not go as planned.\n\nYou should say:\n- where you were going\n- what went wrong\n- what you did about it\nand explain whether you would go there again."},
+    {"id": "ielts_p2_event_10", "category": "event", "cue_card": "Describe a time you tried a new sport or hobby for the first time.\n\nYou should say:\n- what it was\n- why you decided to try it\n- how it went\nand explain whether you have kept doing it."},
+    {"id": "ielts_p2_event_11", "category": "event", "cue_card": "Describe a time you received some very good news.\n\nYou should say:\n- what the news was\n- how you found out\n- who you told first\nand explain why it mattered so much to you."},
+    {"id": "ielts_p2_event_12", "category": "event", "cue_card": "Describe a time you had to make a difficult decision.\n\nYou should say:\n- what the decision was\n- what options you had\n- what you finally chose\nand explain whether you think it was the right choice."},
+    {"id": "ielts_p2_event_13", "category": "event", "cue_card": "Describe a time you lost something important.\n\nYou should say:\n- what you lost\n- where you think you lost it\n- how you tried to find it\nand explain how the experience affected you."},
+    {"id": "ielts_p2_event_14", "category": "event", "cue_card": "Describe a time you organised an event or gathering.\n\nYou should say:\n- what the event was\n- who came\n- what you had to arrange\nand explain whether it was a success."},
+    {"id": "ielts_p2_event_15", "category": "event", "cue_card": "Describe a time you worked in a team to achieve something.\n\nYou should say:\n- what the goal was\n- what your role was\n- what the result was\nand explain what made the teamwork effective."},
+    {"id": "ielts_p2_people_04", "category": "people", "cue_card": "Describe a teacher who had a strong influence on you.\n\nYou should say:\n- who the teacher was\n- what subject they taught\n- what they did that stood out\nand explain why they influenced you so much."},
+    {"id": "ielts_p2_people_05", "category": "people", "cue_card": "Describe a person you admire who is very good at their job.\n\nYou should say:\n- who the person is\n- what job they do\n- how you know them\nand explain what makes them so good at it."},
+    {"id": "ielts_p2_people_06", "category": "people", "cue_card": "Describe a family member you spend a lot of time with.\n\nYou should say:\n- who the person is\n- what you do together\n- how often you see each other\nand explain why you enjoy their company."},
+    {"id": "ielts_p2_people_07", "category": "people", "cue_card": "Describe a person who helped you settle into a new place.\n\nYou should say:\n- who the person was\n- where you had moved to\n- how they helped you\nand explain what difference their help made."},
+    {"id": "ielts_p2_people_08", "category": "people", "cue_card": "Describe a well-known person you would like to meet.\n\nYou should say:\n- who the person is\n- what they are known for\n- what you would ask them\nand explain why you would like to meet them."},
+    {"id": "ielts_p2_people_09", "category": "people", "cue_card": "Describe a neighbour you know well.\n\nYou should say:\n- who the person is\n- how you got to know them\n- what you do for each other\nand explain what you think makes a good neighbour."},
+    {"id": "ielts_p2_people_10", "category": "people", "cue_card": "Describe someone you know who is very creative.\n\nYou should say:\n- who the person is\n- what they create\n- how you know them\nand explain what you find most impressive about them."},
+    {"id": "ielts_p2_people_11", "category": "people", "cue_card": "Describe a person who stays calm under pressure.\n\nYou should say:\n- who the person is\n- a situation where you saw this\n- how they behaved\nand explain what you learned from watching them."},
+    {"id": "ielts_p2_people_12", "category": "people", "cue_card": "Describe a friend you have known for a long time.\n\nYou should say:\n- how you met\n- what you usually do together\n- how the friendship has changed\nand explain why the friendship has lasted."},
+    {"id": "ielts_p2_people_13", "category": "people", "cue_card": "Describe someone who taught you a practical skill.\n\nYou should say:\n- who the person was\n- what skill they taught you\n- how they taught it\nand explain how useful the skill has been."},
+    {"id": "ielts_p2_people_14", "category": "people", "cue_card": "Describe a person who changed your mind about something.\n\nYou should say:\n- who the person was\n- what the topic was\n- how they changed your mind\nand explain why you were persuaded."},
+    {"id": "ielts_p2_people_15", "category": "people", "cue_card": "Describe a child you know who impressed you.\n\nYou should say:\n- who the child is\n- what they did\n- how you reacted\nand explain why it impressed you."},
+    {"id": "ielts_p2_place_04", "category": "place", "cue_card": "Describe a cafe or restaurant you like to go to.\n\nYou should say:\n- where it is\n- what you usually order\n- who you go there with\nand explain why you like it so much."},
+    {"id": "ielts_p2_place_05", "category": "place", "cue_card": "Describe a park or garden in your area.\n\nYou should say:\n- where it is\n- what it looks like\n- when you usually go there\nand explain why it matters to local people."},
+    {"id": "ielts_p2_place_06", "category": "place", "cue_card": "Describe a historic building you have visited.\n\nYou should say:\n- where it is\n- what it looked like\n- what you learned there\nand explain why you think it is worth preserving."},
+    {"id": "ielts_p2_place_07", "category": "place", "cue_card": "Describe a place where you like to study or work.\n\nYou should say:\n- where it is\n- what it is like\n- how often you go there\nand explain why it helps you get things done."},
+    {"id": "ielts_p2_place_08", "category": "place", "cue_card": "Describe a place you would like to visit in the future.\n\nYou should say:\n- where it is\n- how you heard about it\n- what you would do there\nand explain why you want to go there."},
+    {"id": "ielts_p2_place_09", "category": "place", "cue_card": "Describe a very busy place you have visited.\n\nYou should say:\n- where it was\n- why it was so busy\n- what you did there\nand explain how you felt about being there."},
+    {"id": "ielts_p2_place_10", "category": "place", "cue_card": "Describe a place near water that you enjoy.\n\nYou should say:\n- where it is\n- what you do there\n- how often you go\nand explain why it appeals to you."},
+    {"id": "ielts_p2_place_11", "category": "place", "cue_card": "Describe a museum or gallery you have been to.\n\nYou should say:\n- which one it was\n- what you saw there\n- who you went with\nand explain whether you would recommend it."},
+    {"id": "ielts_p2_place_12", "category": "place", "cue_card": "Describe a home, other than your own, that you enjoy visiting.\n\nYou should say:\n- whose home it is\n- what it is like\n- what you do when you are there\nand explain why you enjoy going there."},
+    {"id": "ielts_p2_place_13", "category": "place", "cue_card": "Describe a shop you like that does not sell food.\n\nYou should say:\n- where it is\n- what you buy there\n- how often you go\nand explain why you prefer it to other shops."},
+    {"id": "ielts_p2_place_14", "category": "place", "cue_card": "Describe a sports venue or gym you have been to.\n\nYou should say:\n- where it is\n- what you did there\n- what the atmosphere was like\nand explain how being there made you feel."},
+    {"id": "ielts_p2_place_15", "category": "place", "cue_card": "Describe a place in your hometown that has changed a lot.\n\nYou should say:\n- where it is\n- what it used to be like\n- how it has changed\nand explain whether you think the change is for the better."},
+    {"id": "ielts_p2_object_04", "category": "object", "cue_card": "Describe a book you have read more than once.\n\nYou should say:\n- what the book is\n- when you first read it\n- what it is about\nand explain why you went back to it."},
+    {"id": "ielts_p2_object_05", "category": "object", "cue_card": "Describe a gift you gave to someone.\n\nYou should say:\n- what the gift was\n- who you gave it to\n- why you chose it\nand explain how the person reacted."},
+    {"id": "ielts_p2_object_06", "category": "object", "cue_card": "Describe an app or website you use very often.\n\nYou should say:\n- what it is\n- what you use it for\n- how often you use it\nand explain why it is so useful to you."},
+    {"id": "ielts_p2_object_07", "category": "object", "cue_card": "Describe something you bought recently that you are happy with.\n\nYou should say:\n- what it is\n- where you bought it\n- why you bought it\nand explain why you are pleased with it."},
+    {"id": "ielts_p2_object_08", "category": "object", "cue_card": "Describe a photograph you like.\n\nYou should say:\n- what it shows\n- who took it\n- where you keep it\nand explain why it is special to you."},
+    {"id": "ielts_p2_object_09", "category": "object", "cue_card": "Describe a piece of furniture in your home.\n\nYou should say:\n- what it is\n- where it is in your home\n- how long you have had it\nand explain why it is important to you."},
+    {"id": "ielts_p2_object_10", "category": "object", "cue_card": "Describe something you borrowed from someone.\n\nYou should say:\n- what you borrowed\n- who you borrowed it from\n- why you needed it\nand explain how you felt about borrowing it."},
+    {"id": "ielts_p2_object_11", "category": "object", "cue_card": "Describe a household appliance you could not live without.\n\nYou should say:\n- what it is\n- how often you use it\n- how it helps you\nand explain why it is so essential."},
+    {"id": "ielts_p2_object_12", "category": "object", "cue_card": "Describe a toy or game you enjoyed as a child.\n\nYou should say:\n- what it was\n- who gave it to you\n- how you played with it\nand explain why you remember it so well."},
+    {"id": "ielts_p2_object_13", "category": "object", "cue_card": "Describe something you made by hand.\n\nYou should say:\n- what you made\n- how you made it\n- how long it took\nand explain how you felt when it was finished."},
+    {"id": "ielts_p2_object_14", "category": "object", "cue_card": "Describe a piece of art or decoration you like.\n\nYou should say:\n- what it is\n- where it is\n- what it looks like\nand explain why you like it."},
+    {"id": "ielts_p2_object_15", "category": "object", "cue_card": "Describe a vehicle you have owned or used a lot.\n\nYou should say:\n- what it is\n- how long you have used it\n- what you use it for\nand explain what you like or dislike about it."},
+    {"id": "ielts_p2_event_16", "category": "event", "cue_card": "Describe a time you helped a stranger.\n\nYou should say:\n- who the person was\n- what situation they were in\n- what you did to help\nand explain how you felt afterwards."},
+    {"id": "ielts_p2_event_17", "category": "event", "cue_card": "Describe a time you changed an important plan.\n\nYou should say:\n- what the plan was\n- what made you change it\n- what you did instead\nand explain whether you regret the change."},
+    {"id": "ielts_p2_event_18", "category": "event", "cue_card": "Describe a time you had to learn something very quickly.\n\nYou should say:\n- what you had to learn\n- why you were in a hurry\n- how you learned it\nand explain how well it went in the end."},
+    {"id": "ielts_p2_event_19", "category": "event", "cue_card": "Describe a time you got lost.\n\nYou should say:\n- where you were\n- how you got lost\n- how you found your way\nand explain what you would do differently next time."},
+    {"id": "ielts_p2_event_20", "category": "event", "cue_card": "Describe a time you received useful feedback.\n\nYou should say:\n- who gave you the feedback\n- what it was about\n- what you changed afterwards\nand explain why it was so useful."},
+    {"id": "ielts_p2_event_21", "category": "event", "cue_card": "Describe a time technology made a task much easier for you.\n\nYou should say:\n- what the task was\n- what technology you used\n- how it helped\nand explain whether you would go back to the old way."},
+    {"id": "ielts_p2_event_22", "category": "event", "cue_card": "Describe an important journey you made.\n\nYou should say:\n- where you went\n- why you made the journey\n- how you travelled\nand explain why the journey was important to you."},
+    {"id": "ielts_p2_event_23", "category": "event", "cue_card": "Describe a time you had to apologise to someone.\n\nYou should say:\n- who you apologised to\n- what you apologised for\n- how they reacted\nand explain what you learned from the situation."},
+    {"id": "ielts_p2_event_24", "category": "event", "cue_card": "Describe a time you really enjoyed an outdoor activity.\n\nYou should say:\n- what the activity was\n- where you did it\n- who you were with\nand explain why you enjoyed it so much."},
+    {"id": "ielts_p2_event_25", "category": "event", "cue_card": "Describe a time you saved money for something special.\n\nYou should say:\n- what you were saving for\n- how long it took\n- how you managed to save\nand explain whether it was worth it."},
+    {"id": "ielts_p2_event_26", "category": "event", "cue_card": "Describe a time you had to be very patient.\n\nYou should say:\n- when it was\n- what the situation was\n- how you stayed patient\nand explain how things turned out."},
+    {"id": "ielts_p2_event_27", "category": "event", "cue_card": "Describe a time a friend surprised you.\n\nYou should say:\n- who the friend was\n- what the surprise was\n- how you reacted\nand explain why it meant a lot to you."},
+    {"id": "ielts_p2_event_28", "category": "event", "cue_card": "Describe a time you achieved a personal goal.\n\nYou should say:\n- what the goal was\n- how long it took\n- what obstacles you faced\nand explain how it felt to achieve it."},
+    {"id": "ielts_p2_people_16", "category": "people", "cue_card": "Describe a person who inspired you to learn a new skill.\n\nYou should say:\n- who the person is\n- what skill it was\n- how they inspired you\nand explain what effect it has had on you."},
+    {"id": "ielts_p2_people_17", "category": "people", "cue_card": "Describe a colleague or classmate you enjoy working with.\n\nYou should say:\n- who the person is\n- what they do\n- how you work together\nand explain why you enjoy working with them."},
+    {"id": "ielts_p2_people_18", "category": "people", "cue_card": "Describe someone you know who has an interesting job.\n\nYou should say:\n- who the person is\n- what their job is\n- what a typical day looks like for them\nand explain why you find the job interesting."},
+    {"id": "ielts_p2_people_19", "category": "people", "cue_card": "Describe a person you know who is very well organised.\n\nYou should say:\n- who the person is\n- how you know them\n- how their organisation shows\nand explain whether you would like to be more like them."},
+    {"id": "ielts_p2_people_20", "category": "people", "cue_card": "Describe a person you would like to work with in the future.\n\nYou should say:\n- who the person is\n- what they do\n- what you would like to work on together\nand explain why you would like to work with them."},
+    {"id": "ielts_p2_people_21", "category": "people", "cue_card": "Describe an older person you respect.\n\nYou should say:\n- who the person is\n- how you know them\n- what they have done in their life\nand explain why you respect them."},
+    {"id": "ielts_p2_people_22", "category": "people", "cue_card": "Describe a person who is good at making others laugh.\n\nYou should say:\n- who the person is\n- how they make people laugh\n- a time they did this\nand explain why a sense of humour matters."},
+    {"id": "ielts_p2_people_23", "category": "people", "cue_card": "Describe someone you know who travels a lot.\n\nYou should say:\n- who the person is\n- where they usually go\n- why they travel so much\nand explain whether you would like that kind of lifestyle."},
+    {"id": "ielts_p2_people_24", "category": "people", "cue_card": "Describe a person who gave you a memorable present.\n\nYou should say:\n- who the person is\n- what the present was\n- what the occasion was\nand explain why you still remember it."},
+    {"id": "ielts_p2_people_25", "category": "people", "cue_card": "Describe a sportsperson you admire.\n\nYou should say:\n- who the person is\n- what sport they play\n- what they have achieved\nand explain why you admire them."},
+    {"id": "ielts_p2_people_26", "category": "people", "cue_card": "Describe someone you know who made a big change in their life.\n\nYou should say:\n- who the person is\n- what the change was\n- why they made it\nand explain what you think of their decision."},
+    {"id": "ielts_p2_people_27", "category": "people", "cue_card": "Describe a person you know who is a very good listener.\n\nYou should say:\n- who the person is\n- how you know them\n- a time they listened to you\nand explain why this quality matters."},
+    {"id": "ielts_p2_people_28", "category": "people", "cue_card": "Describe a character from a book, film or TV series that you like.\n\nYou should say:\n- who the character is\n- what story they are in\n- what they are like\nand explain why you like this character."},
+    {"id": "ielts_p2_place_16", "category": "place", "cue_card": "Describe a library you have used.\n\nYou should say:\n- where it is\n- what it is like inside\n- what you use it for\nand explain whether you think libraries still matter today."},
+    {"id": "ielts_p2_place_17", "category": "place", "cue_card": "Describe a beautiful view you remember.\n\nYou should say:\n- where it was\n- what you could see\n- when you saw it\nand explain why it has stayed with you."},
+    {"id": "ielts_p2_place_18", "category": "place", "cue_card": "Describe a place where you spent a lot of time as a child.\n\nYou should say:\n- where it is\n- what you did there\n- who you were with\nand explain how you feel about it now."},
+    {"id": "ielts_p2_place_19", "category": "place", "cue_card": "Describe a hotel or other place you stayed on holiday.\n\nYou should say:\n- where it was\n- what it was like\n- how long you stayed\nand explain whether you would stay there again."},
+    {"id": "ielts_p2_place_20", "category": "place", "cue_card": "Describe a quiet street or neighbourhood you like.\n\nYou should say:\n- where it is\n- what it is like\n- why you go there\nand explain what makes it so pleasant."},
+    {"id": "ielts_p2_place_21", "category": "place", "cue_card": "Describe a workplace you have visited or worked in.\n\nYou should say:\n- where it was\n- what it looked like\n- what people did there\nand explain whether you would like to work there."},
+    {"id": "ielts_p2_place_22", "category": "place", "cue_card": "Describe a place in your country that is popular with tourists.\n\nYou should say:\n- where it is\n- what visitors do there\n- when it is busiest\nand explain whether you think it deserves its popularity."},
+    {"id": "ielts_p2_place_23", "category": "place", "cue_card": "Describe a place you go to when you want to be active.\n\nYou should say:\n- where it is\n- what you do there\n- how often you go\nand explain how it helps you."},
+    {"id": "ielts_p2_place_24", "category": "place", "cue_card": "Describe a community centre or public space in your area.\n\nYou should say:\n- where it is\n- what happens there\n- who uses it\nand explain why it is important to the community."},
+    {"id": "ielts_p2_place_25", "category": "place", "cue_card": "Describe a place with interesting architecture.\n\nYou should say:\n- where it is\n- what the buildings look like\n- when you saw them\nand explain why you find the architecture interesting."},
+    {"id": "ielts_p2_place_26", "category": "place", "cue_card": "Describe a train station or airport you have passed through.\n\nYou should say:\n- which one it was\n- what it was like\n- why you were there\nand explain whether it worked well for travellers."},
+    {"id": "ielts_p2_place_27", "category": "place", "cue_card": "Describe a place where you had a memorable meal.\n\nYou should say:\n- where it was\n- what you ate\n- who you were with\nand explain why the meal was so memorable."},
+    {"id": "ielts_p2_place_28", "category": "place", "cue_card": "Describe a countryside area you have visited.\n\nYou should say:\n- where it is\n- what it looked like\n- what you did there\nand explain how it compared with life in a city."},
+    {"id": "ielts_p2_object_16", "category": "object", "cue_card": "Describe a film or series you watched recently.\n\nYou should say:\n- what it was\n- where you watched it\n- who you watched it with\nand explain what you thought of it."},
+    {"id": "ielts_p2_object_17", "category": "object", "cue_card": "Describe a piece of jewellery or an accessory you wear often.\n\nYou should say:\n- what it is\n- where it came from\n- how long you have had it\nand explain why you wear it so often."},
+    {"id": "ielts_p2_object_18", "category": "object", "cue_card": "Describe something you would like to buy in the future.\n\nYou should say:\n- what it is\n- why you want it\n- how you plan to pay for it\nand explain why it matters to you."},
+    {"id": "ielts_p2_object_19", "category": "object", "cue_card": "Describe a musical instrument you play or would like to play.\n\nYou should say:\n- which instrument it is\n- how long you have played or why you want to\n- how you are learning or would learn\nand explain why you like this instrument."},
+    {"id": "ielts_p2_object_20", "category": "object", "cue_card": "Describe an item you always carry with you.\n\nYou should say:\n- what it is\n- how long you have carried it\n- how often you use it\nand explain why you always keep it with you."},
+    {"id": "ielts_p2_object_21", "category": "object", "cue_card": "Describe a letter or message that was important to you.\n\nYou should say:\n- who it was from\n- what it said\n- when you received it\nand explain why it was so important."},
+    {"id": "ielts_p2_object_22", "category": "object", "cue_card": "Describe a piece of sports or outdoor equipment you use.\n\nYou should say:\n- what it is\n- how often you use it\n- where you use it\nand explain how it helps you."},
+    {"id": "ielts_p2_object_23", "category": "object", "cue_card": "Describe something old that you still use.\n\nYou should say:\n- what it is\n- how old it is\n- what you use it for\nand explain why you have not replaced it."},
+    {"id": "ielts_p2_object_24", "category": "object", "cue_card": "Describe a song or piece of music that means a lot to you.\n\nYou should say:\n- what it is\n- when you first heard it\n- when you listen to it\nand explain why it is meaningful to you."},
+    {"id": "ielts_p2_object_25", "category": "object", "cue_card": "Describe a map, guidebook or app that helped you on a trip.\n\nYou should say:\n- what it was\n- where the trip was\n- how it helped you\nand explain whether you would use it again."},
+    {"id": "ielts_p2_object_26", "category": "object", "cue_card": "Describe a plant or garden you look after.\n\nYou should say:\n- what it is\n- where it is\n- how you look after it\nand explain why you enjoy caring for it."},
+    {"id": "ielts_p2_object_27", "category": "object", "cue_card": "Describe a kitchen tool or gadget you use a lot.\n\nYou should say:\n- what it is\n- how often you use it\n- what you use it for\nand explain why it is so useful."},
+    {"id": "ielts_p2_object_28", "category": "object", "cue_card": "Describe an advertisement you remember well.\n\nYou should say:\n- what it was for\n- where you saw it\n- what it showed\nand explain why it stuck in your memory."},
+]
+
 STAR_EVAL_SCHEMA = {
     "type": "object",
     "properties": {
@@ -919,11 +1025,10 @@ STAR_EVAL_SCHEMA = {
 
 def pick_ielts_question(qdrant: QdrantClient, collection: str) -> dict:
     """Random pick from the fixed bank, excluding questions already asked
-    (tag:eng_ielts_topics, shared, no owner -- spec 2.3 Agent step 1). The
-    bank only has 12 of its eventual 60 questions right now, so once every
-    question has been asked at least once the "already asked" exclusion
-    resets (picks from the full bank again) rather than raising -- a small
-    bank cycling is preferable to the task silently failing to run."""
+    (tag:eng_ielts_topics, shared, no owner -- spec 2.3 Agent step 1). Once
+    every question has been asked, the "already asked" exclusion resets
+    (picks from the full bank again) rather than raising -- the bank cycling
+    is preferable to the task silently failing to run."""
     asked_points = qdrant.scroll_by_filters(collection, {"tag": "eng_ielts_topics"}, limit=512)
     asked_ids = {(p.get("payload") or {}).get("question_id") for p in asked_points}
     available = [q for q in IELTS_QUESTION_BANK if q["id"] not in asked_ids]
