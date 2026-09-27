@@ -1,6 +1,6 @@
 # OpenClaw Arm Continuum
 
-Version: `v1.16`
+Version: `v1.17`
 
 License: Apache-2.0
 
@@ -24,7 +24,18 @@ Copy-paste ready Telegram examples are in [`examples/`](examples/).
 - Local Whisper service for Telegram voice transcription.
 - Dynamic cron tasks with Telegram push delivery and Gateway dashboard integration.
 - Thin `AgentRegistry` and `TaskDispatcher` for skill-based routing.
-- Runtime profile isolation for personal/demo deployments.
+- Runtime profile isolation for personal/demo deployments, and several bot
+  personas running side by side on one host -- each with its own Telegram
+  bot, memory and cron, sharing one model engine and Qdrant server
+  (`docs/PROFILES.md`).
+- Daily report building blocks for `/cron`: `/mem upcoming` (what's due in
+  the next few days) and `/rag digest` (yesterday's new knowledge, one
+  sentence each).
+- Optional English-learning coach bot: a daily speaking/listening task with
+  voice evaluation, plus word lookup and spaced-repetition review
+  (`docs/ENGLISH_BOT.md`, `docs/DICTIONARY.md`).
+- Optional video summary relay for bare YouTube links
+  (`docs/VIDEO_SUMMARY_RELAY.md`).
 - English use-case guide and copy-paste ready Telegram examples.
 
 ## Deployment Profiles
@@ -214,6 +225,8 @@ Main commands:
 /history  preview what the current chat has stored (read-only)
 /agents   list the active local agents
 /tasks    inspect recent task history
+/w        look up a word (English-learning bot only, see docs/DICTIONARY.md)
+/vocab    word list and spaced-repetition review (English-learning bot only)
 ```
 
 Plain chat keeps the last few turns as context, folding older turns into a
@@ -341,6 +354,19 @@ is required):
 The prompt after `::` is routed exactly like a normal chat message: a plain
 weather question (no `/search` prefix) goes to the weather skill, and
 `/search <query>` forces a general web search instead.
+
+For a short morning report per bot, point a daily job at one of the report
+commands, staggering bots a few minutes apart so they don't hit the model at
+once:
+
+```text
+/cron add daily 07:00 Schedule :: /mem upcoming
+/cron add daily 07:05 New knowledge :: /rag digest
+```
+
+A job's result is pushed to Telegram (and recorded in the Gateway run
+history) only -- it is not saved into the inbox, so it never ends up indexed
+back into memory.
 
 Daily, weekly, and monthly fixed-time jobs run only inside their configured execution window, so restarting a container later in the day will not backfill a missed morning job.
 

@@ -1,6 +1,6 @@
 # OpenClaw Arm Continuum
 
-版本：`v1.16`
+版本：`v1.17`
 
 授權：Apache-2.0
 
@@ -67,7 +67,10 @@ OpenClaw Arm Continuum 利用這個特性，把個人 AI 助理拆成幾個可�
 - `openclaw-browser-scraper`：Playwright / Chromium 網頁查詢 worker。
 - `openclaw-whisper`：本地 Whisper 語音轉錄 service。
 - `openclaw-gateway`：官方 OpenClaw Gateway dashboard。
-- runtime profiles：用來切分 personal / demo 的 `.env`、workspace、Gateway state 與 Qdrant collections。
+- runtime profiles：用來切分 personal / demo 的 `.env`、workspace、Gateway state 與 Qdrant collections；也可以在同一台主機同時跑多個 bot，各自有自己的 Telegram bot、記憶與 cron，共用模型引擎與 Qdrant（見 `docs/PROFILES.md`）。
+- 每日報告指令（搭配 `/cron`）：`/mem upcoming`（未來幾天到期的項目）、`/rag digest`（昨天新增的知識，每項一句話）。
+- 選用的英文學習 bot：每天一個聽說練習任務並評估語音回覆，另有查字與間隔重複複習（見 `docs/ENGLISH_BOT.md`、`docs/DICTIONARY.md`）。
+- 選用的影片摘要轉送：直接傳 YouTube 連結（見 `docs/VIDEO_SUMMARY_RELAY.md`）。
 - 英文 onboarding 文件與可直接貼進 Telegram 的範例指令。
 
 如果需要在同一台主機上切開個人資料與 demo 資料，請使用 runtime profiles，
@@ -195,6 +198,8 @@ curl -I http://127.0.0.1:18789/
 /history  預覽目前對話記得什麼（唯讀）
 /agents   列出目前本地 agents
 /tasks    查看最近任務紀錄
+/w        查字（僅英文學習 bot，見 docs/DICTIONARY.md）
+/vocab    生字本與間隔重複複習（僅英文學習 bot）
 ```
 
 一般聊天會記得最近幾輪對話，超出視窗的部分會摺進滾動摘要而不是直接丟棄
@@ -317,6 +322,15 @@ vision model（`OPENCLAW_VLM_MODEL`）辨識。分類可以改名或合併，不
 `::` 後面的任務內容，路由方式跟一般聊天訊息完全一樣：單純的天氣問句（不要加
 `/search`）會走天氣 skill，`/search <查詢>` 則會強制走一般網頁搜尋。
 
+每個 bot 的晨間報告，可以把每日排程指向報告指令；多個 bot 之間錯開幾分鐘，避免同時呼叫模型：
+
+```text
+/cron add daily 07:00 行程｜未來3天 :: /mem upcoming
+/cron add daily 07:05 知識｜昨日新增 :: /rag digest
+```
+
+排程結果只會推送到 Telegram（並記在 Gateway 的執行紀錄），不會存進 inbox，所以不會被再次建立索引、回流到記憶庫。
+
 `daily`、`weekly`、`monthly` 固定時間任務只會在指定時間窗口內執行，避免 container 晚上重啟後補跑早上的任務。
 
 ## Gateway Dashboard
@@ -362,7 +376,6 @@ SSH tunnel 或可信任私有網路後面，不要把 admin RPC route 直接暴�
 
 - [docs/SECURITY.md](docs/SECURITY.md)
 - [docs/PUBLISH_CHECKLIST.md](docs/PUBLISH_CHECKLIST.md)
-- [PUBLICATION_PRIVACY_REVIEW.md](PUBLICATION_PRIVACY_REVIEW.md)
 
 ## 路線圖
 

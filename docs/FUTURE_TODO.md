@@ -1,7 +1,7 @@
 # Future TODO List
 
 This document tracks candidate work items for `openclaw-arm-continuum`.
-Current release: **v1.16**.
+Current release: **v1.17**.
 
 The runtime is intentionally stable and text-first. The items below are
 future-facing and should be implemented incrementally without breaking the
@@ -109,6 +109,23 @@ v1.2 baseline. What has actually shipped since then:
   don't count. Records are owner-scoped in Qdrant, with a 21:00 sweep that
   marks unanswered days skipped. New outbound `sendAudio`, audio clipping
   in the Whisper service, and an RSS parser support it.
+- **v1.17 — readable cards, word lookup, daily reports.** Every English-bot
+  task and feedback message now uses one shared card layout (short Chinese
+  title, English labels, Telegram HTML with collapsible example/answer), with
+  model answers on Monday and Tuesday too. The English bot gained `/w` word
+  lookup (offline ECDICT dictionary, Traditional Chinese, LLM only for
+  in-context sense and examples; a bare 1-4 word message works without
+  `/w`), an owner-scoped word list (`/vocab`) and Leitner spaced-repetition
+  review (`/vocab review`, plus a Word review block on due days) -- see
+  `docs/DICTIONARY.md` and the new `docs/ENGLISH_BOT.md`. The hard-coded
+  "OpenClaw Daily Briefing" (which ignored its own `enabled: false` and sent
+  an empty report from every bot) is removed; per-bot morning reports are now
+  plain `/cron` jobs using the new `/mem upcoming` (what's due in the next few
+  days) and `/rag digest` (yesterday's new knowledge, one sentence each).
+  `/cron` results are only pushed, no longer saved into the inbox where they
+  were being indexed back into tracker memory. Running several bots at once
+  is documented in `docs/PROFILES.md`, with a tracked
+  `compose.persona.example.yaml`.
 
 Still open from the original list, re-baselined against v1.6:
 
@@ -697,7 +714,15 @@ Expected work:
 - Add resource and performance notes.
 - Keep secrets and runtime state out of git.
 
-## Future: Concurrent Multi-Bot Personas
+## Concurrent Multi-Bot Personas — delivered; lifecycle tooling still open
+
+**Status:** running several bots at once works today -- one
+`compose.persona.<name>.yaml` per bot, copied from the tracked
+`compose.persona.example.yaml`, as described in `docs/PROFILES.md` "Run
+Several Bots At Once". Per-bot container names, a per-bot Gateway with its
+own host port, and per-bot collection names/prefixes are all in place.
+**Still open:** `openclawctl --profile <name>` (below). The rest of this
+section is the original design, kept for its reasoning.
 
 Goal: run several independent OpenClaw "personas" at once on one host, each
 with its own Telegram bot identity and its own memory scope, sharing one
@@ -734,7 +759,7 @@ What's already free (needs no new code):
   process -- running N bots is N processes, each with its own ordinary
   Settings, not one process juggling N configs.
 
-What needs building (the concurrency gap `docs/PROFILES.md` names):
+What needed building (done, except `openclawctl --profile`):
 - Parameterize `container_name` per bot in compose (`openclaw-telegram`,
   `openclaw-memory-watcher`, `openclaw-cron` -- none of these bind a host
   port, since Telegram bots are outbound long-polling, so this is mostly
