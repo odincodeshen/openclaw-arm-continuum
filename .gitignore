@@ -69,3 +69,7 @@ scripts/*.exp
 
 # Contains a real leaked identifier and commit hashes -- never git-tracked.
 /privacy-leak-fix-runbook.md
+
+# Personal-information audit reports -- name the repo owner's identity
+# details, so never git-tracked.
+/private.md
