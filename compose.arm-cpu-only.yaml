@@ -1,3 +1,11 @@
+# Cap each container's Docker log at 3 x 10 MB; without it json-file logs
+# grow without limit.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 x-openclaw-dns: &openclaw-dns
   dns:
     - ${OPENCLAW_DNS_SERVER_1:-192.168.0.1}
@@ -5,6 +13,7 @@ x-openclaw-dns: &openclaw-dns
 
 services:
   openclaw-telegram:
+    logging: *default-logging
     <<: *openclaw-dns
     image: python:3.12-slim
     container_name: openclaw-telegram
@@ -30,6 +39,7 @@ services:
     restart: unless-stopped
 
   openclaw-memory-watcher:
+    logging: *default-logging
     <<: *openclaw-dns
     build:
       context: ./runtime
@@ -49,6 +59,7 @@ services:
     restart: unless-stopped
 
   openclaw-cron:
+    logging: *default-logging
     <<: *openclaw-dns
     image: python:3.12-slim
     container_name: openclaw-cron
@@ -75,6 +86,7 @@ services:
     restart: unless-stopped
 
   openclaw-browser-scraper:
+    logging: *default-logging
     <<: *openclaw-dns
     build:
       context: ./scraper
@@ -97,6 +109,7 @@ services:
     restart: unless-stopped
 
   openclaw-whisper:
+    logging: *default-logging
     <<: *openclaw-dns
     build:
       context: ./whisper
@@ -124,6 +137,7 @@ services:
     restart: unless-stopped
 
   openclaw-gateway:
+    logging: *default-logging
     <<: *openclaw-dns
     image: openclaw/openclaw:latest
     container_name: openclaw-gateway
@@ -154,6 +168,7 @@ services:
     restart: unless-stopped
 
   openclaw-cli:
+    logging: *default-logging
     <<: *openclaw-dns
     image: openclaw/openclaw:latest
     profiles: ["tools"]

@@ -18,11 +18,20 @@
 # openclaw-whisper, openclaw-browser-scraper, and Qdrant (host service).
 # Pulled in via `include` so depends_on can reference them.
 
+# Cap each container's Docker log at 3 x 10 MB; without it json-file logs
+# grow without limit.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 include:
   - compose.yaml
 
 services:
   openclaw-telegram-bot-a:
+    logging: *default-logging
     image: python:3.12-slim
     container_name: openclaw-telegram-bot-a
     working_dir: /app
@@ -54,6 +63,7 @@ services:
     restart: unless-stopped
 
   openclaw-memory-watcher-bot-a:
+    logging: *default-logging
     build:
       context: ./runtime
     container_name: openclaw-memory-watcher-bot-a
@@ -73,6 +83,7 @@ services:
     restart: unless-stopped
 
   openclaw-cron-bot-a:
+    logging: *default-logging
     image: python:3.12-slim
     container_name: openclaw-cron-bot-a
     working_dir: /app
@@ -104,6 +115,7 @@ services:
     restart: unless-stopped
 
   openclaw-gateway-bot-a:
+    logging: *default-logging
     image: openclaw/openclaw:latest
     container_name: openclaw-gateway-bot-a
     working_dir: /app

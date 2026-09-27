@@ -1,5 +1,14 @@
+# Cap each container's Docker log at 3 x 10 MB; without it json-file logs
+# grow without limit.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   openclaw-vllm:
+    logging: *default-logging
     image: nvcr.io/nvidia/vllm:26.03.post1-py3
     container_name: openclaw-vllm
     ipc: host
@@ -44,6 +53,7 @@ services:
   # Enable with:  docker compose --profile vision up -d openclaw-vllm-vision
   # then set in .env:  OPENCLAW_VLM_BASE_URL=http://openclaw-vllm-vision:8000/v1
   openclaw-vllm-vision:
+    logging: *default-logging
     profiles: ["vision"]
     image: nvcr.io/nvidia/vllm:26.03.post1-py3
     container_name: openclaw-vllm-vision
@@ -79,6 +89,7 @@ services:
     restart: unless-stopped
 
   openclaw-telegram:
+    logging: *default-logging
     image: python:3.12-slim
     container_name: openclaw-telegram
     working_dir: /app
@@ -110,6 +121,7 @@ services:
     restart: unless-stopped
 
   openclaw-browser-scraper:
+    logging: *default-logging
     build:
       context: ./scraper
     container_name: openclaw-browser-scraper
@@ -129,6 +141,7 @@ services:
     restart: unless-stopped
 
   openclaw-whisper:
+    logging: *default-logging
     build:
       context: ./whisper
     container_name: openclaw-whisper
@@ -162,6 +175,7 @@ services:
     restart: unless-stopped
 
   openclaw-memory-watcher:
+    logging: *default-logging
     build:
       context: ./runtime
     container_name: openclaw-memory-watcher
@@ -181,6 +195,7 @@ services:
     restart: unless-stopped
 
   openclaw-cron:
+    logging: *default-logging
     image: python:3.12-slim
     container_name: openclaw-cron
     working_dir: /app
@@ -212,6 +227,7 @@ services:
     restart: unless-stopped
 
   openclaw-gateway:
+    logging: *default-logging
     image: openclaw/openclaw:latest
     container_name: openclaw-gateway
     working_dir: /app
@@ -245,6 +261,7 @@ services:
     restart: unless-stopped
 
   openclaw-cli:
+    logging: *default-logging
     image: openclaw/openclaw:latest
     profiles: ["tools"]
     working_dir: /app

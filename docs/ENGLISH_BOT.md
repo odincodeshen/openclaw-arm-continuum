@@ -44,9 +44,10 @@ with a **Word review** block. See `docs/DICTIONARY.md`.
 ## Replying
 
 - A day's task stays open until you send `/Done`, so you can try as many
-  times as you like; each attempt is evaluated and recorded. (A chunk that
-  was missed once stays flagged for review that week, even if a later
-  attempt uses it.)
+  times as you like; each attempt is evaluated, and the last one before
+  `/Done` is what counts. A chunk is flagged for review while the latest
+  Monday, Friday or Saturday attempt at it is wrong -- redoing Friday can
+  clear Friday's miss, but a wrong Saturday answer still flags it.
 - Voice replies shorter than 10 seconds are not counted (an accidental tap
   doesn't use up the task).
 - Commands (anything starting with `/`, except `/Done`) are never treated as

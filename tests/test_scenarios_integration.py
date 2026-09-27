@@ -543,6 +543,7 @@ class EnglishLearningScenario(QdrantScenarioBase):
             used_correctly=True,
             user_sentence="I am finally getting to grips with the new deployment pipeline.",
             source="fri_voice",
+            evaluation="fri",
         )
         progress = read_chunk_progress(self.qdrant, self.tracker, "owner-a", week_number, phrase)
         self.assertFalse(progress["needs_review"])

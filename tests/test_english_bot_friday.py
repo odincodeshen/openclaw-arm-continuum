@@ -117,6 +117,7 @@ class RecordChunkUsageTest(unittest.TestCase):
             used_correctly=True,
             user_sentence="We took a gamble on it.",
             source="fri_voice",
+            evaluation="fri",
         )
         self.qdrant.upsert_text.assert_called_once()
         args, kwargs = self.qdrant.upsert_text.call_args
@@ -124,6 +125,7 @@ class RecordChunkUsageTest(unittest.TestCase):
         self.assertEqual(payload["owner"], "owner-a")
         self.assertEqual(payload["chunk"], "take a gamble on")
         self.assertFalse(payload["needs_review"])
+        self.assertEqual(payload["review_by_source"], {"fri": False})
         self.assertEqual(payload["user_sentence"], "We took a gamble on it.")
         self.assertEqual(payload["user_sentence_source"], "fri_voice")
 
@@ -141,16 +143,16 @@ class RecordChunkUsageTest(unittest.TestCase):
             used_correctly=False,
             user_sentence="",
             source="",
+            evaluation="sat",
         )
         self.qdrant.upsert_text.assert_not_called()
-        self.qdrant.set_payload.assert_called_once_with("coll", "existing-id", {"needs_review": True})
+        self.qdrant.set_payload.assert_called_once_with(
+            "coll", "existing-id", {"review_by_source": {"sat": True}, "needs_review": True}
+        )
 
-    def test_needs_review_is_sticky_once_set(self) -> None:
-        """A later correct evaluation must not clear an existing True flag
-        (spec 2.5 point 4: any single failure marks it, no un-flagging)."""
-        self.qdrant.scroll_by_filters.return_value = [
-            {"id": "existing-id", "payload": {"needs_review": True, "chunk": "take a gamble on"}}
-        ]
+    def _record(self, existing_payload: dict, *, used_correctly: bool, evaluation: str) -> dict:
+        self.qdrant.reset_mock()
+        self.qdrant.scroll_by_filters.return_value = [{"id": "existing-id", "payload": existing_payload}]
         record_chunk_usage(
             self.qdrant,
             self.embeddings,
@@ -158,11 +160,29 @@ class RecordChunkUsageTest(unittest.TestCase):
             "owner-a",
             1,
             "take a gamble on",
-            used_correctly=True,
+            used_correctly=used_correctly,
             user_sentence="",
             source="",
+            evaluation=evaluation,
         )
-        self.qdrant.set_payload.assert_called_once_with("coll", "existing-id", {"needs_review": True})
+        return self.qdrant.set_payload.call_args.args[2]
+
+    def test_redoing_the_same_evaluation_correctly_clears_its_own_miss(self) -> None:
+        fields = self._record({"review_by_source": {"fri": True}}, used_correctly=True, evaluation="fri")
+        self.assertEqual(fields, {"review_by_source": {"fri": False}, "needs_review": False})
+
+    def test_another_evaluations_miss_still_flags_the_chunk(self) -> None:
+        fields = self._record({"review_by_source": {"fri": False}}, used_correctly=False, evaluation="sat")
+        self.assertTrue(fields["needs_review"])
+        # ...and getting Friday right again doesn't clear Saturday's miss
+        fields = self._record(
+            {"review_by_source": {"fri": False, "sat": True}}, used_correctly=True, evaluation="fri"
+        )
+        self.assertEqual(fields, {"review_by_source": {"fri": False, "sat": True}, "needs_review": True})
+
+    def test_a_flag_from_before_the_per_evaluation_rule_is_kept(self) -> None:
+        fields = self._record({"needs_review": True}, used_correctly=True, evaluation="fri")
+        self.assertEqual(fields, {"review_by_source": {"legacy": True, "fri": False}, "needs_review": True})
 
     def test_does_not_overwrite_user_sentence_when_none_given(self) -> None:
         self.qdrant.scroll_by_filters.return_value = [
@@ -178,8 +198,11 @@ class RecordChunkUsageTest(unittest.TestCase):
             used_correctly=True,
             user_sentence="",
             source="",
+            evaluation="sat",
         )
-        self.qdrant.set_payload.assert_called_once_with("coll", "existing-id", {"needs_review": False})
+        self.qdrant.set_payload.assert_called_once_with(
+            "coll", "existing-id", {"review_by_source": {"sat": False}, "needs_review": False}
+        )
 
 
 class ReadChunkProgressTest(unittest.TestCase):

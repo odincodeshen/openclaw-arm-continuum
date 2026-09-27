@@ -185,6 +185,19 @@ def write_gateway_runback(settings: Settings, job: dict, now: datetime, result: 
         log(f"[cron] Gateway run history writeback failed id={job_id}: {exc}")
 
 
+# The job list is polled every cron_poll_seconds; only a change is logged
+# (job count, or the Gateway going away / coming back). Logging every poll
+# wrote ~2,900 identical lines a day per bot and hid a week-long Gateway 404.
+_last_job_poll_note: str | None = None
+
+
+def log_job_poll(note: str) -> None:
+    global _last_job_poll_note
+    if note != _last_job_poll_note:
+        log(note)
+        _last_job_poll_note = note
+
+
 def load_dynamic_jobs(settings: Settings) -> list[dict]:
     default_chat_id = recipients(settings)[0] if recipients(settings) else None
     try:
@@ -193,10 +206,10 @@ def load_dynamic_jobs(settings: Settings) -> list[dict]:
             for job in list_gateway_jobs(settings, include_disabled=True)
             if (runtime_job := gateway_job_to_runtime(job, default_chat_id))
         ]
-        log(f"[cron] loaded {len(jobs)} Gateway dashboard job(s)")
+        log_job_poll(f"[cron] loaded {len(jobs)} Gateway dashboard job(s)")
         return jobs
     except Exception as exc:
-        log(f"[cron] Gateway cron RPC unavailable; falling back to legacy JSON: {exc}")
+        log_job_poll(f"[cron] Gateway cron RPC unavailable; falling back to legacy JSON: {exc}")
         return list(load_jobs(settings.cron_jobs_path).get("jobs", []))
 
 

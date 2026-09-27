@@ -425,6 +425,7 @@ def evaluate_monday_reply(
             used_correctly=True,
             user_sentence=sentence,
             source="mon_reply",
+            evaluation="mon",
         )
     mark_task_completed(qdrant, collection, week_number, "mon", owner)
     if used_phrases:
@@ -1439,11 +1440,11 @@ def evaluate_thursday_reply(
 # Shared per-chunk-per-owner progress (spec 2.5/2.6/Section 4). Friday and
 # Saturday write/read the SAME record per (week_number, chunk, owner): a
 # deterministic tag + chunk-name lookup (create on first write, update via
-# set_payload after), not a fresh point every time. needs_review is sticky
-# within a week -- once any single evaluation (Friday's speaking OR
-# Saturday's cloze) marks it True, a later correct evaluation that week does
-# NOT clear it back to False (spec 2.5 point 4: "任一次判定錯誤...標記
-# needs_review", no mention of un-flagging on a later success).
+# set_payload after), not a fresh point every time. needs_review follows the
+# latest attempt of each evaluation (Monday reply, Friday speaking, Saturday
+# cloze) and is True while any of them is wrong -- see record_chunk_usage.
+# (Originally sticky for the whole week; changed once daily tasks became
+# repeatable, so re-practising a day can clear that day's own miss.)
 #
 # NOTE for the coordinator: the spec says a failure "留存至下一週期"
 # (persists into the next cycle) -- read literally, that could mean a
@@ -1493,17 +1494,26 @@ def record_chunk_usage(
     used_correctly: bool,
     user_sentence: str,
     source: str,
+    evaluation: str,
 ) -> None:
     """Create or update this user's per-chunk progress record for the week.
     Only overwrites user_sentence/user_sentence_source when a new non-empty
     sentence is given (Saturday's cloze-answer check has no new sentence to
-    record, only a correctness verdict)."""
+    record, only a correctness verdict).
+
+    needs_review is decided per evaluation ("mon", "fri", "sat"): each keeps
+    only its latest result in review_by_source, and the chunk needs review
+    when any evaluation's latest attempt got it wrong. So re-practising
+    Friday and getting it right clears Friday's miss, but a wrong Saturday
+    answer still flags the chunk however Friday went. A record written
+    before this rule has only needs_review; a True there is kept as a
+    "legacy" entry so an existing flag isn't silently dropped."""
     existing = _read_chunk_progress_point(qdrant, collection, owner, week_number, phrase)
-    needs_review = not used_correctly
     if existing:
-        if (existing["payload"] or {}).get("needs_review"):
-            needs_review = True  # sticky: stays flagged once set this week
-        fields: dict = {"needs_review": needs_review}
+        payload = existing["payload"] or {}
+        by_source = dict(payload.get("review_by_source") or ({"legacy": True} if payload.get("needs_review") else {}))
+        by_source[evaluation] = not used_correctly
+        fields: dict = {"review_by_source": by_source, "needs_review": any(by_source.values())}
         if user_sentence:
             fields["user_sentence"] = user_sentence
             fields["user_sentence_source"] = source
@@ -1516,7 +1526,8 @@ def record_chunk_usage(
         "tag": _chunk_progress_tag(week_number),
         "kind": "chunk_progress",
         "chunk": phrase,
-        "needs_review": needs_review,
+        "needs_review": not used_correctly,
+        "review_by_source": {evaluation: not used_correctly},
         "mastered": False,
     }
     if user_sentence:
@@ -1663,6 +1674,7 @@ def evaluate_friday_reply(
             used_correctly=used,
             user_sentence=sentence,
             source="fri_voice",
+            evaluation="fri",
         )
         if used:
             result_lines.append(f"✅ {phrase}")
@@ -1930,6 +1942,7 @@ def evaluate_saturday_answers(
             used_correctly=correct,
             user_sentence="",
             source="",
+            evaluation="sat",
         )
         result_lines.append(f"{'✅' if correct else '❌'} {index}. {phrase}")
         result_lines.append(f"    {result['explanation_zh']}")

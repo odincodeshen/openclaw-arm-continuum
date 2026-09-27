@@ -24,6 +24,24 @@ def stop(_signum: int, _frame: object) -> None:
     RUNNING = False
 
 
+def report_results(results, logged_skips: set[tuple[str, str]]) -> None:
+    """Log each ingest, but each skipped file only the first time it's seen
+    with that reason -- the inbox is rescanned every few seconds, and
+    re-logging every photo, voice note and .meta.json sidecar on every scan
+    buried real problems under ~100k identical lines a day."""
+    for result in results:
+        if result.skipped:
+            if result.reason == "unchanged":
+                continue
+            key = (str(result.path), str(result.reason))
+            if key in logged_skips:
+                continue
+            logged_skips.add(key)
+            log(f"[watcher] skipped path={result.path} reason={result.reason}")
+        else:
+            log(f"[watcher] ingested path={result.path} collection={result.collection} chunks={result.chunks}")
+
+
 def main() -> int:
     settings = load_settings()
     if not settings.memory_enabled:
@@ -38,18 +56,11 @@ def main() -> int:
     qdrant.ensure_collections()
     ingestor = InboxIngestor(settings, embeddings, qdrant)
     log(f"[watcher] inbox={settings.inbox_path} poll={settings.watcher_poll_seconds}s")
+    logged_skips: set[tuple[str, str]] = set()
 
     while RUNNING:
         try:
-            results = ingestor.scan_once()
-            for result in results:
-                if result.skipped and result.reason != "unchanged":
-                    log(f"[watcher] skipped path={result.path} reason={result.reason}")
-                elif not result.skipped:
-                    log(
-                        f"[watcher] ingested path={result.path} "
-                        f"collection={result.collection} chunks={result.chunks}"
-                    )
+            report_results(ingestor.scan_once(), logged_skips)
         except Exception:
             log(traceback.format_exc())
         time.sleep(settings.watcher_poll_seconds)
