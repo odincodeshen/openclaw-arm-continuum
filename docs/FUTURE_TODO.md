@@ -1,7 +1,7 @@
 # Future TODO List
 
 This document tracks candidate work items for `openclaw-arm-continuum`.
-Current release: **v1.18**.
+Current release: **v1.19**.
 
 The runtime is intentionally stable and text-first. The items below are
 future-facing and should be implemented incrementally without breaking the
@@ -133,46 +133,71 @@ v1.2 baseline. What has actually shipped since then:
   compose service caps its Docker log at 3 x 10 MB. English bot: a chunk's
   "needs review" flag now follows the latest attempt of each evaluation
   (Monday, Friday, Saturday), so redoing a day can clear that day's miss.
+- **v1.19 — weekly recap, chunks into word review, 112-card IELTS bank.**
+  Sunday now ends the English bot's week with a recap card per learner
+  (days answered, chunks learned, words looked up), and moves every chunk
+  not yet learned -- still flagged, or never practised -- into that
+  learner's `/vocab review` queue, so missed chunks keep coming back after
+  their week. The IELTS Part 2 bank grows from 12 to 112 cue cards (28 per
+  category), well past its 60-card target.
 
-Still open from the original list, re-baselined against v1.6:
+Still open, re-baselined against v1.19:
 
-- Telegram conversational memory — **done (post-v1.6)**. `ChatAgent` now
-  replays the last few user/assistant turns per `chat_id`
-  (`app/openclaw_runtime/conversation_memory.py`); `/new` (alias `/reset`)
-  clears it; `OPENCLAW_CONVERSATION_*` configure the window, char budget,
-  retention, and a disabled single-turn mode. `/rag`, `/search`, `/mem`
-  stay single-shot; nothing is promoted to Qdrant. See
-  `docs/CONVERSATION_MEMORY.md`.
-- Platform-aware multimodal analysis — **partially unblocked**: the
+**Platform / runtime**
+
+- Platform-aware multimodal analysis -- **partially unblocked**: the
   `VisionClient` seam (v1.4) and the model catalog (v1.5) are the seams
   this design asked for; the backend workers (`mnn-omni`, `vllm-vlm`,
   `remote-vlm`) and the registered agent are not built. On GB10 the main
   model already covers vision (see "dedicated VLM" section below), so this
   matters most for the Arm CPU-only profile.
-- OCR extractor for Category RAG — **not started** (Category RAG itself
-  shipped in v1.4; `ingest_image_into_category` takes an extractor list,
-  today only `vlm_description`).
-- Richer multi-agent runtime — **partially advanced**: v1.5 catalog
+- `arm-remote-llm` profile -- **planned only** (`docs/PLATFORMS.md`): a small
+  Arm host running the bots while generation goes to a private-LAN
+  inference server. Needs its compose file, `.env` example and doc, plus the
+  `openclawctl status model` remote-endpoint probe below.
+- Runtime lifecycle -- **first cut done** (`bin/openclawctl`,
+  `OPENCLAW_BOOT_MODE`, graceful degradation when the model is stopped;
+  v1.18 made the watcher/cron logs change-only and capped every Docker log
+  at 3 x 10 MB). Not done: `openclawctl --profile <name>` for the per-bot
+  compose files, the remote-endpoint probe for `arm-remote-llm`, and
+  per-platform model-service wiring beyond `openclaw-vllm`.
+- Platform presets -- **partially done**: O6 and DGX multi-model configs
+  shipped in v1.4; the remaining profiles and per-platform smoke tests are
+  not done.
+- Richer multi-agent runtime -- **partially advanced**: v1.5 catalog
   routing + intent classifier cover part of "task routing policies";
   `AgentRegistry` / `TaskDispatcher` are still thin.
-- Personal memory deepening — **structured `/mem` + proactive reminders
-  done** (`/mem list`/`done`/`rm`/`digest`/`snooze`/`edit`, cron-pushed
-  daily digest); "more precise `/rag` scope filters" is **done for
-  category, tag, and date** -- Category RAG (`#<category>` / `#all`),
-  `/rag tag:<word>` (tracker-only), and `/rag since:`/`before:` (tracker +
-  knowledge, combinable with `tag:`). Filtering by source within a `/rag`
-  query is not started. See `docs/TRACKER_MEMORY.md`.
-- Runtime lifecycle / `openclawctl` / `OPENCLAW_BOOT_MODE` — **first cut
-  done (post-v1.6)**. `bin/openclawctl status|start|stop|restart
-  core|model|full` + `boot` (honours `OPENCLAW_BOOT_MODE=core|full|manual`)
-  over `docker compose`, no compose restructuring. Telegram plain-chat and
-  voice replies degrade gracefully when the model engine is stopped. See
-  `docs/RUNTIME_LIFECYCLE.md`. Not done: the `openclawctl status model`
-  remote-endpoint probe for the Arm-gateway profile, and per-platform
-  model-service wiring beyond `openclaw-vllm`.
-- Platform presets — **partially done**: the v1.3 branch added O6 and DGX
-  multi-model configs and catalog examples (shipped in v1.4); the
-  remaining profiles and per-platform smoke tests are not done.
+
+**Memory and knowledge**
+
+- OCR extractor for Category RAG -- **not started**
+  (`ingest_image_into_category` takes an extractor list, today only
+  `vlm_description`).
+- Personal memory deepening -- structured `/mem`, reminders, archival, and
+  tag/date/category scoping are done; v1.17 added the `/mem upcoming` and
+  `/rag digest` daily reports. Open: filtering a `/rag` query by source,
+  profile show/set flows, and a real calendar source for the schedule report
+  (today it only sees `/mem ... due:` dates, with no times).
+
+**English-learning bot**
+
+- Done in v1.19: the IELTS Part 2 bank is past its 60-card target (112
+  cue cards, 28 per category); chunks not learned by Sunday move into the learner's `/vocab
+  review` queue, so missed chunks keep coming back after their week; and
+  Sunday adds a weekly recap card (days done, chunks learned, words looked
+  up).
+- Live verification still planned (`docs/TESTING.md`): a full real-calendar
+  week (the first one starts 2026-09-28), and the week-18 Part 2+3 combo.
+- Next up: a real calendar source for the schedule report (see Memory and
+  knowledge above).
+
+**Testing**
+
+- L3 end-to-end script (`scripts/e2e_run.py`) -- planned, not written.
+
+Done since the v1.6 re-baseline, for reference: Telegram conversational
+memory (post-v1.6), concurrent multi-bot personas (see the section below),
+and everything listed under "Delivered since v1.2" above.
 
 ## Delivered milestone: Telegram conversational memory
 
@@ -587,9 +612,14 @@ morning. Overdue / due-soon items repeat every run on purpose; only stale
 undated items get a cooldown (`last_reminded_at` +
 `OPENCLAW_MEM_DIGEST_REMIND_COOLDOWN_DAYS`) so they aren't nagged about daily.
 
+Also done: the `/mem upcoming [days]` schedule report (v1.17), which unlike
+the digest always reports, for a morning push.
+
 Candidate work still open:
 
 - Profile show/set flows.
+- A real calendar source (e.g. a read-only calendar feed) for the schedule
+  report; `/mem ... due:` only records dates.
 - More precise `/rag` scope filters. Category RAG (`/rag #<category>` and
   `/rag #all`, shipped v1.4) covers collection-level scoping; `/mem list`,
   `/rag tag:<word>`, and `/rag since:`/`before:` (all shipped v1.9) cover
