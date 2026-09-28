@@ -1,7 +1,7 @@
 # Future TODO List
 
 This document tracks candidate work items for `openclaw-arm-continuum`.
-Current release: **v1.20**.
+Current release: **v1.21**.
 
 The runtime is intentionally stable and text-first. The items below are
 future-facing and should be implemented incrementally without breaking the
@@ -151,8 +151,19 @@ v1.2 baseline. What has actually shipped since then:
   Monday falls back to an unused older episode when the show is on a break,
   `/w` turns away sentences, and the video relay logs every outcome and
   waits up to 600s.
+- **v1.21 — Monday as intensive listening.** A review of every daily card
+  from the learner's side found Monday asking them to listen without
+  sending any audio: Monday now sends the selected stretch as an audio clip
+  with a link to the full episode, and adds a listening check -- a gist
+  question and a 3-gap dictation from the clip (graded in code, answers
+  never sent to the model), with the transcript revealed in the feedback
+  and a Listening line in the Sunday recap. Chunk examples are now always
+  English sentences containing the phrase (they had come back in Chinese,
+  which emptied Saturday's cloze), cloze matching handles irregular forms,
+  `-ing`, `someone`/`one's` placeholders and bracketed optional parts, and
+  Friday lists each chunk's example.
 
-Still open, re-baselined against v1.20:
+Still open, re-baselined against v1.21:
 
 **Platform / runtime**
 
