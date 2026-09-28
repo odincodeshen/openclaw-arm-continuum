@@ -19,7 +19,7 @@ through daily_task_tracking, which is owner-scoped.
 import json
 import random
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
@@ -84,6 +84,12 @@ class WeeklyContent:
     chunks: list[Chunk]
     window_segments: list[TranscriptSegment]
     episode_link: str = ""  # the programme page, for listening to the whole episode
+    # Listening check (gist question + a dictation gap-fill from the clip).
+    # Weeks stored before this existed have listening_check False and are
+    # graded on the chunk sentence alone.
+    listening_check: bool = False
+    dictation_prompt: str = ""
+    dictation_answers: list[str] = field(default_factory=list)
 
 
 GUEST_WINDOW_SCHEMA = {
@@ -348,6 +354,9 @@ def store_weekly_content(
                 "context_sentence": chunk.context_sentence,
                 "transcript_excerpt": content.transcript_excerpt,
                 "window_segments_json": segments_json,
+                "listening_check": content.listening_check,
+                "dictation_prompt": content.dictation_prompt,
+                "dictation_answers": content.dictation_answers,
                 "mastered": False,
                 "needs_review": False,
             },
@@ -374,6 +383,64 @@ def read_this_week_chunks(qdrant: QdrantClient, collection: str, week_number: in
     return [p["payload"] for p in points]
 
 
+# Words never blanked in the dictation: too short or too predictable to be
+# worth listening for.
+_DICTATION_SKIP_WORDS = {
+    "about", "after", "again", "also", "because", "been", "before", "being", "could", "didn't",
+    "does", "doing", "don't", "down", "each", "even", "from", "have", "having", "here", "into",
+    "it's", "just", "know", "like", "make", "many", "more", "much", "only", "other", "over",
+    "really", "said", "some", "such", "than", "that", "that's", "their", "them", "then", "there",
+    "these", "they", "thing", "things", "think", "this", "those", "very", "want", "well", "were",
+    "what", "when", "where", "which", "while", "will", "with", "would", "your", "yeah",
+}
+DICTATION_BLANKS = 3
+
+
+def _core(token: str) -> str:
+    return token.strip(".,!?;:\"'“”‘’()[]-—…")
+
+
+def choose_dictation(
+    segments: list[TranscriptSegment], start: float, end: float, avoid_words: set[str] | None = None
+) -> tuple[str, list[str]] | None:
+    """Pick one transcript sentence from the selected stretch and blank out
+    three content words, spread across it -- a short dictation to check the
+    learner caught the exact words. Deterministic (no LLM): the segment
+    nearest the middle of the stretch with 8-25 words and at least three
+    candidate words (letters only, 4+ long, not a stock function word, and
+    not in avoid_words -- the week's chunk phrases are printed on the same
+    card, so blanking one of their words would give the answer away)."""
+    avoid = {word.lower() for word in (avoid_words or set())}
+    middle = (start + end) / 2
+    candidates = []
+    for segment in segments:
+        if segment.end < start or segment.start > end:
+            continue
+        tokens = segment.text.split()
+        if not 8 <= len(tokens) <= 25:
+            continue
+        usable = [
+            i
+            for i, token in enumerate(tokens)
+            if i > 0 and _core(token).isalpha() and len(_core(token)) >= 4
+            and _core(token).lower() not in _DICTATION_SKIP_WORDS
+            and _core(token).lower() not in avoid
+        ]
+        if len(usable) >= DICTATION_BLANKS:
+            candidates.append((abs((segment.start + segment.end) / 2 - middle), tokens, usable))
+    if not candidates:
+        return None
+    _, tokens, usable = min(candidates, key=lambda item: item[0])
+    # three picks spread evenly over the usable words
+    picks = sorted({usable[round(k * (len(usable) - 1) / (DICTATION_BLANKS - 1))] for k in range(DICTATION_BLANKS)})
+    answers = []
+    for i in picks:
+        core = _core(tokens[i])
+        answers.append(core)
+        tokens[i] = tokens[i].replace(core, "____", 1)
+    return " ".join(tokens), answers
+
+
 def _mmss(seconds: float) -> str:
     total = int(round(seconds))
     return f"{total // 60}:{total % 60:02d}"
@@ -392,18 +459,45 @@ def build_monday_message(content: WeeklyContent) -> str:
     ]
     if content.episode_link:
         lines.append(f"Full episode: {esc(content.episode_link)}")
-    content_html = "\n".join(lines) + "\n\n" + "\n\n".join(chunk_blocks)
+    if not content.listening_check:
+        content_html = "\n".join(lines) + "\n\n" + "\n\n".join(chunk_blocks)
+        return render_task_card(
+            TaskCard(
+                day_code="mon",
+                week_number=content.week_number,
+                goal="Understand one interview clip and learn 3 chunks",
+                duration="~20 min",
+                reply_mode="Text or voice",
+                content_html=content_html,
+                steps=[
+                    "Listen to the audio clip (or that part of the full episode)",
+                    "Pick one chunk and use it in your own real-life sentence",
+                    DONE_STEP,
+                ],
+            )
+        )
+    parts = [f"{bold('1. Gist')}\nIn one or two English sentences: what is the guest talking about?"]
+    if content.dictation_prompt:
+        parts.append(
+            f"{bold('2. Dictation')}\nFill the {len(content.dictation_answers)} gaps with the exact words you hear:\n"
+            f"{italic(content.dictation_prompt)}"
+        )
+    else:
+        parts.append(f"{bold('2. Dictation')}\n(No dictation this week -- skip to 3.)")
+    parts.append(f"{bold('3. Chunk')}\nUse one of these in a sentence about your own life:\n\n" + "\n\n".join(chunk_blocks))
+    content_html = "\n".join(lines) + "\n\n" + "\n\n".join(parts)
     return render_task_card(
         TaskCard(
             day_code="mon",
             week_number=content.week_number,
             goal="Understand one interview clip and learn 3 chunks",
-            duration="~20 min",
-            reply_mode="Text or voice",
+            duration="~25 min",
+            reply_mode="One message, by number",
             content_html=content_html,
             steps=[
-                "Listen to the audio clip (or that part of the full episode)",
-                "Pick one chunk and use it in your own real-life sentence",
+                "Listen to the audio clip as many times as you like",
+                "Reply in one message: 1. the gist  2. the missing words  3. your sentence "
+                "(type the dictation; voice is fine for 1 and 3)",
                 DONE_STEP,
             ],
         )
@@ -449,6 +543,10 @@ def run_monday_task(
     chunks = extract_chunks(llm, window["excerpt_text"])
 
     week_number = next_week_number(qdrant, collection)
+    chunk_words = {_core(word).lower() for chunk in chunks for word in chunk.phrase.split()}
+    dictation = choose_dictation(
+        transcript.segments, float(window["start_seconds"]), float(window["end_seconds"]), chunk_words
+    )
     content = WeeklyContent(
         week_number=week_number,
         episode_title=episode.title,
@@ -459,6 +557,9 @@ def run_monday_task(
         chunks=chunks,
         window_segments=transcript.segments,
         episode_link=(episode.link or "").replace("http://www.bbc.co.uk/", "https://www.bbc.co.uk/"),
+        listening_check=True,
+        dictation_prompt=dictation[0] if dictation else "",
+        dictation_answers=dictation[1] if dictation else [],
     )
     store_weekly_content(qdrant, embeddings, collection, content)
 
@@ -499,7 +600,18 @@ def evaluate_monday_reply(
     not a structured report. This function was missing through v1.11-v1.14
     -- without it Monday could never be marked completed, so it would
     always show up in Saturday's skipped-task list even when the user did
-    reply -- added here while wiring up full daily-completion tracking."""
+    reply -- added here while wiring up full daily-completion tracking.
+
+    Weeks created with the listening check (gist + dictation) are graded
+    on all three parts by evaluate_monday_listening instead."""
+    try:
+        payload = read_this_week_payload(qdrant, collection, week_number)
+    except ValueError:
+        payload = {}  # no stored week to read the listening check from -- grade the chunk alone
+    if payload.get("listening_check"):
+        return evaluate_monday_listening(
+            qdrant, embeddings, llm, collection, owner, week_number, chunks, payload, transcribed_reply
+        )
     chunk_usage = evaluate_chunk_usage(
         llm, chunks, transcribed_reply, model_answer_instruction=MONDAY_MODEL_ANSWER_INSTRUCTION
     )
@@ -537,6 +649,167 @@ def evaluate_monday_reply(
             example=chunk_usage.get("model_answer") or "",
             answer=transcribed_reply,
         )
+    )
+
+
+MONDAY_LISTENING_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "gist_correct": {"type": "boolean"},
+        "gist_feedback": {"type": "string"},
+        "gist_model": {"type": "string"},
+        "dictation_words": {"type": "array", "items": {"type": "string"}},
+        "chunk_results": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "phrase": {"type": "string", "minLength": 1},
+                    "used_correctly": {"type": "boolean"},
+                    "user_sentence": {"type": "string"},
+                },
+                "required": ["phrase", "used_correctly", "user_sentence"],
+                "additionalProperties": False,
+            },
+        },
+        "model_answer": {"type": "string"},
+    },
+    "required": ["gist_correct", "gist_feedback", "gist_model", "dictation_words", "chunk_results", "model_answer"],
+    "additionalProperties": False,
+}
+
+
+def _normalize_word(word: str) -> str:
+    return re.sub(r"[^a-z0-9']", "", word.lower().replace("’", "'"))
+
+
+def _within_one_edit(a: str, b: str) -> bool:
+    if abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) == len(b):
+        return sum(x != y for x, y in zip(a, b)) <= 1
+    shorter, longer = (a, b) if len(a) < len(b) else (b, a)
+    return any(longer[:i] + longer[i + 1 :] == shorter for i in range(len(longer)))
+
+
+def dictation_word_correct(given: str, expected: str) -> bool:
+    """Case- and punctuation-insensitive; one typo allowed on longer words,
+    since the expected word itself comes from a Whisper transcript."""
+    a, b = _normalize_word(given), _normalize_word(expected)
+    if not a:
+        return False
+    return a == b or (len(b) >= 5 and _within_one_edit(a, b))
+
+
+def _record_listening_check(
+    qdrant: QdrantClient, collection: str, owner: str, week_number: int, fields: dict, vector_source
+) -> None:
+    """One record per learner per week, overwritten by each attempt."""
+    tag = f"eng_wk{week_number}"
+    existing = read_owned_points(qdrant, collection, owner, {"tag": tag, "kind": "listening_check"}, limit=1)
+    if existing:
+        qdrant.set_payload(collection, existing[0]["id"], fields)
+        return
+    text = f"week {week_number} listening check"
+    write_owned_point(qdrant, collection, owner, text, vector_source(text), {"tag": tag, "kind": "listening_check", **fields})
+
+
+def read_listening_check(qdrant: QdrantClient, collection: str, owner: str, week_number: int) -> dict | None:
+    points = read_owned_points(
+        qdrant, collection, owner, {"tag": f"eng_wk{week_number}", "kind": "listening_check"}, limit=1
+    )
+    return (points[0].get("payload") or {}) if points else None
+
+
+def evaluate_monday_listening(
+    qdrant: QdrantClient,
+    embeddings: EmbeddingClient,
+    llm: LlmClient,
+    collection: str,
+    owner: str,
+    week_number: int,
+    chunks: list[dict],
+    payload: dict,
+    reply: str,
+) -> str:
+    """Monday with the listening check: one LLM call judges the gist against
+    the transcript, pulls out the learner's dictation words (graded here,
+    deterministically) and judges the chunk sentence. The feedback reveals
+    the transcript -- the "check what you heard" step of intensive
+    listening."""
+    transcript = payload.get("transcript_excerpt") or ""
+    dictation_prompt = payload.get("dictation_prompt") or ""
+    answers = list(payload.get("dictation_answers") or [])
+    phrase_list = "\n".join(f"- {c['phrase']}" for c in chunks)
+    prompt = (
+        "A language learner listened to a clip from a British radio interview and "
+        "answered in one message: 1. the gist, 2. a dictation (the missing words), "
+        "3. a sentence using one of this week's chunks.\n\n"
+        f"What was said in the clip:\n\"{transcript}\"\n\n"
+        f"Dictation sentence (with gaps):\n{dictation_prompt or '(none this week)'}\n\n"
+        f"This week's chunks:\n{phrase_list}\n\n"
+        f"The learner's reply (transcribed if spoken):\n\"{reply}\"\n\n"
+        "gist_correct: does part 1 capture what the guest is mainly talking about? "
+        "gist_feedback: one short sentence on what they got or missed. gist_model: a "
+        "good one- or two-sentence gist. dictation_words: the words the learner gave "
+        "for the gaps, in order, copied exactly as written (spelling mistakes "
+        "included, empty string for a gap they left out). chunk_results: for each "
+        "chunk, whether part 3 uses it correctly and naturally (a spoken form like "
+        "a changed tense still counts) and the learner's sentence that uses it. "
+        "model_answer: one natural real-life example sentence for each chunk, one "
+        "per line."
+    )
+    data = json.loads(llm.chat_json(prompt, MONDAY_LISTENING_SCHEMA, schema_name="monday_listening", max_tokens=1000))
+
+    result_lines = [f"{'✅' if data['gist_correct'] else '❌'} Gist — {data['gist_feedback'].strip()}"]
+    tips: list[str] = []
+    dictation_correct = 0
+    if answers:
+        given = list(data.get("dictation_words") or [])
+        given += [""] * (len(answers) - len(given))
+        marks = []
+        for index, (word, expected) in enumerate(zip(given, answers), start=1):
+            if dictation_word_correct(word, expected):
+                dictation_correct += 1
+                marks.append(f"    ✅ {index}. {expected}")
+            else:
+                heard = f'"{word}"' if word.strip() else "(blank)"
+                marks.append(f"    ❌ {index}. {heard} → {expected}")
+        result_lines.append(f"Dictation {dictation_correct}/{len(answers)}")
+        result_lines += marks
+        if dictation_correct < len(answers):
+            tips.append("Replay the clip and listen for the words you missed -- the transcript is below")
+
+    used_phrases = []
+    for result in data["chunk_results"]:
+        if not result["used_correctly"]:
+            continue
+        used_phrases.append(result["phrase"])
+        record_chunk_usage(
+            qdrant, embeddings, collection, owner, week_number, result["phrase"],
+            used_correctly=True, user_sentence=(result.get("user_sentence") or "").strip(),
+            source="mon_reply", evaluation="mon",
+        )
+    if used_phrases:
+        result_lines += [f"✅ {phrase} — used correctly" for phrase in used_phrases]
+    else:
+        result_lines.append("❌ No chunk from this week spotted")
+        tips.append("Use one of this week's chunks in a sentence about your own life")
+
+    _record_listening_check(
+        qdrant, collection, owner, week_number,
+        {"gist_correct": bool(data["gist_correct"]), "dictation_correct": dictation_correct,
+         "dictation_total": len(answers)},
+        embeddings.embed,
+    )
+    mark_task_completed(qdrant, collection, week_number, "mon", owner)
+    example = (
+        f"Gist:\n{data['gist_model'].strip()}\n\n"
+        f"Chunk examples:\n{data['model_answer'].strip()}\n\n"
+        f"What was said:\n{transcript}"
+    )
+    return render_feedback_card(
+        FeedbackCard(day_code="mon", result_lines=result_lines, tip_lines=tips, example=example, answer=reply)
     )
 
 

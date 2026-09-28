@@ -19,7 +19,12 @@ from openclaw_runtime.embedding_client import EmbeddingClient
 from openclaw_runtime.message_cards import RULE, bold, esc
 from openclaw_runtime.owned_records import read_owned_points
 from openclaw_runtime.qdrant_client import QdrantClient
-from openclaw_runtime.skills.english_bot import read_chunk_progress, read_this_week_chunks
+from openclaw_runtime.skills.english_bot import (
+    read_chunk_progress,
+    read_listening_check,
+    read_this_week_chunks,
+    read_this_week_payload,
+)
 from openclaw_runtime.vocabulary import add_for_review, list_word_list
 
 PRACTICE_DAYS = [("mon", "Mon"), ("tue", "Tue"), ("wed", "Wed"), ("thu", "Thu"), ("fri", "Fri"), ("sat", "Sat")]
@@ -101,6 +106,8 @@ def render_weekly_recap(
     promoted: list[str],
     words_this_week: int | None = None,
     words_total: int | None = None,
+    listening: dict | None = None,
+    listening_expected: bool = False,
 ) -> str:
     marks = {"done": "✅", "missed": "❌", "none": "—"}
     day_line = "　".join(f"{label} {marks[days.get(code, 'none')]}" for code, label in PRACTICE_DAYS)
@@ -112,8 +119,18 @@ def render_weekly_recap(
         day_line,
         f"{done} of {len(PRACTICE_DAYS)} days done",
         "",
-        bold("Chunks"),
     ]
+    if listening_expected:
+        lines.append(bold("Listening"))
+        if listening:
+            gist = "✅" if listening.get("gist_correct") else "❌"
+            total = int(listening.get("dictation_total") or 0)
+            dictation = f" · Dictation {int(listening.get('dictation_correct') or 0)}/{total}" if total else ""
+            lines.append(f"Gist {gist}{dictation}")
+        else:
+            lines.append("Not answered this week")
+        lines.append("")
+    lines.append(bold("Chunks"))
     for outcome in outcomes:
         if outcome.learned:
             lines.append(f"✅ {esc(outcome.phrase)}")
@@ -143,6 +160,11 @@ def build_weekly_recap(
     now = now or datetime.now(timezone.utc)
     outcomes = chunk_outcomes(qdrant, collection, owner, week_number)
     days = practice_days(qdrant, collection, owner, week_number)
+    try:
+        listening_expected = bool(read_this_week_payload(qdrant, collection, week_number).get("listening_check"))
+    except ValueError:
+        listening_expected = False
+    listening = read_listening_check(qdrant, collection, owner, week_number) if listening_expected else None
     promoted: list[str] = []
     words_this_week = words_total = None
     if vocab_enabled:
@@ -153,5 +175,12 @@ def build_weekly_recap(
         words_total = len(entries)
         words_this_week = sum(1 for e in looked_up if (e.get("added_at") or "") >= since)
     return render_weekly_recap(
-        week_number, days, outcomes, promoted=promoted, words_this_week=words_this_week, words_total=words_total
+        week_number,
+        days,
+        outcomes,
+        promoted=promoted,
+        words_this_week=words_this_week,
+        words_total=words_total,
+        listening=listening,
+        listening_expected=listening_expected,
     )

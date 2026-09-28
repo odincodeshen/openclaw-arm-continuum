@@ -12,7 +12,7 @@ the rest of the week builds on it.
 
 | Day | Task | Reply | Feedback |
 |---|---|---|---|
-| Mon | Listen to a guest-led stretch of the episode (sent as an audio clip, with a link to the full episode); learn 3 chunks (phrases) picked from it, each with a Chinese meaning and an English example that uses it | Text or voice: use one chunk in your own sentence | Which chunks were used correctly, example sentences |
+| Mon | Listen to a guest-led stretch of the episode (sent as an audio clip, with a link to the full episode); learn 3 chunks (phrases) picked from it, each with a Chinese meaning and an English example that uses it | One message, by number: 1. the gist, 2. a 3-gap dictation from the clip, 3. one chunk in your own sentence | Gist check, dictation word by word, chunks used, then the clip's transcript to check what you heard |
 | Tue | Shadow a short audio clip of the guest, with stress and pauses marked | Voice | Word-level accuracy (missed/extra words), pace, a short analysis in Traditional Chinese, the reference text |
 | Wed | IELTS Speaking Part 2 cue card; from week 18, Part 2 plus a related Part 3 question | Voice, 1.5–2 min | STAR check (Situation/Task/Action/Result), vocabulary upgrades, a band-8 model answer; Part 3 adds a claim/concession/conclusion check |
 | Thu | British workplace small talk: a colleague's opener | Voice | Anchor & Bounce check, a more natural phrasing, a model reply, the colleague's reply |
@@ -24,8 +24,15 @@ The Monday transcript comes from the local Whisper service; the chunk
 choice, annotations and every evaluation come from the local model. Tuesday's
 stress marks are a best guess from the text, not a measurement of the audio.
 
+Monday's **listening check** makes it intensive listening: the dictation is one
+sentence from the clip with three content words blanked (never words from the
+week's chunks, which are on the same card), graded word by word with one typo
+allowed on longer words since the answer comes from a Whisper transcript. The
+gist and the chunk sentence are judged in the same single model call, and the
+feedback then shows the transcript of the clip.
+
 After the reading card, Sunday sends each learner a **weekly recap**: which of
-Monday–Saturday they answered, which of the week's chunks they've learned,
+Monday–Saturday they answered, their Monday listening result, which of the week's chunks they've learned,
 and -- with the word list enabled -- how many words they looked up. A chunk
 counts as learned when its latest Monday, Friday and Saturday attempts were
 all right; one that's still flagged, or was never practised, moves into that
