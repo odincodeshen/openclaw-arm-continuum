@@ -115,7 +115,7 @@ class RunTuesdayTaskTest(unittest.TestCase):
             ]
         )
         self.qdrant = MagicMock()
-        self.qdrant.scroll_by_filters.return_value = [
+        weekly = [
             {
                 "payload": {
                     "week_number": 1,
@@ -125,6 +125,10 @@ class RunTuesdayTaskTest(unittest.TestCase):
                 }
             }
         ]
+        # weekly content for the week lookup; no earlier daily-task record
+        self.qdrant.scroll_by_filters.side_effect = lambda collection, filters, limit=64, **kw: (
+            weekly if filters.get("kind") == "weekly_content" else []
+        )
 
         self.embeddings = MagicMock()
         self.embeddings.embed.return_value = [0.1]

@@ -75,11 +75,23 @@ OPENCLAW_ENGLISH_BOT_PUSH_TIME=07:15
 OPENCLAW_ENGLISH_BOT_SWEEP_TIME=21:00
 OPENCLAW_ENGLISH_BOT_TIMEZONE=Europe/London
 OPENCLAW_ENGLISH_BOT_STATE_PATH=/workspace/.openclaw/english_bot_state.json
+OPENCLAW_ENGLISH_BOT_PREPARE_TIME=04:00      # optional, see below
 ```
 
 The scheduler runs inside the Telegram gateway process. It pushes once a day
 after `PUSH_TIME` and sweeps once after `SWEEP_TIME`, both in `TIMEZONE`, and
 remembers what it already did in `STATE_PATH`.
+
+**Off-peak preparation.** With `PREPARE_TIME` set, everything the day's push
+needs the model, Whisper or audio clipping for is generated then (any time in
+the 90 minutes after it), and the finished cards, clips and task are held in
+the state file until `PUSH_TIME`, when they are sent and the task opens. The
+learner sees no difference. Preparation is tried once a day; if it fails, or
+the bot was down, the push is generated at `PUSH_TIME` as usual.
+
+Open tasks (and open `/vocab review`s) are also saved to
+`OPENCLAW_PENDING_STATE_PATH` (default `/workspace/.openclaw/pending_answers.json`),
+so restarting the container doesn't drop them.
 
 For testing, `OPENCLAW_ENGLISH_BOT_FORCE_DAY_CODE=mon`…`sun` makes every day
 behave as that weekday. To re-run a push on the same day, also clear
@@ -99,7 +111,9 @@ Everything lives in the bot's tracker collection
   filter by it -- the helpers in `owned_records.py` refuse to run without one.
 
 The week number is the highest week stored so far; Monday's push creates the
-next one. Monday skips the push if the newest episode was already used.
+next one from the newest full-length episode not used yet -- when the show is
+on a break (only short daily clips), that's an older episode from the feed.
+Monday only skips the push when every full-length episode has been used.
 
 ## Requirements
 

@@ -155,7 +155,7 @@ class GatewayReviewRoutingTest(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def _open_review(self, expires_in=60.0):
-        gateway.VOCAB_REVIEW_PENDING[5] = {"questions": [{"phrase": "x"}], "expires_at": time.monotonic() + expires_in}
+        gateway.VOCAB_REVIEW_PENDING[5] = {"questions": [{"phrase": "x"}], "expires_at": time.time() + expires_in}
 
     def test_typed_reply_answers_the_review(self) -> None:
         self._open_review()

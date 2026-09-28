@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import openclaw_cron_worker as cron_worker
 from openclaw_runtime.skills.base import SkillResult
@@ -118,6 +119,62 @@ class WriteGatewayRunbackTest(unittest.TestCase):
         self.assertEqual(state["consecutiveErrors"], 0)
         self.assertEqual(state["consecutiveSkipped"], 0)
         self.assertEqual(state["lastDeliveryStatus"], "delivered")
+
+
+
+class OffPeakPrepareTest(unittest.TestCase):
+    NOW = datetime(2026, 9, 29, 4, 10)
+
+    def _job(self, job_id, time_text, prompt="/rag digest", **extra):
+        return {"id": job_id, "name": "知識｜昨日新增", "prompt": prompt, "chat_id": 1,
+                "schedule": {"type": "daily", "time": time_text}, **extra}
+
+    def test_window_bounds(self) -> None:
+        self.assertTrue(cron_worker.in_prepare_window(self.NOW, "04:00-05:30"))
+        self.assertTrue(cron_worker.in_prepare_window(self.NOW.replace(hour=5, minute=30), "04:00-05:30"))
+        self.assertFalse(cron_worker.in_prepare_window(self.NOW.replace(hour=5, minute=31), "04:00-05:30"))
+        self.assertFalse(cron_worker.in_prepare_window(self.NOW, ""))
+        self.assertFalse(cron_worker.in_prepare_window(self.NOW, "garbage"))
+
+    def test_only_later_enabled_daily_jobs_with_a_listed_prompt(self) -> None:
+        jobs = [
+            self._job("digest", "07:05"),
+            self._job("weather", "07:30", prompt="UK weather today"),
+            self._job("earlier", "03:00"),
+            self._job("off", "07:05", enabled=False),
+            {**self._job("weekly", "07:05"), "schedule": {"type": "weekly", "time": "07:05", "day": "mon"}},
+        ]
+        chosen = cron_worker.preparable_jobs(jobs, self.NOW, ("/rag digest",))
+        self.assertEqual([j["id"] for j in chosen], ["digest"])
+
+    def test_prepared_result_is_delivered_without_routing_again(self) -> None:
+        state: dict = {}
+        router = _FakeRouter(SkillResult("rag_retrieve", "知識｜昨日新增\n• one"))
+        self.assertEqual(cron_worker.prepare_jobs(router, [self._job("digest", "07:05")], self.NOW, state), 1)
+
+        sent = []
+        at_seven = self.NOW.replace(hour=7, minute=5)
+        prepared = cron_worker.take_prepared({"id": "digest"}, at_seven, state)
+        failing_router = MagicMock()
+        failing_router.route.side_effect = AssertionError("should not route again")
+        with patch.object(cron_worker, "send_message", lambda settings, chat_id, text: sent.append(text)):
+            result = cron_worker.run_dynamic_job(build_settings(cron_chat_ids={1}), failing_router, at_seven,
+                                                 self._job("digest", "07:05"), prepared)
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(sent, ["知識｜昨日新增\n• one"])
+        self.assertEqual(state["prepared_jobs"], {})  # used up
+
+    def test_yesterdays_prepared_result_is_ignored(self) -> None:
+        state = {"prepared_jobs": {"digest": {"date": "2026-09-28", "answer": "old", "suppress": False}}}
+        self.assertIsNone(cron_worker.take_prepared({"id": "digest"}, self.NOW, state))
+
+    def test_a_failed_preparation_leaves_the_job_to_run_live(self) -> None:
+        state: dict = {}
+        router = MagicMock()
+        router.route.side_effect = RuntimeError("vLLM busy")
+        with patch.object(cron_worker, "log", lambda message: None):
+            self.assertEqual(cron_worker.prepare_jobs(router, [self._job("digest", "07:05")], self.NOW, state), 0)
+        self.assertIsNone(cron_worker.take_prepared({"id": "digest"}, self.NOW.replace(hour=7), state))
 
 
 if __name__ == "__main__":

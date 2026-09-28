@@ -181,16 +181,34 @@ def is_episode_processed(qdrant: QdrantClient, collection: str, guid: str) -> bo
     return bool(points)
 
 
+def full_length_episodes(rss_xml: str) -> list[RssItem]:
+    """Every item long enough to be a real episode, not a short highlight
+    clip (see MIN_EPISODE_DURATION_SECONDS), newest first -- parse_rss_items
+    already sorts by pubDate. An item with no <itunes:duration> at all is
+    treated as unknown-but-acceptable rather than excluded, since the tag
+    isn't guaranteed by every feed."""
+    return [
+        item
+        for item in parse_rss_items(rss_xml)
+        if item.duration_seconds is None or item.duration_seconds >= MIN_EPISODE_DURATION_SECONDS
+    ]
+
+
 def fetch_latest_episode(rss_xml: str) -> RssItem | None:
-    """Newest item (by pubDate, since parse_rss_items already sorts that way)
-    that is long enough to be a real episode, not a short highlight clip --
-    see MIN_EPISODE_DURATION_SECONDS. An item with no <itunes:duration> at
-    all is treated as unknown-but-acceptable rather than excluded, since the
-    tag isn't guaranteed by every feed."""
-    items = parse_rss_items(rss_xml)
-    for item in items:
-        if item.duration_seconds is None or item.duration_seconds >= MIN_EPISODE_DURATION_SECONDS:
-            return item
+    """Newest full-length episode in the feed."""
+    episodes = full_length_episodes(rss_xml)
+    return episodes[0] if episodes else None
+
+
+def pick_unused_episode(rss_xml: str, is_processed: Callable[[str], bool]) -> RssItem | None:
+    """Newest full-length episode not used for a week yet. The show takes
+    breaks (only daily highlight clips for weeks at a time), so when the
+    newest episode has already been used, an older one from the feed's
+    back catalogue still gives the week fresh material. None only when
+    every full-length episode in the feed has been used."""
+    for episode in full_length_episodes(rss_xml):
+        if episode.enclosure_url and not is_processed(episode.guid):
+            return episode
     return None
 
 
@@ -340,13 +358,14 @@ def run_monday_task(
     workspace_dir: Path,
     rss_url: str = BBC_DESERT_ISLAND_DISCS_RSS,
 ) -> WeeklyContent | None:
-    """Full Monday pipeline. Returns None (and sends nothing) if the latest
-    episode has already been processed."""
+    """Full Monday pipeline, on the newest episode not used yet. Returns None
+    (and sends nothing) only when every full-length episode in the feed has
+    already been used."""
     rss_xml = get_text(rss_url, timeout=30)
-    episode = fetch_latest_episode(rss_xml)
-    if episode is None or not episode.enclosure_url:
+    if not any(episode.enclosure_url for episode in full_length_episodes(rss_xml)):
         raise ValueError("BBC RSS feed returned no usable episode with an audio enclosure")
-    if is_episode_processed(qdrant, collection, episode.guid):
+    episode = pick_unused_episode(rss_xml, lambda guid: is_episode_processed(qdrant, collection, guid))
+    if episode is None:
         return None
 
     workspace_dir.mkdir(parents=True, exist_ok=True)

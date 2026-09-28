@@ -239,7 +239,8 @@ class RunSundayTaskTest(unittest.TestCase):
             if filters.get("tag") == "eng_sunday_pushed":
                 return []  # not pushed yet -> article passes dedup
             if filters.get("kind") == "daily_task":
-                # simulates mark_task_pushed's earlier write existing to find
+                # one daily-task record per owner: mark_task_pushed resets it,
+                # mark_task_completed then flips it
                 return [{"id": f"pushed-{filters.get('owner', 'x')}", "payload": {"completed": False}}]
             return []
 
@@ -265,7 +266,7 @@ class RunSundayTaskTest(unittest.TestCase):
         self.assertTrue(all("https://guardian.com/piece" in text for _, text in sent))
         self.assertTrue(all("五十字摘要。" in text for _, text in sent))
         # article dedup mark + at least the two mark_task_pushed/mark_task_completed writes
-        self.assertGreaterEqual(qdrant.upsert_text.call_count, 3)
+        self.assertEqual(qdrant.upsert_text.call_count, 1)  # the article dedup mark; task records are reused
         # Sunday has no reply to evaluate, so completion is marked immediately
         completed_calls = [
             c for c in qdrant.set_payload.call_args_list if c.args[2] == {"completed": True}

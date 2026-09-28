@@ -49,7 +49,7 @@ through to normal chat / `/search` handling instead.
 |---|---|---|
 | `OPENCLAW_VIDEO_SUMMARY_RELAY_URL` | *(empty, disabled)* | The Apps Script Web App `/exec` URL to POST the link to |
 | `OPENCLAW_VIDEO_SUMMARY_RELAY_SECRET` | *(empty)* | Shared secret sent in the POST body's `secret` field; the Apps Script side must check it matches, since the deployed Web App is reachable by anyone who has the URL |
-| `OPENCLAW_VIDEO_SUMMARY_RELAY_TIMEOUT_SECONDS` | `360` | How long the background thread waits for the Apps Script response. Runs off the polling loop, so a long wait does not block other chat traffic. Matches Apps Script's own ~6-minute execution ceiling. |
+| `OPENCLAW_VIDEO_SUMMARY_RELAY_TIMEOUT_SECONDS` | `600` | How long the background thread waits for the Apps Script response. Runs off the polling loop, so a long wait does not block other chat traffic. Kept well above Apps Script's own ~6-minute execution ceiling, so a run that finishes near that ceiling isn't reported as a timeout here; a run Apps Script kills at the ceiling still comes back as a failure. |
 
 Only set these for the bot profile that actually owns the Apps Script
 integration (e.g. `profiles/lc9_dgx2_apa/.env`). Every other bot leaves

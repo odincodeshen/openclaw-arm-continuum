@@ -69,6 +69,8 @@ def build_settings(**overrides) -> Settings:
         cron_poll_seconds=30,
         cron_due_window_minutes=15,
         cron_chat_ids=set(),
+        cron_prepare_window="",
+        cron_prepare_prompts=("/rag digest",),
         cron_jobs_path=Path("cron_jobs.json"),
         cron_state_path=Path("cron_state.json"),
         task_history_path=Path("task_history.jsonl"),
@@ -91,9 +93,11 @@ def build_settings(**overrides) -> Settings:
         english_bot_timezone="Europe/London",
         english_bot_state_path=Path("english_bot_state.json"),
         english_bot_force_day_code="",
+        english_bot_prepare_time="",
         dictionary_enabled=False,
         dictionary_path=Path("ecdict.sqlite"),
         rag_include_categories=False,
+        pending_state_path=None,
     )
     base.update(overrides)
     return Settings(**base)

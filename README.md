@@ -368,6 +368,12 @@ A job's result is pushed to Telegram (and recorded in the Gateway run
 history) only -- it is not saved into the inbox, so it never ends up indexed
 back into memory.
 
+To run the model work off-peak (for example on cheap overnight electricity),
+set `OPENCLAW_CRON_PREPARE_WINDOW=04:00-05:30`: daily jobs due later that day
+whose prompt starts with one of `OPENCLAW_CRON_PREPARE_PROMPTS` (default
+`/rag digest`) are generated in the window and still delivered at their own
+time. A job that can't be prepared just runs at its time.
+
 Daily, weekly, and monthly fixed-time jobs run only inside their configured execution window, so restarting a container later in the day will not backfill a missed morning job.
 
 ## Gateway Dashboard

@@ -9,7 +9,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from openclaw_runtime.config import Settings, load_settings
-from openclaw_runtime.cron_jobs import is_due, load_jobs, mark_ran
+from openclaw_runtime.cron_jobs import is_due, load_jobs, mark_ran, validate_time
 from openclaw_runtime.gateway_cron import (
     append_gateway_run_log,
     gateway_job_to_runtime,
@@ -79,11 +79,70 @@ def format_job_message(title: str, answer: str) -> str:
     return f"{title}\n\n{body}"
 
 
-def run_dynamic_job(settings: Settings, router: SkillRouter, now: datetime, job: dict) -> dict:
-    """Run one /cron job and push its result to Telegram. The result is not
-    written anywhere else: saving it into the inbox would have the memory
-    watcher index every run into tracker memory, filling /rag with copies of
-    content that already lives there."""
+def in_prepare_window(now: datetime, window: str) -> bool:
+    """window is "HH:MM-HH:MM" in the cron timezone; empty or malformed = never."""
+    start, _, end = (window or "").partition("-")
+    try:
+        start, end = validate_time(start.strip()), validate_time(end.strip())
+    except Exception:
+        return False
+    return start <= now.strftime("%H:%M") <= end
+
+
+def preparable_jobs(jobs: list[dict], now: datetime, prompts: tuple[str, ...]) -> list[dict]:
+    """Enabled daily jobs due later today whose prompt starts with one of
+    the prefixes -- only content that won't be stale by delivery time."""
+    now_hm = now.strftime("%H:%M")
+    chosen = []
+    for job in jobs:
+        schedule = job.get("schedule") or {}
+        prompt = str(job.get("prompt", "")).strip()
+        if not job.get("enabled", True) or schedule.get("type") != "daily":
+            continue
+        if str(schedule.get("time", "")) <= now_hm:
+            continue
+        if any(prompt.startswith(prefix) for prefix in prompts):
+            chosen.append(job)
+    return chosen
+
+
+def prepare_jobs(router: SkillRouter, jobs: list[dict], now: datetime, state: dict) -> int:
+    """Generate each job's result now and keep it in state for delivery at
+    the job's own time. A job that fails here is simply generated live."""
+    prepared = state.setdefault("prepared_jobs", {})
+    count = 0
+    for job in jobs:
+        try:
+            result = router.route(str(job.get("prompt", "")).strip())
+        except Exception as exc:
+            log(f"[cron] prepare failed id={job.get('id')}, will run at its time: {exc}")
+            continue
+        prepared[str(job["id"])] = {
+            "date": now.strftime("%Y-%m-%d"),
+            "answer": result.answer,
+            "suppress": bool(getattr(result, "suppress_if_routine", False)),
+        }
+        count += 1
+    return count
+
+
+def take_prepared(job: dict, now: datetime, state: dict) -> dict | None:
+    """Today's prepared result for this job (removed from state), if any."""
+    prepared = state.get("prepared_jobs") or {}
+    entry = prepared.pop(str(job.get("id")), None)
+    if entry and entry.get("date") == now.strftime("%Y-%m-%d"):
+        return entry
+    return None
+
+
+def run_dynamic_job(
+    settings: Settings, router: SkillRouter, now: datetime, job: dict, prepared: dict | None = None
+) -> dict:
+    """Run one /cron job and push its result to Telegram -- or push the
+    result prepared earlier in the off-peak window, when there is one. The
+    result is not written anywhere else: saving it into the inbox would have
+    the memory watcher index every run into tracker memory, filling /rag
+    with copies of content that already lives there."""
     started = time.time()
     prompt = str(job.get("prompt", "")).strip()
     title = str(job.get("name", job.get("id", "OpenClaw cron job"))).strip()
@@ -94,9 +153,13 @@ def run_dynamic_job(settings: Settings, router: SkillRouter, now: datetime, job:
     error = None
     suppressed = False
     try:
-        result = router.route(prompt)
-        answer = result.answer or "The OpenClaw runtime returned an empty reply."
-        suppressed = bool(getattr(result, "suppress_if_routine", False))
+        if prepared is not None:
+            answer = prepared.get("answer") or "The OpenClaw runtime returned an empty reply."
+            suppressed = bool(prepared.get("suppress"))
+        else:
+            result = router.route(prompt)
+            answer = result.answer or "The OpenClaw runtime returned an empty reply."
+            suppressed = bool(getattr(result, "suppress_if_routine", False))
     except Exception as exc:
         status = "error"
         error = str(exc)
@@ -237,13 +300,27 @@ def main() -> int:
     while RUNNING:
         try:
             now = datetime.now(tz)
-            for job in load_dynamic_jobs(settings):
+            jobs = load_dynamic_jobs(settings)
+            today = now.strftime("%Y-%m-%d")
+            if in_prepare_window(now, settings.cron_prepare_window) and state.get("last_prepare_date") != today:
+                # Off-peak generation, once a day (marked first, so a failure
+                # isn't retried -- those jobs just run live at their time).
+                state["last_prepare_date"] = today
+                write_json(settings.cron_state_path, state)
+                chosen = preparable_jobs(jobs, now, settings.cron_prepare_prompts)
+                if chosen:
+                    count = prepare_jobs(router, chosen, now, state)
+                    write_json(settings.cron_state_path, state)
+                    log(f"[cron] prepared {count} of {len(chosen)} job(s) for later today")
+            for job in jobs:
                 if is_due(job, now, state, window_minutes=settings.cron_due_window_minutes):
-                    result = run_dynamic_job(settings, router, now, job)
+                    prepared = take_prepared(job, now, state)
+                    result = run_dynamic_job(settings, router, now, job, prepared)
                     mark_ran(job, now, state)
                     write_gateway_runback(settings, job, now, result)
                     write_json(settings.cron_state_path, state)
-                    log(f"[cron] dynamic job id={job.get('id')} status={result['status']}")
+                    source = "prepared" if prepared is not None else "live"
+                    log(f"[cron] dynamic job id={job.get('id')} status={result['status']} ({source})")
         except Exception:
             log(traceback.format_exc())
         time.sleep(settings.cron_poll_seconds)

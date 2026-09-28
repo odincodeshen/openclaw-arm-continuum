@@ -56,7 +56,14 @@ from openclaw_runtime.gateway_cron import (
 from openclaw_runtime.conversation_memory import ConversationMemory
 from openclaw_runtime.embedding_client import EmbeddingClient
 from openclaw_runtime.english_bot_scheduler import (
+    clear_prepared,
     day_code_for,
+    deliver_outbox,
+    mark_prepare_attempted,
+    prepare_todays_push,
+    prepared_for,
+    should_prepare_today,
+    store_prepared,
     dispatch_pending_reply,
     load_json as load_english_bot_state,
     mark_pushed_today,
@@ -170,11 +177,15 @@ ENGLISH_BOT_DONE_COMMAND = "/done"
 def set_pending_answer(chat_id: int, item: dict) -> None:
     with PENDING_ANSWER_LOCK:
         PENDING_ANSWER[chat_id] = item
+    save_pending_state()
 
 
 def pop_pending_answer(chat_id: int) -> dict | None:
     with PENDING_ANSWER_LOCK:
-        return PENDING_ANSWER.pop(chat_id, None)
+        item = PENDING_ANSWER.pop(chat_id, None)
+    if item is not None:
+        save_pending_state()
+    return item
 
 
 def peek_pending_answer(chat_id: int) -> dict | None:
@@ -185,6 +196,56 @@ def peek_pending_answer(chat_id: int) -> dict | None:
 def has_pending_answer(chat_id: int) -> bool:
     with PENDING_ANSWER_LOCK:
         return chat_id in PENDING_ANSWER
+
+
+# Open English-bot tasks and /vocab reviews live in memory; these two keep a
+# copy on disk (settings.pending_state_path) so restarting the container --
+# e.g. `openclawctl restart` to load new code -- doesn't drop today's task.
+PENDING_SAVE_LOCK = threading.Lock()
+
+
+def save_pending_state() -> None:
+    path = settings.pending_state_path
+    if path is None:
+        return
+    with PENDING_ANSWER_LOCK:
+        english = {str(chat_id): item for chat_id, item in PENDING_ANSWER.items()}
+    with VOCAB_REVIEW_LOCK:
+        reviews = {str(chat_id): item for chat_id, item in VOCAB_REVIEW_PENDING.items()}
+    data = {"english_task": english, "vocab_review": reviews}
+    try:
+        with PENDING_SAVE_LOCK:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(path)
+    except Exception as exc:  # noqa: BLE001 - saving is best-effort, never block a reply
+        log(f"[pending] could not save open tasks to {path}: {exc}")
+
+
+def restore_pending_state() -> None:
+    """Load what save_pending_state wrote, dropping /vocab reviews that
+    expired while the gateway was down."""
+    path = settings.pending_state_path
+    if path is None or not path.exists():
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        log(f"[pending] could not read {path}: {exc}")
+        return
+    now = time.time()
+    with PENDING_ANSWER_LOCK:
+        PENDING_ANSWER.update({int(k): v for k, v in (data.get("english_task") or {}).items()})
+    with VOCAB_REVIEW_LOCK:
+        VOCAB_REVIEW_PENDING.update(
+            {
+                int(k): v
+                for k, v in (data.get("vocab_review") or {}).items()
+                if float(v.get("expires_at") or 0) > now
+            }
+        )
+    log(f"[pending] restored english_task={len(PENDING_ANSWER)} vocab_review={len(VOCAB_REVIEW_PENDING)}")
 
 # (chat_id, media_group_id) -> {"paths": [Path], "caption": str, "timer": Timer}
 # Telegram delivers a multi-photo album as separate messages that share one
@@ -1523,7 +1584,7 @@ def help_text() -> str:
 
 # /vocab review sessions waiting for a typed answer, kept apart from
 # PENDING_ANSWER so a review never replaces an open daily English task.
-# chat_id -> {"questions": [...], "expires_at": monotonic seconds}
+# chat_id -> {"questions": [...], "expires_at": epoch seconds}
 VOCAB_REVIEW_PENDING: dict[int, dict] = {}
 VOCAB_REVIEW_LOCK = threading.Lock()
 # An unanswered review stops capturing typed replies after this long, so it
@@ -1543,8 +1604,10 @@ def _start_vocab_review(chat_id: int) -> None:
     with VOCAB_REVIEW_LOCK:
         VOCAB_REVIEW_PENDING[chat_id] = {
             "questions": questions,
-            "expires_at": time.monotonic() + VOCAB_REVIEW_TTL_SECONDS,
+            # wall-clock, not monotonic, so it still means something after a restart
+            "expires_at": time.time() + VOCAB_REVIEW_TTL_SECONDS,
         }
+    save_pending_state()
     send_html(chat_id, render_review_quiz(questions))
 
 
@@ -1572,7 +1635,8 @@ def handle_vocab_review_answer(chat_id: int, message: dict) -> bool:
         pending = VOCAB_REVIEW_PENDING.pop(chat_id, None)
     if pending is None:
         return False
-    if time.monotonic() > pending["expires_at"]:
+    save_pending_state()
+    if time.time() > pending["expires_at"]:
         return False
     threading.Thread(target=_grade_vocab_review, args=(chat_id, pending["questions"], text), daemon=True).start()
     return True
@@ -2250,27 +2314,54 @@ def _english_bot_scheduler_loop() -> None:
         try:
             now = datetime.now(tz)
             state = load_english_bot_state(settings.english_bot_state_path, {})
+            day_code = settings.english_bot_force_day_code or day_code_for(now)
+            generation = dict(
+                day_code=day_code,
+                llm=llm,
+                qdrant=qdrant,
+                embeddings=embeddings,
+                collection=settings.tracker_collection,
+                owners=owners,
+                clip_client=english_bot_clip_client,
+                transcription_client=transcriber,
+                workspace_root=settings.inbox_path,
+                vocab_enabled=settings.dictionary_enabled,
+            )
+            if should_prepare_today(now, settings.english_bot_prepare_time, state):
+                # Off-peak: generate now, deliver at push time. One attempt a
+                # day; if it fails, the push generates live as before.
+                mark_prepare_attempted(now, state)
+                write_english_bot_state(settings.english_bot_state_path, state)
+                try:
+                    items = prepare_todays_push(**generation)
+                    store_prepared(now, day_code, items, state)
+                    write_english_bot_state(settings.english_bot_state_path, state)
+                    log(f"[english_bot] prepared day={day_code} items={len(items)}")
+                except Exception:
+                    log(f"[english_bot] prepare failed day={day_code}, will generate at push time: {traceback.format_exc()}")
             if should_push_today(now, settings.english_bot_push_time, state):
-                day_code = settings.english_bot_force_day_code or day_code_for(now)
-                run_todays_push(
-                    day_code=day_code,
-                    llm=llm,
-                    qdrant=qdrant,
-                    embeddings=embeddings,
-                    collection=settings.tracker_collection,
-                    owners=owners,
-                    send_message=_english_bot_send_message,
-                    send_audio=_english_bot_send_audio,
-                    set_pending_answer=_english_bot_set_pending_answer,
-                    clip_client=english_bot_clip_client,
-                    transcription_client=transcriber,
-                    workspace_root=settings.inbox_path,
-                    send_report=_english_bot_send_report,
-                    vocab_enabled=settings.dictionary_enabled,
-                )
+                prepared = prepared_for(now, day_code, state)
+                if prepared is not None:
+                    deliver_outbox(
+                        prepared,
+                        send_message=_english_bot_send_message,
+                        send_audio=_english_bot_send_audio,
+                        send_report=_english_bot_send_report,
+                        set_pending_answer=_english_bot_set_pending_answer,
+                    )
+                else:
+                    run_todays_push(
+                        send_message=_english_bot_send_message,
+                        send_audio=_english_bot_send_audio,
+                        set_pending_answer=_english_bot_set_pending_answer,
+                        send_report=_english_bot_send_report,
+                        **generation,
+                    )
+                clear_prepared(state)
                 mark_pushed_today(now, state)
                 write_english_bot_state(settings.english_bot_state_path, state)
-                log(f"[english_bot] pushed day={day_code} owners={owners}")
+                source = "prepared" if prepared is not None else "live"
+                log(f"[english_bot] pushed day={day_code} owners={owners} ({source})")
             if should_sweep_today(now, settings.english_bot_sweep_time, state):
                 swept = run_todays_sweep(qdrant, settings.tracker_collection, owners)
                 mark_swept_today(now, state)
@@ -2296,6 +2387,7 @@ def main() -> int:
     log(f"[vllm] endpoint={settings.vllm_base_url} model={settings.vllm_model}")
     log(f"[skills] loaded={[skill.name for skill in skill_router.skills]}")
     log(f"[agents] loaded={[agent.name for agent in agent_registry.agents]}")
+    restore_pending_state()
 
     if settings.english_bot_enabled:
         english_bot_thread = threading.Thread(target=_english_bot_scheduler_loop, daemon=True)

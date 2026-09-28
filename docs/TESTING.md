@@ -92,6 +92,8 @@ one layer that fails if it breaks.
 | `openclawctl --profile <bot\|all>` / `profiles` (per-bot services, `--no-deps`, Gateway state dir, running-only `all`) | `test_openclawctl::OpenclawctlProfileTest` (dry-run against a temp repo root) | — | used live on the four running bots |
 | Plain `/rag` also searches every category (3 hits each; skipped under `tag:`; `OPENCLAW_RAG_INCLUDE_CATEGORIES`) | `test_rag_source_filter::PlainRagIncludesCategoriesTest` | — | live plain `/rag` on bot2 answered from a category |
 | Video relay outcome logging (`relay ok` / `failed` / `unreachable`, with duration) | `test_video_relay` | — | — |
+| Off-peak preparation: English bot outbox (prepare 04:00, deliver at push time, one attempt, live fallback) and `/cron` prepared jobs (`OPENCLAW_CRON_PREPARE_WINDOW`/`_PROMPTS`) | `test_offpeak_prepare`, `test_cron_worker::OffPeakPrepareTest` | — | first overnight run on bot2/3/4 |
+| Open English tasks and `/vocab review`s survive a restart (`OPENCLAW_PENDING_STATE_PATH`); one daily-task record per user per day; Monday picks the newest unused full episode | `test_pending_state`, `test_daily_task_tracking`, `test_english_bot_monday::PickUnusedEpisodeTest` | — | — |
 | `/cat rename` / `/cat merge` | `test_categories`, `test_category_gateway`, `test_qdrant_client` | `TrackerMemoryManagementScenario::test_delete_collection_against_real_qdrant` | full merge round trip with real ingest |
 | `Sources:` attribution | `test_category_rag_retrieve` | `CategoryRagScenario`, `KnowledgeAndMemoryScenario` | — |
 | Document / knowledge ingest | `test_file_ingest` | `KnowledgeAndMemoryScenario` | — |

@@ -17,6 +17,7 @@ class DayTagTest(unittest.TestCase):
 class MarkTaskPushedTest(unittest.TestCase):
     def test_writes_owned_point_with_not_completed_not_skipped(self) -> None:
         qdrant = MagicMock()
+        qdrant.scroll_by_filters.return_value = []
         qdrant.upsert_text.return_value = "p1"
 
         point_id = mark_task_pushed(qdrant, "coll", 42, "mon", "111", [0.1])
@@ -34,6 +35,23 @@ class MarkTaskPushedTest(unittest.TestCase):
         qdrant = MagicMock()
         with self.assertRaises(ValueError):
             mark_task_pushed(qdrant, "coll", 42, "mon", "", [0.1])
+
+    def test_pushing_the_same_day_again_reuses_one_record_and_drops_extras(self) -> None:
+        qdrant = MagicMock()
+        qdrant.scroll_by_filters.return_value = [
+            {"id": "p1", "payload": {"completed": True}},
+            {"id": "p2", "payload": {"completed": False}},
+            {"id": "p3", "payload": {"completed": False, "skipped": True}},
+        ]
+
+        point_id = mark_task_pushed(qdrant, "coll", 42, "mon", "111", [0.1])
+
+        self.assertEqual(point_id, "p1")
+        qdrant.upsert_text.assert_not_called()
+        qdrant.set_payload.assert_called_once_with("coll", "p1", {"completed": False, "skipped": False})
+        qdrant.delete_points.assert_called_once_with("coll", ["p2", "p3"])
+        filters = qdrant.scroll_by_filters.call_args.args[1]
+        self.assertEqual(filters, {"owner": "111", "tag": "eng_wk42_daymon", "kind": "daily_task"})
 
 
 class MarkTaskCompletedTest(unittest.TestCase):

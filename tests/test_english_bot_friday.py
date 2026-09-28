@@ -60,7 +60,9 @@ class BuildFridayMessageTest(unittest.TestCase):
 class RunFridayTaskTest(unittest.TestCase):
     def test_pushes_message_and_marks_task_for_every_owner(self) -> None:
         qdrant = MagicMock()
-        qdrant.scroll_by_filters.return_value = [{"payload": c} for c in CHUNKS]
+        qdrant.scroll_by_filters.side_effect = lambda collection, filters, limit=64, **kw: (
+            [{"payload": c} for c in CHUNKS] if filters.get("kind") == "weekly_content" else []
+        )
         embeddings = MagicMock()
         embeddings.embed.return_value = [0.1]
         sent = []

@@ -11,6 +11,7 @@ from openclaw_runtime.skills.english_bot import (
     evaluate_monday_reply,
     extract_chunks,
     fetch_latest_episode,
+    pick_unused_episode,
     is_episode_processed,
     next_week_number,
     run_monday_task,
@@ -60,6 +61,34 @@ class FakeLlm:
     def chat_json(self, prompt, schema, *, schema_name, max_tokens=None):
         self.calls.append((prompt, schema_name))
         return self.responses.pop(0)
+
+
+BBC_RSS_WITH_BACK_CATALOGUE = """<?xml version="1.0"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"><channel>
+<item><title>Clip</title><guid>urn:bbc:podcast:clip</guid>
+<enclosure url="https://podcasts.files.bbci.co.uk/clip.mp3" type="audio/mpeg" />
+<pubDate>Mon, 28 Sep 2026 09:00:00 GMT</pubDate><itunes:duration>213</itunes:duration></item>
+<item><title>Full new</title><guid>urn:bbc:podcast:full-new</guid>
+<enclosure url="https://podcasts.files.bbci.co.uk/full-new.mp3" type="audio/mpeg" />
+<pubDate>Sun, 13 Sep 2026 09:00:00 GMT</pubDate><itunes:duration>3073</itunes:duration></item>
+<item><title>Full old</title><guid>urn:bbc:podcast:full-old</guid>
+<enclosure url="https://podcasts.files.bbci.co.uk/full-old.mp3" type="audio/mpeg" />
+<pubDate>Sun, 06 Sep 2026 09:00:00 GMT</pubDate><itunes:duration>3130</itunes:duration></item>
+</channel></rss>
+"""
+
+
+class PickUnusedEpisodeTest(unittest.TestCase):
+    def test_skips_clips_and_used_episodes_newest_first(self) -> None:
+        picked = pick_unused_episode(BBC_RSS_WITH_BACK_CATALOGUE, lambda guid: guid.endswith("full-new"))
+        self.assertEqual(picked.guid, "urn:bbc:podcast:full-old")
+
+    def test_newest_unused_wins(self) -> None:
+        picked = pick_unused_episode(BBC_RSS_WITH_BACK_CATALOGUE, lambda guid: False)
+        self.assertEqual(picked.guid, "urn:bbc:podcast:full-new")
+
+    def test_all_used_returns_none(self) -> None:
+        self.assertIsNone(pick_unused_episode(BBC_RSS_WITH_BACK_CATALOGUE, lambda guid: True))
 
 
 class FetchLatestEpisodeTest(unittest.TestCase):
@@ -352,6 +381,32 @@ class RunMondayTaskTest(unittest.TestCase):
         self.assertEqual(self.sent, [])
         get_bytes.assert_not_called()
         self.clip_client.clip.assert_not_called()
+
+    @patch("openclaw_runtime.skills.english_bot.get_bytes")
+    @patch("openclaw_runtime.skills.english_bot.get_text")
+    def test_newest_episode_already_used_falls_back_to_an_older_one(self, get_text, get_bytes) -> None:
+        get_text.return_value = BBC_RSS_WITH_BACK_CATALOGUE
+        get_bytes.return_value = b"fake mp3 bytes"
+
+        def scroll(collection, filters, limit=64, **kw):
+            if filters.get("episode_guid") == "urn:bbc:podcast:full-new":
+                return [{"id": "used"}]  # the newest full episode was last week's
+            return []
+
+        self.qdrant.scroll_by_filters.side_effect = scroll
+        content = run_monday_task(
+            clip_client=self.clip_client,
+            transcription_client=self.transcription_client,
+            llm=self.llm,
+            qdrant=self.qdrant,
+            embeddings=self.embeddings,
+            collection="coll",
+            owners=["owner-a"],
+            send_message=self.send_message,
+            workspace_dir=self.workspace_dir,
+        )
+        self.assertEqual(content.episode_guid, "urn:bbc:podcast:full-old")
+        get_bytes.assert_called_once_with("https://podcasts.files.bbci.co.uk/full-old.mp3", timeout=120)
 
     @patch("openclaw_runtime.skills.english_bot.get_text")
     def test_feed_with_no_enclosure_raises(self, get_text) -> None:

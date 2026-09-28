@@ -86,6 +86,80 @@ def mark_pushed_today(now: datetime, state: dict) -> None:
     state["last_push_date"] = _today_key(now)
 
 
+# Off-peak preparation: the day's push is generated in a cheap-electricity
+# window (default 04:00-05:30) and only delivered at the usual push time.
+PREPARE_WINDOW_MINUTES = 90
+
+
+def should_prepare_today(now: datetime, prepare_time: str, state: dict) -> bool:
+    """Once a day, anywhere inside the preparation window. Callers mark the
+    attempt before running it, so a failure is not retried (retrying could
+    repeat the half-done side effects) -- the push just falls back to
+    generating live at push time."""
+    return bool(prepare_time) and _is_due(now, prepare_time, window_minutes=PREPARE_WINDOW_MINUTES) and (
+        state.get("last_prepare_date") != _today_key(now)
+    )
+
+
+def mark_prepare_attempted(now: datetime, state: dict) -> None:
+    state["last_prepare_date"] = _today_key(now)
+
+
+def prepared_for(now: datetime, day_code: str, state: dict) -> list[dict] | None:
+    """Today's prepared outbox for this day code, or None to generate live."""
+    prepared = state.get("prepared") or {}
+    if prepared.get("date") == _today_key(now) and prepared.get("day_code") == day_code:
+        return list(prepared.get("items") or [])
+    return None
+
+
+def store_prepared(now: datetime, day_code: str, items: list[dict], state: dict) -> None:
+    state["prepared"] = {"date": _today_key(now), "day_code": day_code, "items": items}
+
+
+def clear_prepared(state: dict) -> None:
+    state.pop("prepared", None)
+
+
+def prepare_todays_push(**push_kwargs) -> list[dict]:
+    """Run today's push with everything that would reach a learner captured
+    instead of sent: messages, audio clips, recap cards, and the pending
+    answer that opens the task. All the generation (LLM, transcription,
+    audio clipping) and bookkeeping happens now; deliver_outbox() replays
+    the captured items, in order, at push time."""
+    items: list[dict] = []
+    run_todays_push(
+        send_message=lambda owner, text: items.append({"type": "message", "owner": owner, "text": text}),
+        send_audio=lambda owner, path, caption: items.append(
+            {"type": "audio", "owner": owner, "path": str(path), "caption": caption}
+        ),
+        send_report=lambda owner, html: items.append({"type": "report", "owner": owner, "text": html}),
+        set_pending_answer=lambda owner, item: items.append({"type": "pending", "owner": owner, "item": item}),
+        **push_kwargs,
+    )
+    return items
+
+
+def deliver_outbox(
+    items: list[dict],
+    *,
+    send_message: Callable[[str, str], None],
+    send_audio: Callable[[str, Path, str], None],
+    send_report: Callable[[str, str], None],
+    set_pending_answer: Callable[[str, dict], None],
+) -> None:
+    for item in items:
+        kind = item["type"]
+        if kind == "message":
+            send_message(item["owner"], item["text"])
+        elif kind == "audio":
+            send_audio(item["owner"], Path(item["path"]), item["caption"])
+        elif kind == "report":
+            send_report(item["owner"], item["text"])
+        elif kind == "pending":
+            set_pending_answer(item["owner"], item["item"])
+
+
 def should_sweep_today(now: datetime, sweep_time: str, state: dict) -> bool:
     return _is_due(now, sweep_time) and state.get("last_sweep_date") != _today_key(now)
 

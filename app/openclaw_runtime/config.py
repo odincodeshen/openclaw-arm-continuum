@@ -97,6 +97,12 @@ class Settings:
     cron_poll_seconds: int
     cron_due_window_minutes: int
     cron_chat_ids: set[int]
+    # "HH:MM-HH:MM" (cron timezone): an off-peak window in which daily jobs
+    # due later today, whose prompt starts with one of cron_prepare_prompts,
+    # are generated ahead of time and only delivered at their own time.
+    # Empty = no preparation.
+    cron_prepare_window: str
+    cron_prepare_prompts: tuple[str, ...]
     cron_jobs_path: Path
     cron_state_path: Path
     task_history_path: Path
@@ -120,6 +126,9 @@ class Settings:
     english_bot_sweep_time: str
     english_bot_timezone: str
     english_bot_state_path: Path
+    # HH:MM (English bot timezone) to generate the day's push off-peak; it is
+    # still delivered at english_bot_push_time. Empty = generate at push time.
+    english_bot_prepare_time: str
     # Testing-only override: forces the scheduler loop to treat every day as
     # this day_code instead of computing it from the real weekday, so a
     # specific day's push+PENDING_ANSWER wiring can be exercised live
@@ -133,6 +142,9 @@ class Settings:
     # Plain /rag (no #<category>) also searches every category, a few hits
     # each, on top of tracker memory and the knowledge base.
     rag_include_categories: bool
+    # Where open English-bot tasks and /vocab reviews are saved so a restart
+    # doesn't drop them. None disables saving (tests).
+    pending_state_path: Path | None
 
 
 def load_settings() -> Settings:
@@ -216,7 +228,7 @@ def load_settings() -> Settings:
         media_group_flush_seconds=env_float("OPENCLAW_MEDIA_GROUP_FLUSH_SECONDS", 2.5),
         video_summary_relay_url=os.environ.get("OPENCLAW_VIDEO_SUMMARY_RELAY_URL", "").strip(),
         video_summary_relay_secret=os.environ.get("OPENCLAW_VIDEO_SUMMARY_RELAY_SECRET", "").strip(),
-        video_summary_relay_timeout_seconds=env_int("OPENCLAW_VIDEO_SUMMARY_RELAY_TIMEOUT_SECONDS", 360),
+        video_summary_relay_timeout_seconds=env_int("OPENCLAW_VIDEO_SUMMARY_RELAY_TIMEOUT_SECONDS", 600),
         mem_digest_due_soon_days=env_int("OPENCLAW_MEM_DIGEST_DUE_SOON_DAYS", 7),
         mem_digest_stale_days=env_int("OPENCLAW_MEM_DIGEST_STALE_DAYS", 14),
         mem_digest_remind_cooldown_days=env_int("OPENCLAW_MEM_DIGEST_REMIND_COOLDOWN_DAYS", 7),
@@ -225,6 +237,12 @@ def load_settings() -> Settings:
         cron_poll_seconds=env_int("OPENCLAW_CRON_POLL_SECONDS", 30),
         cron_due_window_minutes=env_int("OPENCLAW_CRON_DUE_WINDOW_MINUTES", 15),
         cron_chat_ids=cron_chat_ids,
+        cron_prepare_window=os.environ.get("OPENCLAW_CRON_PREPARE_WINDOW", "").strip(),
+        cron_prepare_prompts=tuple(
+            prefix.strip()
+            for prefix in os.environ.get("OPENCLAW_CRON_PREPARE_PROMPTS", "/rag digest").split(",")
+            if prefix.strip()
+        ),
         cron_jobs_path=Path(os.environ.get("OPENCLAW_CRON_JOBS_PATH", "/workspace/.openclaw/cron_jobs.json")),
         cron_state_path=Path(os.environ.get("OPENCLAW_CRON_STATE_PATH", "/workspace/.openclaw/cron_state.json")),
         task_history_path=Path(os.environ.get("OPENCLAW_TASK_HISTORY_PATH", "/workspace/.openclaw/task_history.jsonl")),
@@ -251,7 +269,11 @@ def load_settings() -> Settings:
             os.environ.get("OPENCLAW_ENGLISH_BOT_STATE_PATH", "/workspace/.openclaw/english_bot_state.json")
         ),
         english_bot_force_day_code=os.environ.get("OPENCLAW_ENGLISH_BOT_FORCE_DAY_CODE", "").strip().lower(),
+        english_bot_prepare_time=os.environ.get("OPENCLAW_ENGLISH_BOT_PREPARE_TIME", "").strip(),
         dictionary_enabled=env_bool("OPENCLAW_DICTIONARY_ENABLED", False),
         dictionary_path=Path(os.environ.get("OPENCLAW_DICTIONARY_PATH", "/workspace/dictionary/ecdict.sqlite")),
         rag_include_categories=env_bool("OPENCLAW_RAG_INCLUDE_CATEGORIES", True),
+        pending_state_path=Path(
+            os.environ.get("OPENCLAW_PENDING_STATE_PATH", "/workspace/.openclaw/pending_answers.json")
+        ),
     )
