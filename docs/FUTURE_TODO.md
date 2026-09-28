@@ -1,7 +1,7 @@
 # Future TODO List
 
 This document tracks candidate work items for `openclaw-arm-continuum`.
-Current release: **v1.19**.
+Current release: **v1.20**.
 
 The runtime is intentionally stable and text-first. The items below are
 future-facing and should be implemented incrementally without breaking the
@@ -140,8 +140,19 @@ v1.2 baseline. What has actually shipped since then:
   learner's `/vocab review` queue, so missed chunks keep coming back after
   their week. The IELTS Part 2 bank grows from 12 to 112 cue cards (28 per
   category), well past its 60-card target.
+- **v1.20 — sharper /rag, per-bot ops, off-peak generation.** `/rag
+  source:<text>` narrows a query to one document, link or title, and plain
+  `/rag` also searches every category (`OPENCLAW_RAG_INCLUDE_CATEGORIES`).
+  `bin/openclawctl --profile <bot|all>` and `openclawctl profiles` run one
+  bot's containers at a time. Model-heavy work can run off-peak
+  (`OPENCLAW_ENGLISH_BOT_PREPARE_TIME`, `OPENCLAW_CRON_PREPARE_WINDOW`) and
+  still be delivered at the usual time. Open English tasks and `/vocab
+  review`s survive restarts, each user keeps one daily-task record per day,
+  Monday falls back to an unused older episode when the show is on a break,
+  `/w` turns away sentences, and the video relay logs every outcome and
+  waits up to 600s.
 
-Still open, re-baselined against v1.19:
+Still open, re-baselined against v1.20:
 
 **Platform / runtime**
 
