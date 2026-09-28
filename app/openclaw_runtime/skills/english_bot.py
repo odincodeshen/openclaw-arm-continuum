@@ -83,6 +83,7 @@ class WeeklyContent:
     transcript_excerpt: str
     chunks: list[Chunk]
     window_segments: list[TranscriptSegment]
+    episode_link: str = ""  # the programme page, for listening to the whole episode
 
 
 GUEST_WINDOW_SCHEMA = {
@@ -245,15 +246,76 @@ def extract_chunks(llm: LlmClient, excerpt_text: str) -> list[Chunk]:
         "for a Traditional-Chinese-speaking professional to learn. For each, "
         "give a Traditional Chinese definition and one original example "
         "sentence set in a tech-workplace or daily-life context (not copied "
-        "verbatim from the excerpt).\n\n"
+        "verbatim from the excerpt). The example sentence (context_sentence) "
+        "MUST be written in English and MUST contain the phrase itself -- "
+        "its verb may be inflected and placeholders like someone/one's "
+        "replaced by real words. It is used to quiz the learner, so a Chinese "
+        "sentence or a translation is useless.\n\n"
         f"Excerpt:\n{excerpt_text}"
     )
     raw = llm.chat_json(prompt, CHUNK_EXTRACTION_SCHEMA, schema_name="chunk_extraction", max_tokens=800)
     data = json.loads(raw)
-    return [
+    chunks = [
         Chunk(phrase=c["phrase"], definition=c["definition"], context_sentence=c["context_sentence"])
         for c in data["chunks"]
     ]
+    return ensure_english_examples(llm, chunks)
+
+
+EXAMPLE_SENTENCES_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "examples": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "phrase": {"type": "string", "minLength": 1},
+                    "sentence": {"type": "string", "minLength": 1},
+                },
+                "required": ["phrase", "sentence"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["examples"],
+    "additionalProperties": False,
+}
+
+
+def ensure_english_examples(llm: LlmClient, chunks: list[Chunk]) -> list[Chunk]:
+    """Every chunk needs an English example sentence that actually contains
+    the phrase: the Monday card shows it, and Saturday's cloze (and the
+    word review) blank the phrase out of it. The model sometimes answers in
+    the bot's reply language instead -- a Chinese sentence with no phrase to
+    blank -- so ask again, once, for just those. A chunk still without a
+    usable sentence keeps what it had (the quiz falls back to "use it in a
+    sentence")."""
+    missing = [chunk for chunk in chunks if not generate_cloze(chunk.phrase, chunk.context_sentence)]
+    if not missing:
+        return chunks
+    phrases = "\n".join(f"- {chunk.phrase}" for chunk in missing)
+    prompt = (
+        "Write one natural English example sentence for each of these English "
+        "phrases, set in a tech-workplace or daily-life context. Each sentence "
+        "must be in English and contain the phrase itself (the verb may be "
+        "inflected; placeholders like someone/one's become real words). Do "
+        f"not translate anything into Chinese.\n\n{phrases}"
+    )
+    try:
+        data = json.loads(
+            llm.chat_json(prompt, EXAMPLE_SENTENCES_SCHEMA, schema_name="english_examples", max_tokens=500)
+        )
+    except Exception:  # noqa: BLE001 - keep the original sentences rather than fail the whole Monday
+        return chunks
+    fixed = {item["phrase"].strip().lower(): item["sentence"].strip() for item in data.get("examples", [])}
+    result = []
+    for chunk in chunks:
+        sentence = fixed.get(chunk.phrase.strip().lower(), "")
+        if chunk in missing and sentence and generate_cloze(chunk.phrase, sentence):
+            chunk = Chunk(phrase=chunk.phrase, definition=chunk.definition, context_sentence=sentence)
+        result.append(chunk)
+    return result
 
 
 def store_weekly_content(
@@ -322,12 +384,15 @@ def build_monday_message(content: WeeklyContent) -> str:
         f"{bold(f'{index}. {chunk.phrase}')}\n{esc(chunk.definition)}\n{italic(chunk.context_sentence)}"
         for index, chunk in enumerate(content.chunks, start=1)
     ]
-    content_html = "\n".join(
-        [
-            f"Episode: {esc(content.episode_title)}",
-            f"Listen: {_mmss(content.segment_start)} – {_mmss(content.segment_end)}",
-        ]
-    ) + "\n\n" + "\n\n".join(chunk_blocks)
+    lines = [
+        "(This part of the episode is sent as audio just before this message.)",
+        "",
+        f"Episode: {esc(content.episode_title)}",
+        f"Listen: {_mmss(content.segment_start)} – {_mmss(content.segment_end)}",
+    ]
+    if content.episode_link:
+        lines.append(f"Full episode: {esc(content.episode_link)}")
+    content_html = "\n".join(lines) + "\n\n" + "\n\n".join(chunk_blocks)
     return render_task_card(
         TaskCard(
             day_code="mon",
@@ -337,7 +402,7 @@ def build_monday_message(content: WeeklyContent) -> str:
             reply_mode="Text or voice",
             content_html=content_html,
             steps=[
-                "Listen to that part of this week's episode",
+                "Listen to the audio clip (or that part of the full episode)",
                 "Pick one chunk and use it in your own real-life sentence",
                 DONE_STEP,
             ],
@@ -357,6 +422,7 @@ def run_monday_task(
     send_message: Callable[[str, str], None],
     workspace_dir: Path,
     rss_url: str = BBC_DESERT_ISLAND_DISCS_RSS,
+    send_audio: Callable[[str, Path, str], None] | None = None,
 ) -> WeeklyContent | None:
     """Full Monday pipeline, on the newest episode not used yet. Returns None
     (and sends nothing) only when every full-length episode in the feed has
@@ -392,12 +458,22 @@ def run_monday_task(
         transcript_excerpt=window["excerpt_text"],
         chunks=chunks,
         window_segments=transcript.segments,
+        episode_link=(episode.link or "").replace("http://www.bbc.co.uk/", "https://www.bbc.co.uk/"),
     )
     store_weekly_content(qdrant, embeddings, collection, content)
+
+    # The selected stretch as its own audio clip, so the listening task can be
+    # done straight from Telegram (window.mp3 starts at INTRO_SKIP_SECONDS,
+    # so the window's own timestamps are already relative to it).
+    clip_path = workspace_dir / "monday_clip.mp3"
+    if send_audio is not None:
+        clip_client.clip(window_path, float(window["start_seconds"]), float(window["end_seconds"]), clip_path)
 
     message = build_monday_message(content)
     vector = embeddings.embed(message)
     for owner in owners:
+        if send_audio is not None:
+            send_audio(owner, clip_path, "This week's listening -- the part the chunks come from.")
         send_message(owner, message)
         mark_task_pushed(qdrant, collection, week_number, "mon", owner, vector)
 
@@ -1693,7 +1769,14 @@ FRIDAY_EVAL_SCHEMA = {
 
 
 def build_friday_message(chunks: list[dict], week_number: int) -> str:
-    chunk_lines = [f"• {bold(chunk['phrase'])} — {esc(chunk['definition'])}" for chunk in chunks]
+    chunk_lines = []
+    for chunk in chunks:
+        line = f"• {bold(chunk['phrase'])} — {esc(chunk['definition'])}"
+        # Only an English example that really contains the phrase helps here.
+        example = chunk.get("context_sentence") or ""
+        if generate_cloze(chunk["phrase"], example):
+            line += f"\n  {italic(example)}"
+        chunk_lines.append(line)
     return render_task_card(
         TaskCard(
             day_code="fri",
@@ -1850,25 +1933,96 @@ _REFLEXIVE_VARIANTS = [
 ]
 
 
+# Past forms of verbs that open common idioms but don't keep their stem
+# (take -> took), so a stem + suffix match can't find them.
+_IRREGULAR_FORMS = {
+    "be": ["was", "were", "been", "being", "is", "are", "am"],
+    "break": ["broke", "broken"],
+    "bring": ["brought"],
+    "build": ["built"],
+    "buy": ["bought"],
+    "catch": ["caught"],
+    "come": ["came"],
+    "do": ["did", "done", "does"],
+    "draw": ["drew", "drawn"],
+    "drive": ["drove", "driven"],
+    "eat": ["ate", "eaten"],
+    "fall": ["fell", "fallen"],
+    "feel": ["felt"],
+    "find": ["found"],
+    "get": ["got", "gotten"],
+    "give": ["gave", "given"],
+    "go": ["went", "gone", "goes"],
+    "have": ["had", "has"],
+    "hold": ["held"],
+    "keep": ["kept"],
+    "know": ["knew", "known"],
+    "lay": ["laid"],
+    "lead": ["led"],
+    "leave": ["left"],
+    "lose": ["lost"],
+    "make": ["made"],
+    "meet": ["met"],
+    "pay": ["paid"],
+    "run": ["ran"],
+    "say": ["said"],
+    "see": ["saw", "seen"],
+    "sell": ["sold"],
+    "send": ["sent"],
+    "shake": ["shook", "shaken"],
+    "sit": ["sat"],
+    "speak": ["spoke", "spoken"],
+    "spend": ["spent"],
+    "stand": ["stood"],
+    "stick": ["stuck"],
+    "take": ["took", "taken"],
+    "teach": ["taught"],
+    "tell": ["told"],
+    "think": ["thought"],
+    "throw": ["threw", "thrown"],
+    "wear": ["wore", "worn"],
+    "win": ["won"],
+    "write": ["wrote", "written"],
+}
+# Dictionary-style placeholders an idiom is written with, and what they stand
+# for in a real sentence.
+_POSSESSIVES = r"(?:my|your|his|her|its|our|their|one's|someone's|[\w-]+'s)"
+_SOMEONE = r"(?:[\w'-]+(?:\s+[\w'-]+){0,2})"
+
+
+def _word_pattern(word: str) -> str:
+    lower = word.lower()
+    if lower == "oneself":
+        return "(?:" + "|".join(_REFLEXIVE_VARIANTS) + ")"
+    if lower in ("one's", "someone's"):
+        return _POSSESSIVES
+    if lower in ("someone", "somebody", "something", "sb", "sth"):
+        return _SOMEONE
+    if not word.isalpha():
+        return re.escape(word)
+    forms = [re.escape(word) + r"\w*"]
+    forms += [re.escape(form) for form in _IRREGULAR_FORMS.get(lower, [])]
+    if lower.endswith("e") and len(lower) > 2:
+        forms.append(re.escape(word[:-1]) + "ing")  # take -> taking
+    return "(?:" + "|".join(forms) + ")"
+
+
 def _build_phrase_pattern(phrase: str) -> re.Pattern:
-    """Match a chunk phrase inside a sentence, tolerating the spoken-language
-    morphology that's common for this kind of idiom: 'oneself' standing in
-    for any actual reflexive pronoun, and verb-ending variation that keeps
-    the literal stem as a prefix (spread/spreading, take/takes/taken) via a
-    loose word-stem + \\w* match. Does NOT handle irregular stem changes
-    (take -> took) or silent-e-drop spellings (take -> taking) -- callers
-    fall back to context_sentence or a phrase-only prompt in that case, see
-    build_cloze_question."""
-    words = phrase.split()
-    parts = []
-    for word in words:
-        if word.lower() == "oneself":
-            parts.append("(?:" + "|".join(_REFLEXIVE_VARIANTS) + ")")
-        elif word.isalpha():
-            parts.append(re.escape(word) + r"\w*")
-        else:
-            parts.append(re.escape(word))
-    return re.compile(r"\b" + r"\s+".join(parts) + r"\b", re.IGNORECASE)
+    """Match a chunk phrase inside a sentence, tolerating how idioms are
+    actually used: verb endings (spread -> spreading, take -> taking) and
+    common irregular forms (take -> took/taken), dictionary placeholders
+    (someone -> a name or pronoun, one's -> her/their/..., oneself -> any
+    reflexive), and an optional part in brackets ("take a weight off (one's
+    shoulders)" also matches just "took a weight off")."""
+    optional = ""
+    match = re.search(r"\(([^)]*)\)", phrase)
+    if match:
+        optional = match.group(1)
+        phrase = (phrase[: match.start()] + phrase[match.end() :]).strip()
+    body = r"\s+".join(_word_pattern(word) for word in phrase.split())
+    if optional.strip():
+        body += r"(?:\s+" + r"\s+".join(_word_pattern(word) for word in optional.split()) + ")?"
+    return re.compile(r"(?<![\w'])" + body + r"(?![\w'])", re.IGNORECASE)
 
 
 def generate_cloze(phrase: str, sentence: str) -> str | None:
@@ -1912,7 +2066,7 @@ def build_cloze_question(chunk_payload: dict, progress_payload: dict | None) -> 
 
     return ClozeQuestion(
         phrase=phrase,
-        prompt_text=f'(no example sentence on file) Use "{phrase}" correctly in a sentence.',
+        prompt_text=f'Use "{phrase}" correctly in a sentence of your own.',
         source="phrase_only",
     )
 

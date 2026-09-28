@@ -61,17 +61,26 @@ class GenerateClozeTest(unittest.TestCase):
     def test_empty_phrase_returns_none(self) -> None:
         self.assertIsNone(generate_cloze("", "some sentence"))
 
-    def test_known_limitation_irregular_past_tense_does_not_match(self) -> None:
-        """Documents a real, accepted limitation: the matcher tolerates
-        suffix variation that keeps the literal stem as a prefix (take ->
-        takes, take -> taken), via a simple word-stem + \\w* match. It does
-        NOT handle irregular stem changes (take -> took) or silent-e-drop
-        spelling changes (take -> taking, since "take" is not a literal
-        prefix of "taking"). Building a full verb conjugator is out of
-        scope; callers fall back to context_sentence or a phrase-only
-        prompt when this happens (see build_cloze_question)."""
-        self.assertIsNone(generate_cloze("take a gamble on", "We took a gamble on the new design."))
-        self.assertIsNone(generate_cloze("take a gamble on", "We are taking a gamble on the new design."))
+    def test_irregular_forms_and_ing_are_matched(self) -> None:
+        self.assertEqual(generate_cloze("take a gamble on", "We took a gamble on the new design."), "We ____ the new design.")
+        self.assertEqual(generate_cloze("take a gamble on", "We are taking a gamble on it."), "We are ____ it.")
+        self.assertEqual(generate_cloze("have a year in hand", "She had a year in hand."), "She ____.")
+
+    def test_dictionary_placeholders_are_matched(self) -> None:
+        self.assertEqual(
+            generate_cloze("take someone under one's wing", "The lead engineer took me under her wing."),
+            "The lead engineer ____.",
+        )
+        self.assertEqual(
+            generate_cloze("take a weight off (one's shoulders)", "It took a weight off their shoulders."), "It ____."
+        )
+        # the bracketed part is optional
+        self.assertEqual(generate_cloze("take a weight off (one's shoulders)", "It took a weight off."), "It ____.")
+
+    def test_sentence_without_the_phrase_does_not_match(self) -> None:
+        self.assertIsNone(generate_cloze("from scratch", "我們決定從零開始重新架構。"))
+        self.assertIsNone(generate_cloze("move on", "We removed one item."))
+
 
 
 def _fake_cloze_result(correct: bool) -> dict:
@@ -143,7 +152,7 @@ class BuildClozeQuestionTest(unittest.TestCase):
         chunk = {"phrase": "take a gamble on", "context_sentence": "Unrelated sentence entirely."}
         question = build_cloze_question(chunk, None)
         self.assertEqual(question.source, "phrase_only")
-        self.assertIn("take a gamble on", question.prompt_text)
+        self.assertEqual(question.prompt_text, 'Use "take a gamble on" correctly in a sentence of your own.')
 
 
 class BuildSaturdayMessageTest(unittest.TestCase):
@@ -192,7 +201,7 @@ class RunSaturdayTaskTest(unittest.TestCase):
             [
                 {
                     "phrase": "take a gamble on",
-                    "prompt_text": '(no example sentence on file) Use "take a gamble on" correctly in a sentence.',
+                    "prompt_text": "We ____ it.",  # "took a gamble on" is found despite the irregular past
                 }
             ],
         )

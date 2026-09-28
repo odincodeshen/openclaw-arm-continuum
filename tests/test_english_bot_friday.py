@@ -50,11 +50,17 @@ class BuildFridayMessageTest(unittest.TestCase):
     def test_lists_chunks_and_asks_for_voice_ramble(self) -> None:
         message = build_friday_message(CHUNKS, 2)
         assert_task_card(self, message, "fri")
-        self.assertIn("• <b>take a gamble on</b> — 冒險一試", message)
+        self.assertIn("• <b>take a gamble on</b> — 冒險一試\n  <i>We took a gamble on it.</i>", message)
         self.assertIn("spread oneself too thin", message)
         self.assertIn("get to grips with", message)
         self.assertIn("voice", message.lower())
         self.assertIn("2", message)
+
+    def test_example_is_left_out_when_it_does_not_contain_the_phrase(self) -> None:
+        chunks = [{"phrase": "from scratch", "definition": "從零開始", "context_sentence": "我們從零開始。"}]
+        message = build_friday_message(chunks, 2)
+        self.assertIn("• <b>from scratch</b> — 從零開始", message)
+        self.assertNotIn("我們從零開始", message)
 
 
 class RunFridayTaskTest(unittest.TestCase):

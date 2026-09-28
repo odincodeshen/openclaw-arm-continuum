@@ -213,6 +213,7 @@ def run_todays_push(
             owners=owners,
             send_message=send_message,
             workspace_dir=workspace_dir,
+            send_audio=send_audio,
         )
         if content is None:
             return  # this week's episode was already processed -- nothing pushed

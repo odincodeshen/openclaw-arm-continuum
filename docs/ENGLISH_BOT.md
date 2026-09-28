@@ -12,11 +12,11 @@ the rest of the week builds on it.
 
 | Day | Task | Reply | Feedback |
 |---|---|---|---|
-| Mon | Listen to a guest-led stretch of the episode; learn 3 chunks (phrases) picked from it | Text or voice: use one chunk in your own sentence | Which chunks were used correctly, example sentences |
+| Mon | Listen to a guest-led stretch of the episode (sent as an audio clip, with a link to the full episode); learn 3 chunks (phrases) picked from it, each with a Chinese meaning and an English example that uses it | Text or voice: use one chunk in your own sentence | Which chunks were used correctly, example sentences |
 | Tue | Shadow a short audio clip of the guest, with stress and pauses marked | Voice | Word-level accuracy (missed/extra words), pace, a short analysis in Traditional Chinese, the reference text |
 | Wed | IELTS Speaking Part 2 cue card; from week 18, Part 2 plus a related Part 3 question | Voice, 1.5–2 min | STAR check (Situation/Task/Action/Result), vocabulary upgrades, a band-8 model answer; Part 3 adds a claim/concession/conclusion check |
 | Thu | British workplace small talk: a colleague's opener | Voice | Anchor & Bounce check, a more natural phrasing, a model reply, the colleague's reply |
-| Fri | Use this week's chunks in a 1-minute ramble on anything | Voice | Which chunks were used, a model ramble using all of them |
+| Fri | Use this week's chunks (listed with their English examples) in a 1-minute ramble on anything | Voice | Which chunks were used, a model ramble using all of them |
 | Sat | Cloze quiz on this week's chunks, from your own sentences when there are any | Text or voice, all answers in one message | Right/wrong per blank (position matters), an explanation and example per chunk, the answer key |
 | Sun | A Guardian lifestyle column to read for the gist, then a weekly recap | None | — |
 

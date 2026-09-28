@@ -9,6 +9,7 @@ from openclaw_runtime.skills.english_bot import (
     WeeklyContent,
     build_monday_message,
     evaluate_monday_reply,
+    ensure_english_examples,
     extract_chunks,
     fetch_latest_episode,
     pick_unused_episode,
@@ -257,6 +258,24 @@ class BuildMondayMessageTest(unittest.TestCase):
         self.assertIn("冒險一試", message)
         self.assertIn("<i>We took a gamble on it.</i>", message)
 
+    def test_links_the_full_episode_and_mentions_the_clip(self) -> None:
+        content = WeeklyContent(
+            week_number=2, episode_title="Pamela Shaw", episode_guid="urn:x", segment_start=200.0,
+            segment_end=380.0, transcript_excerpt="x", chunks=[Chunk("from scratch", "從零開始", "Built it from scratch.")],
+            window_segments=[], episode_link="https://www.bbc.co.uk/programmes/m002zx7p",
+        )
+        message = build_monday_message(content)
+        assert_task_card(self, message, "mon")
+        self.assertIn("Full episode: https://www.bbc.co.uk/programmes/m002zx7p", message)
+        self.assertIn("sent as audio just before this message", message)
+
+    def test_no_link_line_without_a_link(self) -> None:
+        content = WeeklyContent(
+            week_number=2, episode_title="T", episode_guid="urn:x", segment_start=0.0, segment_end=60.0,
+            transcript_excerpt="x", chunks=[Chunk("a", "b", "c")], window_segments=[],
+        )
+        self.assertNotIn("Full episode", build_monday_message(content))
+
     def test_llm_and_rss_text_is_escaped(self) -> None:
         content = WeeklyContent(
             week_number=2,
@@ -272,6 +291,42 @@ class BuildMondayMessageTest(unittest.TestCase):
         assert_task_card(self, message, "mon")
         self.assertIn("Tom &amp; Jerry &lt;live&gt;", message)
         self.assertIn("&lt;b&gt;not bold&lt;/b&gt;", message)
+
+
+class EnsureEnglishExamplesTest(unittest.TestCase):
+    def test_non_english_examples_are_rewritten_once(self) -> None:
+        chunks = [
+            Chunk("move on", "繼續前進", "We had to move on."),
+            Chunk("from scratch", "從零開始", "我們決定從零開始。"),
+        ]
+        llm = FakeLlm([json.dumps({"examples": [{"phrase": "from scratch", "sentence": "We rebuilt it from scratch."}]})])
+        fixed = ensure_english_examples(llm, chunks)
+        self.assertEqual([c.context_sentence for c in fixed], ["We had to move on.", "We rebuilt it from scratch."])
+        prompt, schema_name = llm.calls[0]
+        self.assertEqual(schema_name, "english_examples")
+        self.assertIn("- from scratch", prompt)
+        self.assertNotIn("- move on", prompt)
+
+    def test_no_call_when_every_example_already_works(self) -> None:
+        llm = FakeLlm([])
+        chunks = [Chunk("move on", "繼續前進", "We had to move on.")]
+        self.assertEqual(ensure_english_examples(llm, chunks), chunks)
+        self.assertEqual(llm.calls, [])
+
+    def test_a_rewrite_that_still_lacks_the_phrase_is_not_used(self) -> None:
+        llm = FakeLlm([json.dumps({"examples": [{"phrase": "from scratch", "sentence": "我們從零開始。"}]})])
+        chunks = [Chunk("from scratch", "從零開始", "原本的中文句子。")]
+        self.assertEqual(ensure_english_examples(llm, chunks)[0].context_sentence, "原本的中文句子。")
+
+    def test_extraction_prompt_demands_english_examples_with_the_phrase(self) -> None:
+        llm = FakeLlm([json.dumps({"chunks": [
+            {"phrase": "move on", "definition": "d", "context_sentence": "We moved on."},
+            {"phrase": "from scratch", "definition": "d", "context_sentence": "Built from scratch."},
+            {"phrase": "take off", "definition": "d", "context_sentence": "Sales took off."},
+        ]})])
+        extract_chunks(llm, "excerpt")
+        self.assertIn("MUST be written in English and MUST contain the phrase", llm.calls[0][0])
+        self.assertEqual(len(llm.calls), 1)  # all three examples usable, no repair call
 
 
 class RunMondayTaskTest(unittest.TestCase):
@@ -381,6 +436,29 @@ class RunMondayTaskTest(unittest.TestCase):
         self.assertEqual(self.sent, [])
         get_bytes.assert_not_called()
         self.clip_client.clip.assert_not_called()
+
+    @patch("openclaw_runtime.skills.english_bot.get_bytes")
+    @patch("openclaw_runtime.skills.english_bot.get_text")
+    def test_sends_the_selected_stretch_as_audio_before_the_card(self, get_text, get_bytes) -> None:
+        get_text.return_value = BBC_RSS
+        get_bytes.return_value = b"fake mp3 bytes"
+        events = []
+        run_monday_task(
+            clip_client=self.clip_client,
+            transcription_client=self.transcription_client,
+            llm=self.llm,
+            qdrant=self.qdrant,
+            embeddings=self.embeddings,
+            collection="coll",
+            owners=["owner-a"],
+            send_message=lambda owner, text: events.append(("text", owner)),
+            send_audio=lambda owner, path, caption: events.append(("audio", owner, path.name)),
+            workspace_dir=self.workspace_dir,
+        )
+        self.assertEqual(events, [("audio", "owner-a", "monday_clip.mp3"), ("text", "owner-a")])
+        # second clip: the selected stretch, cut from window.mp3 with the window's own timestamps
+        args = self.clip_client.clip.call_args_list[1].args
+        self.assertEqual((args[0].name, args[1], args[2], args[3].name), ("window.mp3", 10.0, 190.0, "monday_clip.mp3"))
 
     @patch("openclaw_runtime.skills.english_bot.get_bytes")
     @patch("openclaw_runtime.skills.english_bot.get_text")
