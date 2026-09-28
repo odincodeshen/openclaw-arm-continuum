@@ -145,6 +145,12 @@ class Settings:
     # Where open English-bot tasks and /vocab reviews are saved so a restart
     # doesn't drop them. None disables saving (tests).
     pending_state_path: Path | None
+    # Operator alerts (openclaw_runtime.alerts): who gets them, how long a
+    # repeat of the same problem stays quiet, and how long the Gateway may be
+    # unreachable before that counts as a problem.
+    alert_chat_ids: set[int]
+    alert_cooldown_minutes: int
+    alert_gateway_outage_minutes: int
 
 
 def load_settings() -> Settings:
@@ -273,6 +279,11 @@ def load_settings() -> Settings:
         dictionary_enabled=env_bool("OPENCLAW_DICTIONARY_ENABLED", False),
         dictionary_path=Path(os.environ.get("OPENCLAW_DICTIONARY_PATH", "/workspace/dictionary/ecdict.sqlite")),
         rag_include_categories=env_bool("OPENCLAW_RAG_INCLUDE_CATEGORIES", True),
+        alert_chat_ids={
+            int(item.strip()) for item in os.environ.get("OPENCLAW_ALERT_CHAT_IDS", "").split(",") if item.strip()
+        },
+        alert_cooldown_minutes=env_int("OPENCLAW_ALERT_COOLDOWN_MINUTES", 360),
+        alert_gateway_outage_minutes=env_int("OPENCLAW_ALERT_GATEWAY_OUTAGE_MINUTES", 10),
         pending_state_path=Path(
             os.environ.get("OPENCLAW_PENDING_STATE_PATH", "/workspace/.openclaw/pending_answers.json")
         ),

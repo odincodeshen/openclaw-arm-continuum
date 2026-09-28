@@ -78,6 +78,7 @@ from openclaw_runtime.file_ingest import META_SIDECAR_SUFFIX, SUPPORTED_SUFFIXES
 from openclaw_runtime.engineering_review import EngineeringReviewAgent
 from openclaw_runtime.http_client import post_multipart_file, request_json
 from openclaw_runtime.llm_client import VLLM_NOT_READY_MESSAGE
+from openclaw_runtime.alerts import Alerter
 from openclaw_runtime.dictionary import LocalDictionary
 from openclaw_runtime.message_cards import html_to_plain, split_html_message
 from openclaw_runtime.model_catalog import load_model_registry
@@ -124,6 +125,7 @@ transcriber = TranscriptionClient(settings)
 embeddings = EmbeddingClient(settings)
 english_bot_clip_client = AudioClipClient(settings)
 dictionary = LocalDictionary(settings.dictionary_path)
+alerter = Alerter(settings, log=lambda message: log(message))
 conversation_memory = ConversationMemory(settings, llm)
 skill_router = SkillRouter(settings, llm, model_clients)
 task_history = TaskHistory(settings.task_history_path)
@@ -2337,8 +2339,15 @@ def _english_bot_scheduler_loop() -> None:
                     store_prepared(now, day_code, items, state)
                     write_english_bot_state(settings.english_bot_state_path, state)
                     log(f"[english_bot] prepared day={day_code} items={len(items)}")
+                    alerter.resolve("english-prepare", "The English bot's off-peak preparation works again.")
                 except Exception:
                     log(f"[english_bot] prepare failed day={day_code}, will generate at push time: {traceback.format_exc()}")
+                    alerter.alert(
+                        "english-prepare",
+                        f"The English bot's off-peak preparation failed ({day_code}); "
+                        "today's task will be generated at push time instead.",
+                        traceback.format_exc(),
+                    )
             if should_push_today(now, settings.english_bot_push_time, state):
                 prepared = prepared_for(now, day_code, state)
                 if prepared is not None:
@@ -2362,6 +2371,7 @@ def _english_bot_scheduler_loop() -> None:
                 write_english_bot_state(settings.english_bot_state_path, state)
                 source = "prepared" if prepared is not None else "live"
                 log(f"[english_bot] pushed day={day_code} owners={owners} ({source})")
+                alerter.resolve("english-scheduler", "The English bot pushed today's task.")
             if should_sweep_today(now, settings.english_bot_sweep_time, state):
                 swept = run_todays_sweep(qdrant, settings.tracker_collection, owners)
                 mark_swept_today(now, state)
@@ -2369,6 +2379,11 @@ def _english_bot_scheduler_loop() -> None:
                 log(f"[english_bot] sweep done swept={swept}")
         except Exception:
             log(f"[english_bot] scheduler loop error: {traceback.format_exc()}")
+            alerter.alert(
+                "english-scheduler",
+                "The English bot's scheduler hit an error; today's push or sweep may not have run.",
+                traceback.format_exc(),
+            )
         time.sleep(60)
 
 

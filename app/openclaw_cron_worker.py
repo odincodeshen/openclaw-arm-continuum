@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from openclaw_runtime.alerts import Alerter
 from openclaw_runtime.config import Settings, load_settings
 from openclaw_runtime.cron_jobs import is_due, load_jobs, mark_ran, validate_time
 from openclaw_runtime.gateway_cron import (
@@ -23,6 +24,19 @@ from openclaw_runtime.skill_router import SkillRouter
 
 
 RUNNING = True
+# Set in main(); None (tests, or before start) means alerts are skipped.
+ALERTER: Alerter | None = None
+_gateway_down_since: float | None = None
+
+
+def _alert(key: str, summary: str, detail: str = "") -> None:
+    if ALERTER is not None:
+        ALERTER.alert(key, summary, detail)
+
+
+def _resolve(key: str, summary: str) -> None:
+    if ALERTER is not None:
+        ALERTER.resolve(key, summary)
 
 
 def log(message: str) -> None:
@@ -116,7 +130,13 @@ def prepare_jobs(router: SkillRouter, jobs: list[dict], now: datetime, state: di
             result = router.route(str(job.get("prompt", "")).strip())
         except Exception as exc:
             log(f"[cron] prepare failed id={job.get('id')}, will run at its time: {exc}")
+            _alert(
+                f"cron-prepare:{job.get('id')}",
+                f'Off-peak preparation of "{job.get("name", job.get("id"))}" failed; it will run live at its time.',
+                str(exc),
+            )
             continue
+        _resolve(f"cron-prepare:{job.get('id')}", f'Off-peak preparation of "{job.get("name", job.get("id"))}" works again.')
         prepared[str(job["id"])] = {
             "date": now.strftime("%Y-%m-%d"),
             "answer": result.answer,
@@ -179,6 +199,10 @@ def run_dynamic_job(
         except Exception as exc:
             status = "error"
             error = f"{error}; Telegram delivery failed: {exc}" if error else f"Telegram delivery failed: {exc}"
+    if status == "error":
+        _alert(f"cron-job:{job.get('id')}", f'Cron job "{title}" failed.', error or "")
+    else:
+        _resolve(f"cron-job:{job.get('id')}", f'Cron job "{title}" is working again.')
     return {
         "status": status,
         "error": error,
@@ -262,6 +286,7 @@ def log_job_poll(note: str) -> None:
 
 
 def load_dynamic_jobs(settings: Settings) -> list[dict]:
+    global _gateway_down_since
     default_chat_id = recipients(settings)[0] if recipients(settings) else None
     try:
         jobs = [
@@ -270,9 +295,22 @@ def load_dynamic_jobs(settings: Settings) -> list[dict]:
             if (runtime_job := gateway_job_to_runtime(job, default_chat_id))
         ]
         log_job_poll(f"[cron] loaded {len(jobs)} Gateway dashboard job(s)")
+        _gateway_down_since = None
+        _resolve("gateway-rpc", "The Gateway is reachable again; dashboard cron jobs are loading.")
         return jobs
     except Exception as exc:
         log_job_poll(f"[cron] Gateway cron RPC unavailable; falling back to legacy JSON: {exc}")
+        # A restart of the Gateway takes a few seconds; only a lasting outage alerts.
+        now = time.time()
+        if _gateway_down_since is None:
+            _gateway_down_since = now
+        elif now - _gateway_down_since >= settings.alert_gateway_outage_minutes * 60:
+            _alert(
+                "gateway-rpc",
+                f"Can't reach this bot's Gateway for {settings.alert_gateway_outage_minutes}+ minutes: "
+                "cron jobs set on the dashboard aren't loading.",
+                str(exc),
+            )
         return list(load_jobs(settings.cron_jobs_path).get("jobs", []))
 
 
@@ -291,6 +329,8 @@ def main() -> int:
     signal.signal(signal.SIGINT, stop)
     signal.signal(signal.SIGTERM, stop)
 
+    global ALERTER
+    ALERTER = Alerter(settings, log=log)
     tz = ZoneInfo(settings.cron_timezone)
     state = load_json(settings.cron_state_path, {})
     llm = LlmClient(settings)
@@ -323,6 +363,7 @@ def main() -> int:
                     log(f"[cron] dynamic job id={job.get('id')} status={result['status']} ({source})")
         except Exception:
             log(traceback.format_exc())
+            _alert("cron-loop", "The cron worker hit an error; scheduled jobs may not have run.", traceback.format_exc())
         time.sleep(settings.cron_poll_seconds)
 
     log("[cron] stopped")

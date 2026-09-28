@@ -5,6 +5,7 @@ import time
 import traceback
 from datetime import datetime, timezone
 
+from openclaw_runtime.alerts import Alerter
 from openclaw_runtime.config import load_settings
 from openclaw_runtime.embedding_client import EmbeddingClient
 from openclaw_runtime.file_ingest import InboxIngestor
@@ -42,6 +43,20 @@ def report_results(results, logged_skips: set[tuple[str, str]]) -> None:
             log(f"[watcher] ingested path={result.path} collection={result.collection} chunks={result.chunks}")
 
 
+def check_ingest_health(results, alerter: Alerter) -> None:
+    """Alert when files can't be indexed (e.g. the embedding service is
+    down, so nothing new reaches /rag); a scan with no failures resolves it."""
+    failed = [r for r in results if r.skipped and str(r.reason).startswith("failed:")]
+    if failed:
+        alerter.alert(
+            "watcher-ingest",
+            f"The memory watcher can't index {len(failed)} file(s); new material isn't reaching /rag.",
+            f"{failed[0].path}: {failed[0].reason}",
+        )
+    else:
+        alerter.resolve("watcher-ingest", "The memory watcher is indexing files again.")
+
+
 def main() -> int:
     settings = load_settings()
     if not settings.memory_enabled:
@@ -57,12 +72,17 @@ def main() -> int:
     ingestor = InboxIngestor(settings, embeddings, qdrant)
     log(f"[watcher] inbox={settings.inbox_path} poll={settings.watcher_poll_seconds}s")
     logged_skips: set[tuple[str, str]] = set()
+    alerter = Alerter(settings, log=log)
 
     while RUNNING:
         try:
-            report_results(ingestor.scan_once(), logged_skips)
+            results = ingestor.scan_once()
+            report_results(results, logged_skips)
+            check_ingest_health(results, alerter)
+            alerter.resolve("watcher-scan", "The memory watcher is scanning the inbox again.")
         except Exception:
             log(traceback.format_exc())
+            alerter.alert("watcher-scan", "The memory watcher can't scan its inbox.", traceback.format_exc())
         time.sleep(settings.watcher_poll_seconds)
 
     log("[watcher] stopped")

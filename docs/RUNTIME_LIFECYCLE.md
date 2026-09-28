@@ -61,6 +61,25 @@ doesn't create it as root (which silently stops the Gateway's
 `OPENCLAWCTL_ROOT` overrides the repo root and `OPENCLAWCTL_LOG_LINES` the
 number of log lines (default 50).
 
+## Alerts
+
+Problems that would otherwise only reach a log are sent to
+`OPENCLAW_ALERT_CHAT_IDS` on Telegram, by the bot that hit them and labelled
+with its `OPENCLAW_RUNTIME_LABEL`:
+
+| Alert | Raised by | Recovers when |
+| --- | --- | --- |
+| A `/cron` job failed | cron worker | the job next succeeds |
+| The Gateway unreachable for `OPENCLAW_ALERT_GATEWAY_OUTAGE_MINUTES` (default 10) | cron worker | it answers again |
+| An off-peak preparation failed (cron job or English bot) | cron worker / Telegram gateway | the next preparation succeeds |
+| The English bot's scheduler errored | Telegram gateway | the next push goes out |
+| The memory watcher can't scan, or can't index files | memory watcher | a clean scan |
+| The cron worker's loop errored | cron worker | -- |
+
+The same problem alerts at most once per `OPENCLAW_ALERT_COOLDOWN_MINUTES`
+(default 360); when it clears, one "recovered" message follows. Restarts on
+their own never alert. With no chat IDs set, alerts are off.
+
 ## Boot modes
 
 `bin/openclawctl boot` reads `OPENCLAW_BOOT_MODE` (from the process env; wire it

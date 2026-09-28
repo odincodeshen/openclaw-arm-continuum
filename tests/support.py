@@ -98,6 +98,9 @@ def build_settings(**overrides) -> Settings:
         dictionary_path=Path("ecdict.sqlite"),
         rag_include_categories=False,
         pending_state_path=None,
+        alert_chat_ids=set(),
+        alert_cooldown_minutes=360,
+        alert_gateway_outage_minutes=10,
     )
     base.update(overrides)
     return Settings(**base)
