@@ -90,6 +90,36 @@ further out; a wrong answer sends it back to box 0, due tomorrow:
 Each record keeps `review_box`, `next_review`, `last_review_at`,
 `correct_count` and `wrong_count`.
 
+## Pronunciation (🔊)
+
+With `OPENCLAW_TTS_ENABLED=true`, a lookup card has **🔊 UK / 🔊 US**
+buttons for the word, and **🔊 UK sentence / 🔊 US sentence** for your
+sentence (or the example when you didn't give one). The self-check review
+shows the same UK / US buttons once you tap Show answer. A tap sends the
+audio as a Telegram voice message.
+
+The audio is synthesized on the host by the shared `openclaw-tts` service
+(`app/openclaw_tts_service.py`, Kokoro-82M, Apache-2.0) on CPU -- the GPU
+stays with the main model, and nothing is sent to an outside service; the
+voice model is downloaded once into the Hugging Face cache. British English
+uses the `bf_emma` voice, American `af_heart`
+(`OPENCLAW_TTS_VOICE_UK` / `_US` on the service). Each clip is cached by
+voice and text under `.cache/tts`, so a word is only synthesized once
+(about a second on the GB10's CPU the first time).
+
+It's synthetic speech: reliable for how a word sounds and where the stress
+falls, but flatter than a real speaker in sentences (less natural rhythm,
+linking and weak forms), and rare names can come out wrong -- check against
+the phonetic on the card. Real speech for listening and shadowing still
+comes from the BBC clips.
+
+```text
+OPENCLAW_TTS_ENABLED=true
+OPENCLAW_TTS_BASE_URL=http://openclaw-tts:8766   # default
+```
+
+Start the service once with `docker compose up -d --build openclaw-tts`.
+
 ## Building the dictionary file
 
 ECDICT's Chinese is Simplified; the build step converts it to Traditional

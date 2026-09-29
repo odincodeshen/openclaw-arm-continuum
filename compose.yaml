@@ -140,6 +140,26 @@ services:
       - ${OPENCLAW_HOST_WORKSPACE:-./workspace}:/workspace
     restart: unless-stopped
 
+  openclaw-tts:
+    logging: *default-logging
+    build:
+      context: ./tts
+    container_name: openclaw-tts
+    working_dir: /app
+    command: ["python", "-u", "openclaw_tts_service.py"]
+    environment:
+      OPENCLAW_TTS_HOST: 0.0.0.0
+      OPENCLAW_TTS_PORT: 8766
+      OPENCLAW_TTS_CACHE_DIR: /cache/tts
+      # CPU only: the GPU stays with vLLM
+      NVIDIA_VISIBLE_DEVICES: void
+      CUDA_VISIBLE_DEVICES: ""
+    volumes:
+      - ./app:/app:ro
+      - ${HF_CACHE_DIR:-./.cache/huggingface}:/root/.cache/huggingface
+      - ./.cache/tts:/cache/tts
+    restart: unless-stopped
+
   openclaw-whisper:
     logging: *default-logging
     build:

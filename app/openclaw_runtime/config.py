@@ -168,6 +168,11 @@ class Settings:
     # due tomorrow -- another bot's tracker collection on the same Qdrant, so
     # it shows in that bot's morning schedule report. Empty = this bot's own.
     night_ritual_schedule_collection: str = ""
+    # Pronunciation audio (openclaw_tts_service.py): 🔊 UK / US buttons on
+    # word lookups and review answers.
+    tts_enabled: bool = False
+    tts_base_url: str = "http://openclaw-tts:8766"
+    tts_timeout: int = 60
 
 
 def load_settings() -> Settings:
@@ -319,4 +324,7 @@ def load_settings() -> Settings:
         night_ritual_prepare_time=os.environ.get("OPENCLAW_NIGHT_RITUAL_PREPARE_TIME", "04:00"),
         night_ritual_dir=Path(os.environ.get("OPENCLAW_NIGHT_RITUAL_DIR", "/workspace/.openclaw/night")),
         night_ritual_schedule_collection=os.environ.get("OPENCLAW_NIGHT_RITUAL_SCHEDULE_COLLECTION", "").strip(),
+        tts_enabled=env_bool("OPENCLAW_TTS_ENABLED", False),
+        tts_base_url=os.environ.get("OPENCLAW_TTS_BASE_URL", "http://openclaw-tts:8766"),
+        tts_timeout=env_int("OPENCLAW_TTS_TIMEOUT", 60),
     )

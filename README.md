@@ -21,7 +21,9 @@ Copy-paste ready Telegram examples are in [`examples/`](examples/).
 - Telegram long polling gateway with allowlist support.
 - Local memory and document RAG through Ollama embeddings and Qdrant.
 - Playwright/Chromium scraper worker for `/search` and cron web tasks.
-- Local Whisper service for Telegram voice transcription.
+- Local Whisper service for Telegram voice transcription, and a local
+  text-to-speech service (`openclaw-tts`, Kokoro on CPU) for UK / US
+  pronunciation on word lookups.
 - Dynamic cron tasks with Telegram push delivery and Gateway dashboard integration.
 - Thin `AgentRegistry` and `TaskDispatcher` for skill-based routing.
 - Runtime profile isolation for personal/demo deployments, and several bot
@@ -177,7 +179,7 @@ On a shared GPU box, run the core services without the vLLM engine and start
 it only when needed (`docs/RUNTIME_LIFECYCLE.md`):
 
 ```bash
-bin/openclawctl start core      # Telegram, memory, cron, scraper, whisper
+bin/openclawctl start core      # Telegram, memory, cron, scraper, whisper, tts
 bin/openclawctl start model     # vLLM, when you need chat / RAG summaries
 bin/openclawctl stop  model     # free the GPU, Telegram stays up
 ```

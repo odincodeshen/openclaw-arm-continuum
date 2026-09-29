@@ -36,7 +36,7 @@
 
 set -eu
 
-CORE_SERVICES="${OPENCLAWCTL_CORE_SERVICES:-openclaw-gateway openclaw-telegram openclaw-cron openclaw-memory-watcher openclaw-browser-scraper openclaw-whisper}"
+CORE_SERVICES="${OPENCLAWCTL_CORE_SERVICES:-openclaw-gateway openclaw-telegram openclaw-cron openclaw-memory-watcher openclaw-browser-scraper openclaw-whisper openclaw-tts}"
 MODEL_SERVICES="${OPENCLAWCTL_MODEL_SERVICES:-openclaw-vllm}"
 COMPOSE="${OPENCLAWCTL_COMPOSE:-docker compose}"
 ROOT="${OPENCLAWCTL_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"

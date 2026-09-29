@@ -178,6 +178,9 @@ v1.2 baseline. What has actually shipped since then:
   `/night move`; `/cat merge` keeps PDFs and drops duplicates; uploads
   waiting for a category survive restarts; a weekly watchdog health summary.
 
+- **After v1.22 (unreleased).** 🔊 UK / US pronunciation on word lookups and
+  self-check answers, from a local Kokoro TTS service (`openclaw-tts`).
+
 Still open, re-baselined against v1.22:
 
 **Platform / runtime**

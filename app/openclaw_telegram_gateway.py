@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import dataclasses
+from collections import OrderedDict
 import hashlib
 import json
 import mimetypes
@@ -86,6 +87,7 @@ from openclaw_runtime.alerts import Alerter
 from openclaw_runtime.dictionary import LocalDictionary
 from openclaw_runtime.message_cards import RULE, esc, html_to_plain, split_html_message
 from openclaw_runtime.skills.memory import MemoryWriteSkill
+from openclaw_runtime.tts_client import TtsClient
 from openclaw_runtime.skills.english_bot import read_this_week_payload, record_gist_choice, render_gist_card
 from openclaw_runtime.night_ritual import (
     NightStore,
@@ -150,6 +152,7 @@ llm = model_clients.get("local_default")
 vision = VisionClient(model_clients.get_or_default("vision"))
 qdrant = QdrantClient(settings)
 transcriber = TranscriptionClient(settings)
+tts = TtsClient(settings)
 embeddings = EmbeddingClient(settings)
 english_bot_clip_client = AudioClipClient(settings)
 dictionary = LocalDictionary(settings.dictionary_path)
@@ -850,6 +853,9 @@ def handle_callback_query(query: dict) -> None:
         return
     if data.startswith(NIGHT_SCHEDULE_PREFIX):
         handle_night_schedule_callback(chat_id, message_id, data, answer)
+        return
+    if data.startswith(TTS_PREFIX):
+        handle_tts_callback(chat_id, data, answer)
         return
     if data.startswith(MENU_PREFIX):
         handle_menu_callback(chat_id, data, answer)
@@ -2010,6 +2016,100 @@ def handle_vocab_review_answer(chat_id: int, message: dict) -> bool:
     return True
 
 
+# 🔊 buttons carry a short key; the text to speak stays here (Telegram's
+# callback_data is only 64 bytes), mirrored to a small file so buttons on
+# older cards still work after a restart.
+TTS_TEXTS: "OrderedDict[str, str]" = OrderedDict()
+TTS_TEXTS_LOCK = threading.Lock()
+TTS_TEXTS_MAX = 2000
+TTS_PREFIX = "tts:"
+
+
+def _tts_texts_path() -> Path:
+    return settings.inbox_path.parent / ".openclaw" / "tts_texts.json"
+
+
+def _load_tts_texts() -> None:
+    """Fill TTS_TEXTS from disk (once, when a key isn't in memory)."""
+    try:
+        saved = json.loads(_tts_texts_path().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    with TTS_TEXTS_LOCK:
+        for key, text in saved.items():
+            TTS_TEXTS.setdefault(key, text)
+
+
+def _tts_key(text: str) -> str:
+    key = hashlib.sha1(text.encode("utf-8")).hexdigest()[:12]
+    with TTS_TEXTS_LOCK:
+        known = key in TTS_TEXTS
+        TTS_TEXTS[key] = text
+        TTS_TEXTS.move_to_end(key)
+        while len(TTS_TEXTS) > TTS_TEXTS_MAX:
+            TTS_TEXTS.popitem(last=False)
+        snapshot = dict(TTS_TEXTS) if not known else None
+    if snapshot is not None:
+        try:
+            path = _tts_texts_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(snapshot, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(path)
+        except OSError as exc:
+            log(f"[tts] could not save button texts: {exc}")
+    return key
+
+
+def pronunciation_rows(word: str, sentence: str = "") -> list[list[dict]]:
+    """🔊 UK / 🔊 US for the word, and for the sentence when there is one."""
+    if not settings.tts_enabled or not word.strip():
+        return []
+    rows = []
+    for label, text in (("", word.strip()), (" sentence", (sentence or "").strip())):
+        if not text:
+            continue
+        key = _tts_key(text)
+        rows.append([
+            {"text": f"🔊 UK{label}", "callback_data": f"{TTS_PREFIX}{key}:uk"},
+            {"text": f"🔊 US{label}", "callback_data": f"{TTS_PREFIX}{key}:us"},
+        ])
+    return rows
+
+
+def _speak_and_send(chat_id: int, text: str, accent: str) -> None:
+    try:
+        audio = tts.speak(text, accent)
+    except Exception as exc:  # noqa: BLE001
+        log(f"[tts] speak failed accent={accent}: {exc}")
+        send_message(chat_id, "Couldn't make the pronunciation audio right now -- try again in a moment.")
+        return
+    folder = settings.inbox_path.parent / ".openclaw" / "tts"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{hashlib.sha1((accent + text).encode('utf-8')).hexdigest()[:16]}.ogg"
+    try:
+        path.write_bytes(audio)
+        caption = f"{accent.upper()} · {text if len(text) <= 200 else text[:200] + '…'}"
+        send_voice_file(chat_id, path, caption)
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def handle_tts_callback(chat_id: int, data: str, answer) -> None:
+    key, _, accent = data[len(TTS_PREFIX):].partition(":")
+    with TTS_TEXTS_LOCK:
+        text = TTS_TEXTS.get(key)
+    if text is None:
+        _load_tts_texts()
+        with TTS_TEXTS_LOCK:
+            text = TTS_TEXTS.get(key)
+    if not text or accent not in ("uk", "us"):
+        answer("This button has expired -- look the word up again.")
+        return
+    answer()
+    threading.Thread(target=_speak_and_send, args=(chat_id, text, accent), daemon=True).start()
+
+
 def send_card_with_buttons(chat_id: int, html: str, rows: list[list[dict]]) -> int | None:
     """An HTML card with inline buttons; returns its message id. Falls back
     to the plain card (no buttons) if Telegram rejects it."""
@@ -2084,7 +2184,8 @@ def handle_vocab_review_callback(chat_id: int, message_id: int | None, data: str
                 message_id,
                 render_self_check_question(index + 1, len(questions), question, reveal=True),
                 [[{"text": "✅ Remembered", "callback_data": f"vr:ok:{index}"},
-                  {"text": "❌ Forgot", "callback_data": f"vr:no:{index}"}]],
+                  {"text": "❌ Forgot", "callback_data": f"vr:no:{index}"}]]
+                + pronunciation_rows(question["phrase"]),
             )
         return
     if action not in ("ok", "no"):
@@ -2165,7 +2266,12 @@ def _lookup_and_reply(chat_id: int, word: str, sentence: str) -> None:
         count = save_to_word_list(
             qdrant, embeddings, settings.tracker_collection, str(chat_id), result, sentence
         )
-        send_html(chat_id, render_lookup_card(result, sentence, count))
+        html = render_lookup_card(result, sentence, count)
+        rows = pronunciation_rows(result.word, sentence or result.example)
+        if rows:
+            send_card_with_buttons(chat_id, html, rows)
+        else:
+            send_html(chat_id, html)
     except Exception as exc:
         log(f"[vocab] lookup error chat_id={chat_id}: {exc}")
         send_message(chat_id, f"OpenClaw could not look that word up: {exc}")

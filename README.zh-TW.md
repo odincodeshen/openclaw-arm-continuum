@@ -66,6 +66,7 @@ OpenClaw Arm Continuum 利用這個特性，把個人 AI 助理拆成幾個可�
 - `openclaw-memory-watcher`：監控 inbox，切 chunk，寫入 Qdrant。
 - `openclaw-browser-scraper`：Playwright / Chromium 網頁查詢 worker。
 - `openclaw-whisper`：本地 Whisper 語音轉錄 service。
+- `openclaw-tts`：本地發音合成 service（Kokoro，CPU），提供查字的英式／美式發音。
 - `openclaw-gateway`：官方 OpenClaw Gateway dashboard。
 - runtime profiles：用來切分 personal / demo 的 `.env`、workspace、Gateway state 與 Qdrant collections；也可以在同一台主機同時跑多個 bot，各自有自己的 Telegram bot、記憶與 cron，共用模型引擎與 Qdrant（見 `docs/PROFILES.md`）。
 - 每日報告指令（搭配 `/cron`）：`/mem upcoming`（未來幾天到期的項目）、`/rag digest`（昨天新增的知識，每項一句話；`/rag digest week` 為最近七天）。
