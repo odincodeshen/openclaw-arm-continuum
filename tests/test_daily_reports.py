@@ -80,6 +80,12 @@ class RenderKnowledgeDigestTest(unittest.TestCase):
         self.assertIn("Knowledge base\n• Sentence A.\n\n#ai\n• Sentence B.\n• Sentence C.", report)
         self.assertIn("…and 2 more.", report)
 
+    def test_weekly_title_and_period(self) -> None:
+        report = render_knowledge_digest(date(2026, 10, 3), [(NewDocument("#ai", "t", "x"), "One.")], days=7)
+        self.assertTrue(report.startswith("知識｜本週新增\n━"))
+        self.assertIn("27 Sep – 03 Oct · 1 new", report)
+        self.assertIn("No new knowledge was added this week.", render_knowledge_digest(date(2026, 10, 3), [], days=7))
+
     def test_empty_still_reports(self) -> None:
         report = render_knowledge_digest(date(2026, 9, 26), [])
         self.assertIn("Sat 26 Sep · 0 new", report)
@@ -115,6 +121,20 @@ class MemUpcomingCommandTest(unittest.TestCase):
         with patch("openclaw_runtime.skills.memory.local_today", return_value=TODAY):
             self.assertIn("未來7天", skill.run("/mem upcoming 7d").answer)
             self.assertIn("未來3天", skill.run("/mem upcoming nonsense").answer)
+
+
+class RagWeeklyDigestCommandTest(unittest.TestCase):
+    def test_covers_the_seven_days_up_to_yesterday(self) -> None:
+        settings = dataclasses.replace(build_settings(cron_timezone="Europe/London"), category_rag_enabled=False)
+        qdrant = MagicMock()
+        qdrant.scroll_by_filters.return_value = []
+        skill = RagRetrieveSkill(settings, {}, MagicMock(), qdrant, MagicMock())
+        with patch("openclaw_runtime.skills.memory.local_today", return_value=date(2026, 10, 4)):  # a Sunday
+            result = skill.run("/rag digest week")
+        self.assertIn("27 Sep – 03 Oct · 0 new", result.answer)
+        kwargs = qdrant.scroll_by_filters.call_args.kwargs
+        self.assertEqual(kwargs["since"], day_bounds(date(2026, 9, 27), "Europe/London")[0])
+        self.assertEqual(kwargs["before"], day_bounds(date(2026, 10, 3), "Europe/London")[1])
 
 
 class RagDigestCommandTest(unittest.TestCase):

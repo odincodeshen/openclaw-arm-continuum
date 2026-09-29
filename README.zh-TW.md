@@ -68,7 +68,7 @@ OpenClaw Arm Continuum 利用這個特性，把個人 AI 助理拆成幾個可�
 - `openclaw-whisper`：本地 Whisper 語音轉錄 service。
 - `openclaw-gateway`：官方 OpenClaw Gateway dashboard。
 - runtime profiles：用來切分 personal / demo 的 `.env`、workspace、Gateway state 與 Qdrant collections；也可以在同一台主機同時跑多個 bot，各自有自己的 Telegram bot、記憶與 cron，共用模型引擎與 Qdrant（見 `docs/PROFILES.md`）。
-- 每日報告指令（搭配 `/cron`）：`/mem upcoming`（未來幾天到期的項目）、`/rag digest`（昨天新增的知識，每項一句話）。
+- 每日報告指令（搭配 `/cron`）：`/mem upcoming`（未來幾天到期的項目）、`/rag digest`（昨天新增的知識，每項一句話；`/rag digest week` 為最近七天）。
 - 選用的英文學習 bot：每天一個聽說練習任務並評估語音回覆，另有查字與間隔重複複習（見 `docs/ENGLISH_BOT.md`、`docs/DICTIONARY.md`）。
 - 選用的影片摘要轉送：直接傳 YouTube 連結（見 `docs/VIDEO_SUMMARY_RELAY.md`）。
 - 英文 onboarding 文件與可直接貼進 Telegram 的範例指令。
@@ -326,7 +326,7 @@ vision model（`OPENCLAW_VLM_MODEL`）辨識。分類可以改名或合併，不
 
 ```text
 /cron add daily 07:00 行程｜未來3天 :: /mem upcoming
-/cron add daily 07:05 知識｜昨日新增 :: /rag digest
+/cron add weekly sun 07:05 知識｜本週新增 :: /rag digest week
 ```
 
 排程結果只會推送到 Telegram（並記在 Gateway 的執行紀錄），不會存進 inbox，所以不會被再次建立索引、回流到記憶庫。

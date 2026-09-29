@@ -455,10 +455,10 @@ class RunMondayTaskTest(unittest.TestCase):
             send_audio=lambda owner, path, caption: events.append(("audio", owner, path.name)),
             workspace_dir=self.workspace_dir,
         )
-        self.assertEqual(events, [("audio", "owner-a", "monday_clip.mp3"), ("text", "owner-a")])
+        self.assertEqual(events, [("audio", "owner-a", "monday_clip.ogg"), ("text", "owner-a")])
         # second clip: the selected stretch, cut from window.mp3 with the window's own timestamps
         args = self.clip_client.clip.call_args_list[1].args
-        self.assertEqual((args[0].name, args[1], args[2], args[3].name), ("window.mp3", 10.0, 190.0, "monday_clip.mp3"))
+        self.assertEqual((args[0].name, args[1], args[2], args[3].name), ("window.mp3", 10.0, 190.0, "monday_clip.ogg"))
 
     @patch("openclaw_runtime.skills.english_bot.get_bytes")
     @patch("openclaw_runtime.skills.english_bot.get_text")

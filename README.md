@@ -30,7 +30,7 @@ Copy-paste ready Telegram examples are in [`examples/`](examples/).
   (`docs/PROFILES.md`).
 - Daily report building blocks for `/cron`: `/mem upcoming` (what's due in
   the next few days) and `/rag digest` (yesterday's new knowledge, one
-  sentence each).
+  sentence each; `/rag digest week` for the last seven days).
 - Optional English-learning coach bot: a daily speaking/listening task with
   voice evaluation, plus word lookup and spaced-repetition review
   (`docs/ENGLISH_BOT.md`, `docs/DICTIONARY.md`).
@@ -361,7 +361,7 @@ once:
 
 ```text
 /cron add daily 07:00 Schedule :: /mem upcoming
-/cron add daily 07:05 New knowledge :: /rag digest
+/cron add weekly sun 07:05 New knowledge :: /rag digest week
 ```
 
 A job's result is pushed to Telegram (and recorded in the Gateway run
@@ -369,7 +369,8 @@ history) only -- it is not saved into the inbox, so it never ends up indexed
 back into memory.
 
 To run the model work off-peak (for example on cheap overnight electricity),
-set `OPENCLAW_CRON_PREPARE_WINDOW=04:00-05:30`: daily jobs due later that day
+set `OPENCLAW_CRON_PREPARE_WINDOW=04:00-05:30`: daily jobs (and weekly jobs on
+their day) due later that day
 whose prompt starts with one of `OPENCLAW_CRON_PREPARE_PROMPTS` (default
 `/rag digest`) are generated in the window and still delivered at their own
 time. A job that can't be prepared just runs at its time.

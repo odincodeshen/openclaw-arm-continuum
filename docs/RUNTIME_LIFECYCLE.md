@@ -80,6 +80,33 @@ The same problem alerts at most once per `OPENCLAW_ALERT_COOLDOWN_MINUTES`
 (default 360); when it clears, one "recovered" message follows. Restarts on
 their own never alert. With no chat IDs set, alerts are off.
 
+### Container watchdog
+
+A process can't report its own crash, so `scripts/openclaw_watchdog.py` runs
+on the host (standard library only) and compares `docker inspect` of every
+`openclaw-*` container with its last run:
+
+| Alert | Recovers when |
+| --- | --- |
+| A container crashed and Docker restarted it (its `RestartCount` went up), with the exit code or "OOM-killed" | -- |
+| A container stuck restarting | it stays up |
+| A running container's health check fails | it's healthy again |
+| The host rebooted | -- |
+
+A restart or recreate by `openclawctl` / `docker compose` doesn't change
+`RestartCount` (a recreated container starts a new baseline), and a stopped
+container never alerts, so only unexpected restarts are reported. It sends
+through the first `profiles/*/.env` (then `.env`) that sets both
+`OPENCLAW_TELEGRAM_BOT_TOKEN` and `OPENCLAW_ALERT_CHAT_IDS`, or the file named
+by `OPENCLAW_WATCHDOG_ENV_FILE`; the cooldown is
+`OPENCLAW_WATCHDOG_COOLDOWN_MINUTES` (default 360), and its state is kept in
+`.cache/openclaw-watchdog.json`. The first run only records a baseline. Run it
+from the host's crontab:
+
+```text
+*/5 * * * * cd /path/to/openclaw-arm-continuum && /usr/bin/python3 scripts/openclaw_watchdog.py >> .cache/openclaw-watchdog.log 2>&1
+```
+
 ## Boot modes
 
 `bin/openclawctl boot` reads `OPENCLAW_BOOT_MODE` (from the process env; wire it

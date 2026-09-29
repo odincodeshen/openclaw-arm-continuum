@@ -8,6 +8,7 @@ from openclaw_runtime.config import Settings
 from openclaw_runtime.daily_reports import (
     KNOWLEDGE_DIGEST_MAX_DOCS,
     UPCOMING_DEFAULT_DAYS,
+    WEEKLY_DIGEST_MAX_DOCS,
     documents_added_on,
     local_today,
     render_knowledge_digest,
@@ -614,6 +615,8 @@ class RagRetrieveSkill:
         raw_query = self._strip_command(text)
         if raw_query.strip().lower() == "digest":
             return self._knowledge_digest()
+        if raw_query.strip().lower() == "digest week":
+            return self._knowledge_digest(days=7)
         prefix_filters, raw_query = split_rag_filter_prefix(raw_query)
         category_token, query = split_category_prefix(raw_query)
         if not query:
@@ -635,23 +638,28 @@ class RagRetrieveSkill:
         hits = self.qdrant.search(collection, vector, limit=limit * _SOURCE_FILTER_OVERFETCH, **kwargs)
         return filter_hits_by_source(hits, source, limit)
 
-    def _knowledge_digest(self) -> SkillResult:
-        """Daily knowledge report: every document added yesterday (cron
-        timezone) to the knowledge base or a Category RAG collection, one
-        sentence each. Tracker memory (/mem notes, saved /cron output) is
-        deliberately not included. Always returns a report, even when
-        nothing was added."""
+    def _knowledge_digest(self, days: int = 1) -> SkillResult:
+        """Knowledge report: every document added to the knowledge base or a
+        Category RAG collection yesterday (days=1, /rag digest) or in the 7
+        days up to yesterday (days=7, /rag digest week), one sentence each,
+        in the cron timezone. Tracker memory (/mem notes, saved /cron
+        output) is deliberately not included. Always returns a report, even
+        when nothing was added."""
         yesterday = local_today(self.settings.cron_timezone) - timedelta(days=1)
+        first_day = yesterday - timedelta(days=days - 1)
+        max_docs = KNOWLEDGE_DIGEST_MAX_DOCS if days == 1 else WEEKLY_DIGEST_MAX_DOCS
         sources = [("Knowledge base", self.settings.knowledge_collection)]
         if self.settings.category_rag_enabled:
             sources += [(f"#{entry['display']}", entry["collection"]) for entry in registry_entries(self.settings)]
         documents = []
         for label, collection in sources:
             try:
-                documents += documents_added_on(self.qdrant, [(label, collection)], yesterday, self.settings.cron_timezone)
+                documents += documents_added_on(
+                    self.qdrant, [(label, collection)], first_day, self.settings.cron_timezone, days=days
+                )
             except Exception as exc:  # noqa: BLE001 - a missing collection shouldn't sink the whole report
                 print(f"[rag] digest skipped {collection}: {exc}", flush=True)
-        shown = documents[:KNOWLEDGE_DIGEST_MAX_DOCS]
+        shown = documents[:max_docs]
         summaries = []
         for document in shown:
             try:
@@ -660,7 +668,7 @@ class RagRetrieveSkill:
                 summary = ""
             summaries.append((document, summary or " ".join(document.text.split())[:120]))
         return SkillResult(
-            self.name, render_knowledge_digest(yesterday, summaries, more=len(documents) - len(shown))
+            self.name, render_knowledge_digest(yesterday, summaries, more=len(documents) - len(shown), days=days)
         )
 
     def _run_default(self, query: str, prefix_filters: dict[str, str] | None = None) -> SkillResult:

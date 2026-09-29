@@ -317,6 +317,32 @@ def list_word_list(qdrant: QdrantClient, collection: str, owner: str) -> list[di
     return sorted(payloads, key=lambda payload: payload.get("added_at") or "", reverse=True)
 
 
+def _anki_field(html: str) -> str:
+    # One field per column: no tabs, and line breaks as <br> (html is on).
+    return html.replace("\t", " ").replace("\r", "").replace("\n", "<br>")
+
+
+def render_anki_tsv(entries: list[dict]) -> str:
+    """The word list as an Anki import file (File > Import): tab-separated,
+    HTML allowed, the header lines tell Anki which column holds the tags.
+    Front: the word (and its phonetic). Back: the meaning, then the
+    sentence the learner saw it in (or the chunk's example)."""
+    lines = ["#separator:tab", "#html:true", "#tags column:3"]
+    for entry in entries:
+        word = entry.get("display_word") or entry.get("word") or ""
+        if not word:
+            continue
+        front = esc(word)
+        if entry.get("phonetic"):
+            front += f"<br>/{esc(entry['phonetic'])}/"
+        back = esc(entry.get("meaning") or "")
+        if entry.get("context_sentence"):
+            back += f"<br><br><i>{esc(entry['context_sentence'])}</i>"
+        tag = "openclaw_chunk" if entry.get("source") == "weekly_chunk" else "openclaw_lookup"
+        lines.append("\t".join([_anki_field(front), _anki_field(back), tag]))
+    return "\n".join(lines) + "\n"
+
+
 def remove_from_word_list(qdrant: QdrantClient, collection: str, owner: str, word: str) -> bool:
     existing = _find_saved(qdrant, collection, owner, normalize_query(word))
     if not existing:
@@ -368,7 +394,11 @@ def render_word_list(entries: list[dict], due_count: int = 0) -> str:
         lines.append(f"{index}. {bold(entry.get('display_word') or entry.get('word', ''))} — {esc(meaning)}{suffix}")
     if len(entries) > LIST_LIMIT:
         lines.append(f"…and {len(entries) - LIST_LIMIT} more. Newest first.")
-    lines += ["", "/w &lt;word&gt; to look up · /vocab review to review · /vocab rm &lt;word&gt; to remove"]
+    lines += [
+        "",
+        "/w &lt;word&gt; to look up · /vocab review to review · /vocab rm &lt;word&gt; to remove"
+        " · /vocab export for Anki",
+    ]
     return "\n".join(lines)
 
 

@@ -162,6 +162,15 @@ v1.2 baseline. What has actually shipped since then:
   which emptied Saturday's cloze), cloze matching handles irregular forms,
   `-ing`, `someone`/`one's` placeholders and bracketed optional parts, and
   Friday lists each chunk's example.
+- **After v1.21 (unreleased).** Operator alerts on Telegram for problems
+  that only reached a log, plus a host-side container watchdog
+  (`scripts/openclaw_watchdog.py`: crash restarts, crash loops, failing
+  health checks, host reboots). bot2/bot3 knowledge reports became a Sunday
+  `/rag digest week`, Monday's clip is a Telegram voice message, and
+  `/vocab export` sends the word list as an Anki import file. Filing an
+  upload is a tap: the category prompt lists existing categories as inline
+  buttons (+ New category, Cancel); `/cat delete` removes a category after a
+  confirm button; new category names are one word.
 
 Still open, re-baselined against v1.21:
 

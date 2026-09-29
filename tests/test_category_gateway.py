@@ -30,6 +30,16 @@ class CategoryGatewayTestBase(unittest.TestCase):
         gateway.send_message = lambda chat_id, text: self.sent.append((chat_id, text))
         self.addCleanup(setattr, gateway, "send_message", self._orig_send)
 
+        self.api_calls: list[tuple[str, dict]] = []
+        self._orig_telegram = gateway.telegram
+
+        def fake_telegram(method, payload=None, timeout=60):
+            self.api_calls.append((method, payload or {}))
+            return {"ok": True, "result": {"message_id": 700 + len(self.api_calls)}}
+
+        gateway.telegram = fake_telegram
+        self.addCleanup(setattr, gateway, "telegram", self._orig_telegram)
+
         with gateway.PENDING_CATEGORY_LOCK:
             gateway.PENDING_CATEGORY.clear()
         self.addCleanup(gateway.PENDING_CATEGORY.clear)
@@ -156,6 +166,159 @@ class PendingStateMachineTest(CategoryGatewayTestBase):
         self.assertFalse(staged.exists())
         moved = list((self.inbox / "knowledge" / "telegram").glob("*.pdf"))
         self.assertEqual(len(moved), 1)
+
+
+class CategoryPickerTest(CategoryGatewayTestBase):
+    def setUp(self) -> None:
+        super().setUp()
+        categories.upsert_registry_entry(self.settings, "aimodel")
+        categories.upsert_registry_entry(self.settings, "mindset")
+        self.started: list[tuple] = []
+        self._orig_thread = gateway.threading.Thread
+
+        class FakeThread:
+            def __init__(inner, target=None, args=(), daemon=None):
+                self.started.append(args)
+
+            def start(inner):
+                pass
+
+        gateway.threading.Thread = FakeThread
+        self.addCleanup(setattr, gateway.threading, "Thread", self._orig_thread)
+
+    def _stage(self) -> int:
+        gateway.set_pending_category(42, {"path": "/x/a.pdf", "kind": "document", "note": "", "original_name": "Report.pdf"})
+        gateway.send_category_picker(42, "<b>檔案｜選擇分類</b>")
+        method, payload = self.api_calls[-1]
+        self.assertEqual(method, "sendMessage")
+        return payload
+
+    def _tap(self, data: str, message_id: int = 701) -> None:
+        gateway.handle_callback_query(
+            {"id": "q1", "data": data, "message": {"message_id": message_id, "chat": {"id": 42}}}
+        )
+
+    def test_picker_lists_existing_categories_then_new_and_cancel(self) -> None:
+        rows = self._stage()["reply_markup"]["inline_keyboard"]
+        self.assertEqual([b["text"] for b in rows[0]], ["#aimodel", "#mindset"])
+        self.assertEqual([b["callback_data"] for b in rows[-1]], ["cat_new", "cat_cancel"])
+        self.assertEqual(gateway.PENDING_CATEGORY[42]["prompt_ids"], [701])
+
+    def test_tapping_a_category_files_the_batch_and_closes_the_picker(self) -> None:
+        button = self._stage()["reply_markup"]["inline_keyboard"][0][0]
+        self._tap(button["callback_data"])
+        self.assertNotIn(42, gateway.PENDING_CATEGORY)
+        self.assertEqual(self.started[0][2]["display"], "aimodel")
+        methods = [m for m, _ in self.api_calls]
+        self.assertIn("editMessageReplyMarkup", methods)
+        self.assertIn(("answerCallbackQuery", {"callback_query_id": "q1", "text": "Filing into #aimodel"}),
+                      self.api_calls)
+        edited = [p for m, p in self.api_calls if m == "editMessageText"][0]
+        self.assertIn("Report.pdf → #aimodel", edited["text"])
+
+    def test_typing_a_name_also_closes_the_picker(self) -> None:
+        self._stage()
+        gateway.resolve_pending_with_category(42, "trip")
+        self.assertIn(("editMessageReplyMarkup",
+                       {"chat_id": 42, "message_id": 701, "reply_markup": {"inline_keyboard": []}}), self.api_calls)
+
+    def test_cancel_files_into_general_and_new_only_hints(self) -> None:
+        self._stage()
+        self._tap("cat_new")
+        self.assertIn(42, gateway.PENDING_CATEGORY)
+        prompt = [p for m, p in self.api_calls if m == "sendMessage"][-1]
+        self.assertIn("Report.pdf", prompt["text"])
+        self.assertTrue(prompt["reply_markup"]["force_reply"])
+        self._tap("cat_cancel")
+        self.assertNotIn(42, gateway.PENDING_CATEGORY)
+        self.assertEqual(self.started, [])
+        self.assertIn("檔案｜已取消", [p for m, p in self.api_calls if m == "editMessageText"][0]["text"])
+
+    def test_hash_reply_to_the_new_category_prompt_names_the_waiting_file(self) -> None:
+        self._stage()
+        message = {"text": "#trip", "reply_to_message": {"text": "檔案｜新分類\n━\nReport.pdf"}}
+        self.assertFalse(gateway.handle_reply_category_message(42, message))
+        self.assertTrue(gateway.resolve_pending_with_category(42, "#trip"))
+        self.assertEqual(self.started[0][2]["display"], "trip")
+
+    def test_bare_cancel_while_waiting_cancels_instead_of_naming_a_category(self) -> None:
+        import dataclasses
+        gateway.settings = dataclasses.replace(self.settings, category_rag_enabled=True)
+        self._stage()
+        gateway.handle_message({"chat": {"id": 42}, "text": "Cancel"})
+        self.assertNotIn(42, gateway.PENDING_CATEGORY)
+        self.assertEqual(self.started, [])
+        self.assertNotIn("cancel", [e["display"] for e in categories.registry_entries(self.settings)])
+
+    def test_stale_button_with_nothing_waiting(self) -> None:
+        self._tap("cat:aimodel")
+        self.assertEqual(self.started, [])
+        self.assertIn(("answerCallbackQuery", {"callback_query_id": "q1", "text": "Nothing is waiting for a category."}),
+                      self.api_calls)
+
+    def test_other_chats_are_rejected(self) -> None:
+        import dataclasses
+        gateway.settings = dataclasses.replace(self.settings, telegram_allowed_chat_ids={7})
+        button = self._stage()["reply_markup"]["inline_keyboard"][0][0]
+        self._tap(button["callback_data"])
+        self.assertIn(42, gateway.PENDING_CATEGORY)
+
+
+class CategoryDeleteTest(CategoryGatewayTestBase):
+    def setUp(self) -> None:
+        super().setUp()
+        from unittest.mock import MagicMock
+
+        self.qdrant = MagicMock()
+        self.qdrant.points_count.return_value = 12
+        self._orig_qdrant = gateway.qdrant
+        gateway.qdrant = self.qdrant
+        self.addCleanup(setattr, gateway, "qdrant", self._orig_qdrant)
+        self.entry = categories.upsert_registry_entry(self.settings, ":cancel")
+        folder = gateway.category_dir(self.entry["slug"])
+        (folder / "media").mkdir(parents=True)
+        (folder / "a.md").write_text("x", encoding="utf-8")
+        (folder / "a.md.meta.json").write_text("{}", encoding="utf-8")
+
+    def _confirm_card(self) -> dict:
+        gateway.handle_category_command(42, "/cat delete :cancel")
+        method, payload = self.api_calls[-1]
+        self.assertEqual(method, "sendMessage")
+        return payload
+
+    def _tap(self, data: str) -> None:
+        gateway.handle_callback_query({"id": "q", "data": data, "message": {"message_id": 9, "chat": {"id": 42}}})
+
+    def test_asks_first_with_the_size(self) -> None:
+        card = self._confirm_card()
+        self.assertIn("#:cancel · 1 file, 12 chunks", card["text"])
+        self.assertTrue(gateway.category_dir(self.entry["slug"]).is_dir())
+        self.qdrant.delete_collection.assert_not_called()
+
+    def test_confirm_deletes_files_index_and_registry(self) -> None:
+        button = self._confirm_card()["reply_markup"]["inline_keyboard"][0][0]
+        self._tap(button["callback_data"])
+        self.assertFalse(gateway.category_dir(self.entry["slug"]).exists())
+        self.qdrant.delete_collection.assert_called_once_with(self.entry["collection"])
+        self.assertEqual(categories.registry_entries(self.settings), [])
+        edited = [p for m, p in self.api_calls if m == "editMessageText"][0]
+        self.assertIn("分類｜已刪除", edited["text"])
+        self._tap(button["callback_data"])  # a second tap on the old card
+        self.assertIn(("answerCallbackQuery", {"callback_query_id": "q", "text": "That category is already gone."}),
+                      self.api_calls)
+
+    def test_keep_changes_nothing(self) -> None:
+        self._confirm_card()
+        self._tap("catdel_no")
+        self.assertTrue(gateway.category_dir(self.entry["slug"]).is_dir())
+        self.assertEqual(len(categories.registry_entries(self.settings)), 1)
+
+    def test_bracketed_legacy_name_and_unknown_name(self) -> None:
+        categories.upsert_registry_entry(self.settings, "Bus trip")
+        gateway.handle_category_command(42, "/cat delete [Bus trip]")
+        self.assertIn("#Bus trip", self.api_calls[-1][1]["text"])
+        gateway.handle_category_command(42, "/cat delete ghost")
+        self.assertTrue(any('No category named "ghost"' in t for _, t in self.sent))
 
 
 class CategoryIngestTest(CategoryGatewayTestBase):
@@ -294,7 +457,14 @@ class ReplyCategoryMessageTest(CategoryGatewayTestBase):
         self.assertIn("Cambridge Holiday Inn", doc.read_text(encoding="utf-8"))
         self.assertTrue(any('"trip"' in t for _, t in self.sent))
 
-    def test_reply_with_bracketed_multi_word_category_and_note(self) -> None:
+    def test_new_multi_word_category_is_rejected(self) -> None:
+        message = self._message("#[Work Notes] from the script", "Video summary content here.")
+        gateway.handle_reply_category_message(1, message)
+        self.assertFalse(categories.resolve_category(self.settings, "Work Notes")["known"])
+        self.assertTrue(any("one word" in t for _, t in self.sent))
+
+    def test_reply_with_bracketed_legacy_multi_word_category_and_note(self) -> None:
+        categories.upsert_registry_entry(self.settings, "Work Notes")  # registered before the one-word rule
         message = self._message("#[Work Notes] from the script", "Video summary content here.")
         gateway.handle_reply_category_message(1, message)
         entry = categories.resolve_category(self.settings, "Work Notes")
@@ -315,11 +485,11 @@ class ReplyCategoryMessageTest(CategoryGatewayTestBase):
 
     def test_url_in_note_is_extracted_and_stripped_from_note(self) -> None:
         message = self._message(
-            "#[Video Notes] https://youtu.be/abc123 great walkthrough",
+            "#VideoNotes https://youtu.be/abc123 great walkthrough",
             "Video summary content here.",
         )
         gateway.handle_reply_category_message(1, message)
-        entry = categories.resolve_category(self.settings, "Video Notes")
+        entry = categories.resolve_category(self.settings, "VideoNotes")
         doc = next((self.inbox / "categories" / entry["slug"]).glob("*.md"))
         body = doc.read_text(encoding="utf-8")
         self.assertIn("URL: https://youtu.be/abc123", body)
@@ -506,7 +676,7 @@ class MediaGroupBufferTest(CategoryGatewayTestBase):
         self.assertEqual(len(pending["items"]), 2)
         self.assertEqual({item["path"] for item in pending["items"]}, {str(p) for p in self.paths})
         # One combined prompt, not one per photo.
-        prompts = [t for _, t in self.sent if "category name" in t]
+        prompts = [p["text"] for m, p in self.api_calls if m == "sendMessage" and "選擇分類" in p["text"]]
         self.assertEqual(len(prompts), 1)
         self.assertIn("these 2 images", prompts[0])
 
@@ -590,10 +760,15 @@ class CategoryRenameCommandTest(CategoryGatewayTestBase):
         updated = categories.resolve_category(self.settings, "旅行")
         self.assertEqual(updated["collection"], entry["collection"])
 
-    def test_rename_with_bracketed_new_name(self) -> None:
+    def test_rename_to_a_multi_word_name_is_rejected(self) -> None:
         categories.upsert_registry_entry(self.settings, "trip")
         gateway.handle_category_command(100, "/cat rename trip [Work Notes]")
-        self.assertTrue(any('to "Work Notes"' in t for _, t in self.sent))
+        self.assertTrue(any("one word" in t for _, t in self.sent))
+
+    def test_rename_a_legacy_multi_word_name_to_one_word(self) -> None:
+        categories.upsert_registry_entry(self.settings, "Bus trip")
+        gateway.handle_category_command(100, "/cat rename [Bus trip] bustrip")
+        self.assertTrue(any('Renamed "Bus trip" to "bustrip"' in t for _, t in self.sent))
 
     def test_rename_unknown_source(self) -> None:
         gateway.handle_category_command(100, "/cat rename ghost new-name")

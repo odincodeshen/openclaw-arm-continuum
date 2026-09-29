@@ -13,6 +13,7 @@ from openclaw_runtime.vocabulary import (
     parse_bare_lookup,
     parse_lookup_command,
     remove_from_word_list,
+    render_anki_tsv,
     render_lookup_card,
     render_word_list,
     save_to_word_list,
@@ -233,6 +234,53 @@ class RenderTest(unittest.TestCase):
 
     def test_empty_word_list(self) -> None:
         self.assertIn("empty", render_word_list([]))
+
+
+class AnkiExportTest(unittest.TestCase):
+    def test_header_and_one_row_per_word(self) -> None:
+        tsv = render_anki_tsv(
+            [
+                {"display_word": "resilient", "phonetic": "rɪ'zɪliənt", "meaning": "a. 有彈性的\n能復原的",
+                 "context_sentence": "She is <very> resilient.", "source": "dictionary"},
+                {"word": "move on", "meaning": "繼續前進", "context_sentence": "We had to\tmove on.",
+                 "source": "weekly_chunk"},
+                {"meaning": "no word, skipped"},
+            ]
+        )
+        lines = tsv.rstrip("\n").split("\n")
+        self.assertEqual(lines[:3], ["#separator:tab", "#html:true", "#tags column:3"])
+        self.assertEqual(len(lines), 5)
+        front, back, tag = lines[3].split("\t")
+        self.assertEqual(front, "resilient<br>/rɪ'zɪliənt/")
+        self.assertEqual(back, "a. 有彈性的<br>能復原的<br><br><i>She is &lt;very&gt; resilient.</i>")
+        self.assertEqual(tag, "openclaw_lookup")
+        fields = lines[4].split("\t")
+        self.assertEqual(len(fields), 3)  # the tab inside the sentence didn't create a column
+        self.assertEqual(fields[2], "openclaw_chunk")
+
+
+class GatewayVocabularyExportTest(unittest.TestCase):
+    def test_export_sends_a_file_and_empty_list_says_so(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = dataclasses.replace(gateway.settings, dictionary_enabled=True, inbox_path=Path(tmp) / "inbox")
+            sent_files, sent_text = [], []
+            with patch.object(gateway, "settings", settings), \
+                    patch.object(gateway, "list_word_list", return_value=[{"word": "move on", "meaning": "m"}]), \
+                    patch.object(gateway, "send_document_file",
+                                 lambda chat, path, caption: sent_files.append((path, path.read_text(encoding="utf-8")))), \
+                    patch.object(gateway, "log", lambda message: None):
+                self.assertTrue(gateway.handle_vocabulary_command(5, "/vocab export"))
+            path, content = sent_files[0]
+            self.assertEqual(path.parent, Path(tmp) / ".openclaw" / "exports")
+            self.assertIn("move on\tm\topenclaw_lookup", content)
+            with patch.object(gateway, "settings", settings), \
+                    patch.object(gateway, "list_word_list", return_value=[]), \
+                    patch.object(gateway, "send_message", lambda chat, text: sent_text.append(text)):
+                gateway.handle_vocabulary_command(5, "/vocab export")
+            self.assertIn("nothing to export", sent_text[0])
 
 
 class GatewayBareWordLookupTest(unittest.TestCase):

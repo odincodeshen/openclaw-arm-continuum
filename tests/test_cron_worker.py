@@ -147,6 +147,14 @@ class OffPeakPrepareTest(unittest.TestCase):
         chosen = cron_worker.preparable_jobs(jobs, self.NOW, ("/rag digest",))
         self.assertEqual([j["id"] for j in chosen], ["digest"])
 
+    def test_weekly_job_is_prepared_on_its_own_day_only(self) -> None:
+        weekly = self._job("wk", "07:05", prompt="/rag digest week")
+        weekly["schedule"] = {"type": "weekly", "time": "07:05", "day": "tue", "weekday": 1}
+        prompts = ("/rag digest",)
+        self.assertEqual([j["id"] for j in cron_worker.preparable_jobs([weekly], self.NOW, prompts)], ["wk"])  # a Tuesday
+        wednesday = self.NOW.replace(day=30)
+        self.assertEqual(cron_worker.preparable_jobs([weekly], wednesday, prompts), [])
+
     def test_prepared_result_is_delivered_without_routing_again(self) -> None:
         state: dict = {}
         router = _FakeRouter(SkillResult("rag_retrieve", "知識｜昨日新增\n• one"))

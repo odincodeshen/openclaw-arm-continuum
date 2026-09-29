@@ -80,7 +80,7 @@ from openclaw_runtime.http_client import post_multipart_file, request_json
 from openclaw_runtime.llm_client import VLLM_NOT_READY_MESSAGE
 from openclaw_runtime.alerts import Alerter
 from openclaw_runtime.dictionary import LocalDictionary
-from openclaw_runtime.message_cards import html_to_plain, split_html_message
+from openclaw_runtime.message_cards import RULE, esc, html_to_plain, split_html_message
 from openclaw_runtime.model_catalog import load_model_registry
 from openclaw_runtime.model_client_factory import ModelClientFactory
 from openclaw_runtime.qdrant_client import QdrantClient
@@ -100,6 +100,7 @@ from openclaw_runtime.vocabulary import (
     parse_bare_lookup,
     parse_lookup_command,
     remove_from_word_list,
+    render_anki_tsv,
     render_lookup_card,
     render_review_quiz,
     render_review_reminder,
@@ -408,7 +409,7 @@ Keep different kinds of material in separate, non-overlapping
 knowledge bases (one Qdrant collection per category). Upload a photo
 or document, then name a category one of two ways:
 - caption the upload #<name> (e.g. #work-notes or #[Work Notes]), or
-- send the file first, then reply with the category name.
+- send the file first, then tap a category (or type a new name).
 Query one category:  /rag #<name> <question>
 Query every category: /rag #all <question>
 /cat list shows your categories and their sizes.
@@ -512,6 +513,24 @@ def send_audio_file(chat_id: int, audio_path: Path, caption: str = "") -> None:
     if caption:
         fields["caption"] = caption
     post_multipart_file(url, fields, "audio", audio_path, timeout=settings.request_timeout)
+
+
+def send_voice_file(chat_id: int, voice_path: Path, caption: str = "") -> None:
+    """sendVoice: an OGG/Opus file shown as a voice message (waveform, speed
+    control) rather than a music-player attachment."""
+    url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendVoice"
+    fields = {"chat_id": str(chat_id)}
+    if caption:
+        fields["caption"] = caption
+    post_multipart_file(url, fields, "voice", voice_path, timeout=settings.request_timeout)
+
+
+def send_document_file(chat_id: int, document_path: Path, caption: str = "") -> None:
+    url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendDocument"
+    fields = {"chat_id": str(chat_id)}
+    if caption:
+        fields["caption"] = caption
+    post_multipart_file(url, fields, "document", document_path, timeout=settings.request_timeout)
 
 
 def timestamp() -> str:
@@ -688,6 +707,147 @@ def has_pending_category(chat_id: int) -> bool:
         return chat_id in PENDING_CATEGORY
 
 
+CATEGORY_BUTTON_PREFIX = "cat:"
+NEW_CATEGORY_TITLE = "檔案｜新分類"
+
+
+def category_picker_markup() -> dict:
+    """Inline keyboard for a file waiting for its category: one button per
+    existing category (two per row), then New category and Cancel. A slug
+    too long for Telegram's 64-byte callback_data is left out -- typing its
+    name still works."""
+    buttons = [
+        {"text": f"#{entry['display']}", "callback_data": CATEGORY_BUTTON_PREFIX + entry["slug"]}
+        for entry in registry_entries(settings)
+        if len((CATEGORY_BUTTON_PREFIX + entry["slug"]).encode("utf-8")) <= 64
+    ]
+    rows = [buttons[i : i + 2] for i in range(0, len(buttons), 2)]
+    rows.append(
+        [{"text": "+ New category", "callback_data": "cat_new"}, {"text": "Cancel", "callback_data": "cat_cancel"}]
+    )
+    return {"inline_keyboard": rows}
+
+
+def send_category_picker(chat_id: int, html: str) -> None:
+    """Ask for a category with buttons. The message id is kept on the
+    pending batch so its buttons can be taken away once the batch is
+    filed, cancelled or expired."""
+    try:
+        result = telegram(
+            "sendMessage",
+            {"chat_id": chat_id, "text": html, "parse_mode": "HTML", "reply_markup": category_picker_markup()},
+        )
+    except Exception as exc:  # noqa: BLE001 - the typed reply still works without buttons
+        log(f"[category] picker send failed chat_id={chat_id}: {exc}")
+        send_message(chat_id, html_to_plain(html))
+        return
+    message_id = (result.get("result") or {}).get("message_id")
+    if message_id:
+        with PENDING_CATEGORY_LOCK:
+            pending = PENDING_CATEGORY.get(chat_id)
+            if pending is not None:
+                pending.setdefault("prompt_ids", []).append(int(message_id))
+
+
+def close_category_pickers(chat_id: int, pending: dict) -> None:
+    """Remove the buttons from a batch's category prompts."""
+    for message_id in pending.get("prompt_ids", []):
+        try:
+            telegram(
+                "editMessageReplyMarkup",
+                {"chat_id": chat_id, "message_id": message_id, "reply_markup": {"inline_keyboard": []}},
+                timeout=20,
+            )
+        except Exception as exc:  # noqa: BLE001 - e.g. already edited, or deleted by the user
+            log(f"[category] could not close picker {message_id}: {exc}")
+
+
+def pending_item_names(pending: dict) -> list[str]:
+    return [item.get("original_name") or Path(item["path"]).name for item in pending.get("items", [])]
+
+
+def _edit_card(chat_id: int, message_id: int, html: str) -> None:
+    try:
+        telegram(
+            "editMessageText",
+            {"chat_id": chat_id, "message_id": message_id, "text": html, "parse_mode": "HTML"},
+            timeout=20,
+        )
+    except Exception as exc:  # noqa: BLE001 - the button's toast already told the user
+        log(f"[category] could not edit picker {message_id}: {exc}")
+
+
+def handle_callback_query(query: dict) -> None:
+    """A tap on an inline button. Today only the category picker uses them."""
+    message = query.get("message") or {}
+    chat_id = int((message.get("chat") or {}).get("id") or 0)
+    message_id = message.get("message_id")
+    data = str(query.get("data") or "")
+
+    def answer(text: str = "") -> None:
+        try:
+            telegram("answerCallbackQuery", {"callback_query_id": query.get("id"), **({"text": text} if text else {})})
+        except Exception as exc:  # noqa: BLE001
+            log(f"[telegram] answerCallbackQuery failed: {exc}")
+
+    if not chat_id or (settings.telegram_allowed_chat_ids and chat_id not in settings.telegram_allowed_chat_ids):
+        log(f"[telegram] rejected callback chat_id={chat_id}")
+        answer()
+        return
+    if not settings.category_rag_enabled or not data.startswith("cat"):
+        answer()
+        return
+    if data.startswith("catdel"):
+        handle_category_delete_callback(chat_id, message_id, data, answer)
+        return
+    with PENDING_CATEGORY_LOCK:
+        waiting = dict(PENDING_CATEGORY.get(chat_id) or {})
+    if not waiting.get("items"):
+        answer("Nothing is waiting for a category.")
+        if message_id:
+            close_category_pickers(chat_id, {"prompt_ids": [message_id]})
+        return
+    names = ", ".join(esc(name) for name in pending_item_names(waiting))
+
+    if data == "cat_new":
+        # a toast alone is easy to miss; ask in the chat and open the reply box
+        answer()
+        try:
+            telegram(
+                "sendMessage",
+                {
+                    "chat_id": chat_id,
+                    "text": f"<b>{NEW_CATEGORY_TITLE}</b>\n{RULE}\n{names}\n\nType the new category name.",
+                    "parse_mode": "HTML",
+                    "reply_markup": {"force_reply": True, "input_field_placeholder": "Category name"},
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            log(f"[category] new-category prompt failed chat_id={chat_id}: {exc}")
+        return
+
+    if data == "cat_cancel":
+        dropped = pop_pending_category(chat_id)
+        if dropped:
+            close_category_pickers(chat_id, dropped)
+            sweep_pending_items_to_default(dropped)
+        answer("Cancelled")
+        if message_id:
+            _edit_card(chat_id, message_id, f"<b>檔案｜已取消</b>\n{RULE}\n{names}\n\n"
+                       "Any waiting document goes to the general knowledge base.")
+        return
+
+    slug = data[len(CATEGORY_BUTTON_PREFIX):]
+    entry = next((e for e in registry_entries(settings) if e["slug"] == slug), None)
+    if entry is None:
+        answer("That category no longer exists -- type a name instead.")
+        return
+    resolve_pending_with_category(chat_id, entry["display"])
+    answer(f"Filing into #{entry['display']}")
+    if message_id:
+        _edit_card(chat_id, message_id, f"<b>檔案｜已分類</b>\n{RULE}\n{names} → #{esc(entry['display'])}")
+
+
 def sweep_pending_items_to_default(pending: dict) -> None:
     """Send a dropped/expired batch's staged documents to the general knowledge inbox."""
     for item in pending.get("items", []):
@@ -714,6 +874,7 @@ def sweep_expired_pending() -> None:
             if pending.get("updated_at", 0) < cutoff:
                 expired.append((chat_id, PENDING_CATEGORY.pop(chat_id)))
     for chat_id, pending in expired:
+        close_category_pickers(chat_id, pending)
         had_doc = any(item.get("kind") == "document" for item in pending.get("items", []))
         sweep_pending_items_to_default(pending)
         if had_doc:
@@ -754,6 +915,7 @@ def resolve_pending_with_category(chat_id: int, category_text: str) -> bool:
         return True
 
     entry = upsert_registry_entry(settings, display)
+    close_category_pickers(chat_id, pending)
     worker = threading.Thread(
         target=_run_category_ingest,
         args=(chat_id, pending["items"], entry),
@@ -776,6 +938,8 @@ def handle_reply_category_message(chat_id: int, message: dict) -> bool:
     replied_text = (reply_to.get("text") or reply_to.get("caption") or "").strip()
     if not replied_text:
         return False
+    if replied_text.startswith(NEW_CATEGORY_TITLE) and has_pending_category(chat_id):
+        return False  # the answer to "New category": it names the waiting file's category
     own_text = (message.get("text") or "").strip()
     category_name, note = parse_category_caption(own_text)
     if not category_name:
@@ -1010,10 +1174,10 @@ def _route_image_to_category(
         chat_id,
         {"path": str(image_path), "kind": "image", "note": note, "original_name": original_name},
     )
-    send_message(
+    send_category_picker(
         chat_id,
-        "To also index this image for retrieval, reply with just the category "
-        "name, e.g. trip (or /cancel to skip). The analysis above is sent regardless.",
+        f"<b>圖片｜選擇分類</b>\n{RULE}\nTo also index this image for retrieval, tap a category "
+        "or type a new name (/cancel skips it). The analysis above is sent regardless.",
     )
 
 
@@ -1072,11 +1236,11 @@ def _flush_media_group(chat_id: int, media_group_id: str) -> None:
         return
     for path in paths:
         set_pending_category(chat_id, {"path": str(path), "kind": "image", "note": "", "original_name": ""})
-    send_message(
+    send_category_picker(
         chat_id,
-        f"To also index {'this image' if len(paths) == 1 else f'these {len(paths)} images'} for "
-        "retrieval, reply with just the category name, e.g. trip (or /cancel to skip). "
-        "The analysis above is sent regardless.",
+        f"<b>圖片｜選擇分類</b>\n{RULE}\nTo also index "
+        f"{'this image' if len(paths) == 1 else f'these {len(paths)} images'} for retrieval, tap a "
+        "category or type a new name (/cancel skips it). The analysis above is sent regardless.",
     )
     log(f"[category] media group pending chat_id={chat_id} group={media_group_id} count={len(paths)}")
 
@@ -1133,13 +1297,14 @@ def category_command_text() -> str:
         "OpenClaw category RAG\n\n"
         "Upload a photo or document, then either:\n"
         "- put the category in the caption as #<name> (e.g. #工作筆記), or\n"
-        "- send the file first, then reply with the category name.\n\n"
+        "- send the file first, then tap a category (or type a new name).\n\n"
         "Or reply to ANY text message with #<name> to file that message's "
         "text into a category -- no file upload needed.\n\n"
         "/cat list   Show categories and their document counts\n"
         "/cat rename <old> <new>   Rename a category (its files/index are untouched)\n"
         "/cat merge <source> <target>   Move everything from source into target, "
         "then delete source\n"
+        "/cat delete <name>   Delete a category, its files and its index (asks first)\n"
         "/cancel     Drop a file that is waiting for a category\n\n"
         "Query one category:  /rag #<name> <question>\n"
         "Query every category: /rag #all <question>"
@@ -1176,8 +1341,8 @@ def handle_category_command(chat_id: int, text: str) -> bool:
         if not names:
             send_message(
                 chat_id,
-                "Usage: /cat rename <old name> <new name> "
-                "(use [brackets] for a multi-word name, e.g. /cat rename trip [Work Notes])",
+                "Usage: /cat rename <old name> <new name> -- the new name is one word, no spaces "
+                "(an old multi-word name goes in [brackets], e.g. /cat rename [Bus trip] bustrip)",
             )
             return True
         old_token, new_name = names
@@ -1230,8 +1395,94 @@ def handle_category_command(chat_id: int, text: str) -> bool:
         worker.start()
         return True
 
+    if action in {"delete", "rm"}:
+        token = rest.strip()
+        if token[:1] in ("[", "［", "{", "｛") and token[-1:] in ("]", "］", "}", "｝"):
+            token = token[1:-1].strip()
+        if token[:1] in ("#", "＃"):
+            token = token[1:].strip()
+        if not token:
+            send_message(chat_id, "Usage: /cat delete <name> (see /cat list)")
+            return True
+        entry = resolve_category(settings, token)
+        if not entry or not entry.get("known"):
+            send_message(chat_id, f'No category named "{token}".')
+            return True
+        send_category_delete_confirm(chat_id, entry)
+        return True
+
     send_message(chat_id, category_command_text())
     return True
+
+
+CATEGORY_DELETE_PREFIX = "catdel:"
+
+
+def _category_file_count(slug: str) -> int:
+    folder = category_dir(slug)
+    return len(list(folder.glob("*.md"))) if folder.is_dir() else 0
+
+
+def send_category_delete_confirm(chat_id: int, entry: dict) -> None:
+    files = _category_file_count(entry["slug"])
+    chunks = qdrant.points_count(entry["collection"])
+    size = f"{files} file{'s' if files != 1 else ''}" + (f", {chunks} chunks" if chunks is not None else "")
+    html = (
+        f"<b>分類｜刪除確認</b>\n{RULE}\n#{esc(entry['display'])} · {size}\n\n"
+        "Deletes its files and its search index. This can't be undone."
+    )
+    markup = {
+        "inline_keyboard": [
+            [
+                {"text": f"Delete #{entry['display']}", "callback_data": CATEGORY_DELETE_PREFIX + entry["slug"]},
+                {"text": "Keep it", "callback_data": "catdel_no"},
+            ]
+        ]
+    }
+    if len((CATEGORY_DELETE_PREFIX + entry["slug"]).encode("utf-8")) > 64:
+        send_message(chat_id, f'"{entry["display"]}" can\'t be deleted from Telegram (its id is too long).')
+        return
+    telegram("sendMessage", {"chat_id": chat_id, "text": html, "parse_mode": "HTML", "reply_markup": markup})
+
+
+def delete_category(entry: dict) -> int:
+    """Remove a category completely: its inbox folder (documents, sidecars,
+    media), its Qdrant collection and its registry entry. Returns the number
+    of documents removed."""
+    files = _category_file_count(entry["slug"])
+    shutil.rmtree(category_dir(entry["slug"]), ignore_errors=True)
+    qdrant.delete_collection(entry["collection"])
+    remove_registry_entry(settings, entry["slug"])
+    log(f"[category] deleted slug={entry['slug']} files={files}")
+    return files
+
+
+def handle_category_delete_callback(chat_id: int, message_id: int | None, data: str, answer) -> None:
+    if data == "catdel_no":
+        answer("Kept")
+        if message_id:
+            close_category_pickers(chat_id, {"prompt_ids": [message_id]})
+        return
+    slug = data[len(CATEGORY_DELETE_PREFIX):]
+    entry = next((e for e in registry_entries(settings) if e["slug"] == slug), None)
+    if entry is None:
+        answer("That category is already gone.")
+        if message_id:
+            close_category_pickers(chat_id, {"prompt_ids": [message_id]})
+        return
+    try:
+        files = delete_category(entry)
+    except Exception as exc:  # noqa: BLE001
+        log(f"[category] delete failed slug={slug}: {exc}")
+        answer("Delete failed -- see the log.")
+        return
+    answer(f"Deleted #{entry['display']}")
+    if message_id:
+        _edit_card(
+            chat_id,
+            message_id,
+            f"<b>分類｜已刪除</b>\n{RULE}\n#{esc(entry['display'])} · {files} file{'s' if files != 1 else ''} removed",
+        )
 
 
 def _merge_category_files(from_slug: str, into_entry: dict) -> int:
@@ -1364,12 +1615,11 @@ def handle_document_message(chat_id: int, message: dict, caption: str) -> bool:
             set_pending_category(
                 chat_id, {"path": str(staged), "kind": "document", "note": "", "original_name": original_name}
             )
-            send_message(
+            send_category_picker(
                 chat_id,
-                f"Got {staged.name}. Which knowledge category should it go in?\n"
-                "Reply with just the category name, e.g. trip (no # and no extra "
-                "note -- for that, use the #<name> note caption instead), or "
-                "/cancel to file it into the general knowledge base.",
+                f"<b>檔案｜選擇分類</b>\n{RULE}\n{esc(original_name or staged.name)}\n\n"
+                "Tap a category, or type a new name.\n"
+                "/cancel files it into the general knowledge base.",
             )
             log(f"[category] pending document chat_id={chat_id} staged={staged.name}")
             return True
@@ -1577,7 +1827,10 @@ Show your word list, newest first. /vocab rm <word> removes a word.
 
 /vocab review
 Review the saved words that are due today (spaced repetition): up to 5
-questions, answered in one typed message."""
+questions, answered in one typed message.
+
+/vocab export
+Get your word list as a file to import into Anki (File > Import)."""
 
 
 def help_text() -> str:
@@ -1664,6 +1917,24 @@ def handle_bare_word_lookup(chat_id: int, message: dict) -> bool:
     return True
 
 
+def _export_word_list(chat_id: int) -> None:
+    entries = list_word_list(qdrant, settings.tracker_collection, str(chat_id))
+    if not entries:
+        send_message(chat_id, "Your word list is empty -- nothing to export yet.")
+        return
+    directory = settings.inbox_path.parent / ".openclaw" / "exports"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"openclaw-words-{chat_id}-{_vocab_today().isoformat()}.txt"
+    path.write_text(render_anki_tsv(entries), encoding="utf-8")
+    send_document_file(
+        chat_id,
+        path,
+        f"{len(entries)} words for Anki: File > Import this file, pick a Basic note type "
+        "and a deck -- fields and tags are set up already.",
+    )
+    log(f"[vocab] exported chat_id={chat_id} words={len(entries)}")
+
+
 def _lookup_and_reply(chat_id: int, word: str, sentence: str) -> None:
     try:
         result = lookup_word(dictionary, llm, word, sentence)
@@ -1702,6 +1973,9 @@ def handle_vocabulary_command(chat_id: int, text: str) -> bool:
         owner = str(chat_id)
         if len(parts) >= 2 and parts[1].lower() == "review":
             _start_vocab_review(chat_id)
+            return True
+        if len(parts) >= 2 and parts[1].lower() == "export":
+            _export_word_list(chat_id)
             return True
         if len(parts) >= 2 and parts[1].lower() == "rm":
             word = parts[2] if len(parts) == 3 else ""
@@ -2225,9 +2499,13 @@ def handle_message(message: dict) -> None:
         return
 
     if settings.category_rag_enabled:
-        if text.lower() in {"/cancel", "/skip"}:
+        # a bare "cancel" while a file waits is a cancel, not a category named "cancel"
+        if text.lower() in {"/cancel", "/skip"} or (
+            text.lower() in {"cancel", "skip"} and has_pending_category(chat_id)
+        ):
             dropped = pop_pending_category(chat_id)
             if dropped:
+                close_category_pickers(chat_id, dropped)
                 sweep_pending_items_to_default(dropped)
                 send_message(chat_id, "Okay, cancelled. Any waiting document goes to the general knowledge base.")
             else:
@@ -2286,7 +2564,11 @@ def _english_bot_send_report(owner: str, html: str) -> None:
 
 
 def _english_bot_send_audio(owner: str, path: Path, caption: str) -> None:
-    send_audio_file(int(owner), path, caption)
+    # An .ogg clip is Opus, so it goes out as a voice message; MP3 as audio.
+    if path.suffix.lower() in (".ogg", ".oga"):
+        send_voice_file(int(owner), path, caption)
+    else:
+        send_audio_file(int(owner), path, caption)
 
 
 def _english_bot_set_pending_answer(owner: str, item: dict) -> None:
@@ -2417,7 +2699,7 @@ def main() -> int:
         try:
             updates = telegram(
                 "getUpdates",
-                {"offset": offset, "timeout": settings.telegram_poll_timeout, "allowed_updates": ["message"]},
+                {"offset": offset, "timeout": settings.telegram_poll_timeout, "allowed_updates": ["message", "callback_query"]},
                 timeout=settings.telegram_poll_timeout + 10,
             )
             for update in updates.get("result", []):
@@ -2425,6 +2707,8 @@ def main() -> int:
                 message = update.get("message")
                 if message:
                     handle_message(message)
+                elif update.get("callback_query"):
+                    handle_callback_query(update["callback_query"])
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")
             log(f"[telegram] http error {exc.code}: {body}")

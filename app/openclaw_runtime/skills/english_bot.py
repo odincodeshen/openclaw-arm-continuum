@@ -566,7 +566,9 @@ def run_monday_task(
     # The selected stretch as its own audio clip, so the listening task can be
     # done straight from Telegram (window.mp3 starts at INTRO_SKIP_SECONDS,
     # so the window's own timestamps are already relative to it).
-    clip_path = workspace_dir / "monday_clip.mp3"
+    # .ogg -> Opus, delivered as a Telegram voice message (waveform + speed
+    # control) rather than an easy-to-miss music attachment.
+    clip_path = workspace_dir / "monday_clip.ogg"
     if send_audio is not None:
         clip_client.clip(window_path, float(window["start_seconds"]), float(window["end_seconds"]), clip_path)
 

@@ -116,6 +116,13 @@ def validate_category_name(settings: Settings, name: str) -> str:
         )
     if normalized.startswith("/"):
         raise ValueError("category name must not start with '/'")
+    if " " in normalized:
+        # new names are one word; a multi-word name registered before this
+        # rule keeps working until it's renamed or deleted
+        existing = resolve_category(settings, normalized)
+        if not (existing and existing.get("known")):
+            raise ValueError("category name must be one word, no spaces (e.g. BusTrip or bus-trip)")
+        return existing["display"]
     return normalized
 
 

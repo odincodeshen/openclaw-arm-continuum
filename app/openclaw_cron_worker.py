@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 from openclaw_runtime.alerts import Alerter
 from openclaw_runtime.config import Settings, load_settings
-from openclaw_runtime.cron_jobs import is_due, load_jobs, mark_ran, validate_time
+from openclaw_runtime.cron_jobs import is_due, load_jobs, mark_ran, validate_time, validate_weekday
 from openclaw_runtime.gateway_cron import (
     append_gateway_run_log,
     gateway_job_to_runtime,
@@ -103,15 +103,27 @@ def in_prepare_window(now: datetime, window: str) -> bool:
     return start <= now.strftime("%H:%M") <= end
 
 
+def _runs_today(schedule: dict, now: datetime) -> bool:
+    if schedule.get("type") == "daily":
+        return True
+    if schedule.get("type") == "weekly":
+        try:
+            return int(schedule.get("weekday", validate_weekday(str(schedule.get("day", ""))))) == now.weekday()
+        except Exception:
+            return False
+    return False
+
+
 def preparable_jobs(jobs: list[dict], now: datetime, prompts: tuple[str, ...]) -> list[dict]:
-    """Enabled daily jobs due later today whose prompt starts with one of
-    the prefixes -- only content that won't be stale by delivery time."""
+    """Enabled daily jobs, or weekly jobs whose day is today, due later
+    today whose prompt starts with one of the prefixes -- only content that
+    won't be stale by delivery time."""
     now_hm = now.strftime("%H:%M")
     chosen = []
     for job in jobs:
         schedule = job.get("schedule") or {}
         prompt = str(job.get("prompt", "")).strip()
-        if not job.get("enabled", True) or schedule.get("type") != "daily":
+        if not job.get("enabled", True) or not _runs_today(schedule, now):
             continue
         if str(schedule.get("time", "")) <= now_hm:
             continue

@@ -40,5 +40,34 @@ class SendAudioFileTest(unittest.TestCase):
         self.assertEqual(fields["caption"], "Shadowing clip for today")
 
 
+class SendVoiceAndDocumentTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._orig_settings = gateway.settings
+        gateway.settings = build_settings(telegram_bot_token="test-token-123", request_timeout=30)
+        self.addCleanup(setattr, gateway, "settings", self._orig_settings)
+
+    @patch("openclaw_telegram_gateway.post_multipart_file")
+    def test_voice_uses_send_voice_and_the_voice_field(self, post_multipart_file) -> None:
+        gateway.send_voice_file(555, Path("clip.ogg"), caption="Listen")
+        url, fields, file_field, file_path = post_multipart_file.call_args.args
+        self.assertEqual(url, "https://api.telegram.org/bottest-token-123/sendVoice")
+        self.assertEqual((fields, file_field), ({"chat_id": "555", "caption": "Listen"}, "voice"))
+
+    @patch("openclaw_telegram_gateway.post_multipart_file")
+    def test_document_uses_send_document(self, post_multipart_file) -> None:
+        gateway.send_document_file(555, Path("words.txt"))
+        url, fields, file_field, _ = post_multipart_file.call_args.args
+        self.assertEqual(url, "https://api.telegram.org/bottest-token-123/sendDocument")
+        self.assertEqual(file_field, "document")
+
+    def test_english_bot_sends_ogg_as_voice_and_mp3_as_audio(self) -> None:
+        calls = []
+        with patch.object(gateway, "send_voice_file", lambda chat, path, caption: calls.append(("voice", path.name))), \
+                patch.object(gateway, "send_audio_file", lambda chat, path, caption: calls.append(("audio", path.name))):
+            gateway._english_bot_send_audio("1", Path("monday_clip.ogg"), "c")
+            gateway._english_bot_send_audio("1", Path("tuesday_clip.mp3"), "c")
+        self.assertEqual(calls, [("voice", "monday_clip.ogg"), ("audio", "tuesday_clip.mp3")])
+
+
 if __name__ == "__main__":
     unittest.main()

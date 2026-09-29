@@ -22,6 +22,7 @@ from openclaw_runtime.qdrant_client import QdrantClient
 
 UPCOMING_DEFAULT_DAYS = 3
 KNOWLEDGE_DIGEST_MAX_DOCS = 10
+WEEKLY_DIGEST_MAX_DOCS = 20
 SUMMARY_SOURCE_CHARS = 4000
 
 
@@ -84,12 +85,14 @@ def day_bounds(day: date, timezone_name: str) -> tuple[int, int]:
 
 
 def documents_added_on(
-    qdrant: QdrantClient, sources: list[tuple[str, str]], day: date, timezone_name: str
+    qdrant: QdrantClient, sources: list[tuple[str, str]], day: date, timezone_name: str, days: int = 1
 ) -> list[NewDocument]:
-    """Documents (not chunks) first indexed on ``day``. ``sources`` is
-    (label, collection) pairs. A document's chunks share a file_sha256 (or
-    file_name), so they're grouped back into one document, in chunk order."""
-    since, before = day_bounds(day, timezone_name)
+    """Documents (not chunks) first indexed on ``day`` (or in the ``days``
+    days starting then). ``sources`` is (label, collection) pairs. A
+    document's chunks share a file_sha256 (or file_name), so they're grouped
+    back into one document, in chunk order."""
+    since, _ = day_bounds(day, timezone_name)
+    _, before = day_bounds(day + timedelta(days=days - 1), timezone_name)
     documents: list[NewDocument] = []
     for label, collection in sources:
         grouped: dict[str, list[dict]] = {}
@@ -117,10 +120,19 @@ def summarize_document(llm: LlmClient, document: NewDocument, language: str) -> 
     return " ".join(llm.chat(prompt, max_tokens=120).split())
 
 
-def render_knowledge_digest(day: date, summaries: list[tuple[NewDocument, str]], more: int = 0) -> str:
-    lines = ["知識｜昨日新增", RULE, f"{day.strftime('%a %d %b')} · {len(summaries) + more} new"]
+def render_knowledge_digest(
+    day: date, summaries: list[tuple[NewDocument, str]], more: int = 0, days: int = 1
+) -> str:
+    """days=1: yesterday's report. days=7: the week ending on ``day``."""
+    if days == 1:
+        title, period, empty = "知識｜昨日新增", day.strftime("%a %d %b"), "No new knowledge was added yesterday."
+    else:
+        first = day - timedelta(days=days - 1)
+        title, empty = "知識｜本週新增", "No new knowledge was added this week."
+        period = f"{first.strftime('%d %b')} – {day.strftime('%d %b')}"
+    lines = [title, RULE, f"{period} · {len(summaries) + more} new"]
     if not summaries:
-        lines += ["", "No new knowledge was added yesterday."]
+        lines += ["", empty]
         return "\n".join(lines)
     current_source = None
     for document, summary in summaries:

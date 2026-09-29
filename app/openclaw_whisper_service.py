@@ -84,9 +84,11 @@ def safe_audio_write_path(raw_path: str) -> Path:
 
 def clip_audio_segment(input_path: Path, start_seconds: float, end_seconds: float, output_path: Path) -> float:
     """Extract [start_seconds, end_seconds) from an audio file into a new
-    MP3 at output_path. Returns the actual clipped duration. Runs in this
-    service (not the stdlib-only gateway) because it's the only container
-    with a real audio-decoding dependency (av) installed."""
+    file at output_path: Opus in an OGG container for .ogg/.oga (48 kHz
+    mono, what Telegram sends as a voice message), MP3 otherwise. Returns
+    the actual clipped duration. Runs in this service (not the stdlib-only
+    gateway) because it's the only container with a real audio-decoding
+    dependency (av) installed."""
     if end_seconds <= start_seconds:
         raise ValueError("end_seconds must be greater than start_seconds")
 
@@ -95,7 +97,21 @@ def clip_audio_segment(input_path: Path, start_seconds: float, end_seconds: floa
         in_stream = input_container.streams.audio[0]
         output_container = av.open(str(output_path), mode="w")
         try:
-            out_stream = output_container.add_stream("libmp3lame", rate=in_stream.rate)
+            voice = output_path.suffix.lower() in (".ogg", ".oga")
+            if voice:
+                out_stream = output_container.add_stream("libopus", rate=48000)
+                out_stream.layout = "mono"
+                resampler = av.AudioResampler(format="s16", layout="mono", rate=48000)
+            else:
+                out_stream = output_container.add_stream("libmp3lame", rate=in_stream.rate)
+                resampler = None
+
+            def encode(frame) -> None:
+                frames = resampler.resample(frame) if resampler is not None else ([frame] if frame is not None else [])
+                for item in frames:
+                    for packet in out_stream.encode(item):
+                        output_container.mux(packet)
+
             start_pts = int(start_seconds / in_stream.time_base)
             input_container.seek(start_pts, stream=in_stream)
 
@@ -107,10 +123,11 @@ def clip_audio_segment(input_path: Path, start_seconds: float, end_seconds: floa
                     continue
                 if frame.time >= end_seconds:
                     break
-                for packet in out_stream.encode(frame):
-                    output_container.mux(packet)
+                encode(frame)
                 clipped_duration = frame.time - start_seconds
 
+            if resampler is not None:
+                encode(None)  # flush the resampler
             for packet in out_stream.encode():
                 output_container.mux(packet)
         finally:

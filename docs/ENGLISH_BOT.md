@@ -12,7 +12,7 @@ the rest of the week builds on it.
 
 | Day | Task | Reply | Feedback |
 |---|---|---|---|
-| Mon | Listen to a guest-led stretch of the episode (sent as an audio clip, with a link to the full episode); learn 3 chunks (phrases) picked from it, each with a Chinese meaning and an English example that uses it | One message, by number: 1. the gist, 2. a 3-gap dictation from the clip, 3. one chunk in your own sentence | Gist check, dictation word by word, chunks used, then the clip's transcript to check what you heard |
+| Mon | Listen to a guest-led stretch of the episode (sent as a Telegram voice message -- an Opus clip that plays inline -- with a link to the full episode); learn 3 chunks (phrases) picked from it, each with a Chinese meaning and an English example that uses it | One message, by number: 1. the gist, 2. a 3-gap dictation from the clip, 3. one chunk in your own sentence | Gist check, dictation word by word, chunks used, then the clip's transcript to check what you heard |
 | Tue | Shadow a short audio clip of the guest, with stress and pauses marked | Voice | Word-level accuracy (missed/extra words), pace, a short analysis in Traditional Chinese, the reference text |
 | Wed | IELTS Speaking Part 2 cue card; from week 18, Part 2 plus a related Part 3 question | Voice, 1.5–2 min | STAR check (Situation/Task/Action/Result), vocabulary upgrades, a band-8 model answer; Part 3 adds a claim/concession/conclusion check |
 | Thu | British workplace small talk: a colleague's opener | Voice | Anchor & Bounce check, a more natural phrasing, a model reply, the colleague's reply |

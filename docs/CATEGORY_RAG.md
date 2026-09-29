@@ -15,27 +15,32 @@ Put `#<name>` at the start of the caption:
 
 ```
 #工作筆記
-#[Work Notes] this is the Q1 planning doc
+#WorkNotes this is the Q1 planning doc
 #機房 server rack photo, note the cabling
 ```
 
-`#[...]` or `#{...}` lets a category name contain spaces. Any text after the
+A category name is **one word, no spaces** (`WorkNotes`, `work-notes`,
+`工作筆記`); a name with a space is refused. A multi-word name created before
+this rule keeps working -- refer to it in `[brackets]` (`#[Bus trip]`) and
+rename it with `/cat rename [Bus trip] bustrip`. Any text after the
 name is kept as a note and (for photos) used as extra context for the vision
 model.
 
 ### 2. Two-step (send file, then the category)
 
-Send the file with no `#` caption. The bot replies asking for a category;
-your next plain-text message is taken as the category name.
+Send the file with no `#` caption. The bot replies with a 檔案｜選擇分類
+card: tap one of the existing categories, tap **+ New category** (the bot
+asks for the name and opens the reply box), or just type a name. The
+buttons disappear once the file is filed, cancelled or expired.
 
-**Reply with just the name** (e.g. `trip`), not `#trip` and not `#trip <note>`.
+**Type just the name** (e.g. `trip`), not `#trip` and not `#trip <note>`.
 The two-step reply has no note field -- a reply that starts with `#`/`＃` is
 parsed leniently (the `#` is stripped, and the category is the first word) so
 `#trip <anything>` still resolves to `trip`, but the `<anything>` is dropped,
 not attached as a note. If you want a note, use the caption shortcut instead.
 
-- `/cancel` drops a waiting file (a document then goes to the general
-  knowledge base).
+- `/cancel`, the **Cancel** button, or a bare `cancel` / `skip` drops a
+  waiting file (a document then goes to the general knowledge base).
 - If you don't answer within `OPENCLAW_CATEGORY_PENDING_TTL_SECONDS`
   (default 10 min), a waiting document is filed into the general knowledge
   base automatically.
@@ -57,8 +62,7 @@ This exists specifically because a bot can never receive its own
 outgoing messages back as input -- Telegram's Bot API only delivers
 messages sent *to* the bot as updates, never an echo of what the bot
 itself sent. Replying is the way to pull a specific message in on
-demand. `#[multi word]` and a trailing note work the same as the caption
-shortcut above.
+demand. A trailing note works the same as the caption shortcut above.
 
 If a bot has [video summary relay](VIDEO_SUMMARY_RELAY.md) configured, the
 "external script" case above is exactly how a Gemini-generated video
@@ -98,7 +102,7 @@ photo.
 
 ```
 /rag #工作筆記 What are the open action items?
-/rag #[Work Notes] summarise the Q1 plan
+/rag #WorkNotes summarise the Q1 plan
 /rag #all  where is the rack diagram
 ```
 
@@ -138,6 +142,14 @@ yesterday.", so it suits a morning push:
 /cron add daily 07:05 知識｜昨日新增 :: /rag digest
 ```
 
+`/rag digest week` is the weekly version: the seven days up to yesterday
+(Sunday morning covers Sunday–Saturday), titled 知識｜本週新增, capped at 20
+documents (the rest are counted as "…and N more"):
+
+```
+/cron add weekly sun 07:05 知識｜本週新增 :: /rag digest week
+```
+
 Every `/rag` answer ends with a `Sources:` line naming the source documents
 the answer drew from. The name shown is the uploader's original filename when
 known (recorded in the `.meta.json` sidecar at upload) -- or a replied-to
@@ -150,6 +162,7 @@ heading, otherwise the stored filename.
 /cat list                        Show categories and their collection names
 /cat rename <old> <new>          Rename a category
 /cat merge <source> <target>     Combine two categories into one
+/cat delete <name>               Delete a category (asks first)
 /cat help                        Usage
 ```
 
@@ -169,6 +182,13 @@ there is only ever one ingest path to reason about. This is the fix for a
 category that was accidentally split in two (e.g. a two-step reply typo --
 see the `/cat` two-step note above): find both with `/cat list`, then merge
 the wrong one into the right one instead of losing the indexed content.
+
+`/cat delete <name>` first shows the category's size (files and chunks) with
+**Delete #name** / **Keep it** buttons; nothing changes until you tap
+Delete. Then its inbox folder (documents, sidecars and media), its Qdrant
+collection and its registry entry are removed. It can't be undone -- use it
+for a category created by mistake whose content is already elsewhere; use
+`/cat merge` to keep the content.
 
 ## How photos are indexed
 

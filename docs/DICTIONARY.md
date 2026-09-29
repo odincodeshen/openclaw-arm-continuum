@@ -11,6 +11,7 @@ and meant for a bot running the daily English coach.
 /vocab                                 your word list, newest first
 /vocab rm resilient                    remove a word
 /vocab review                          review the saved words due today
+/vocab export                          your word list as an Anki import file
 ```
 
 You don't need `/w`: sending just the word (or `word | sentence`) looks it
@@ -26,6 +27,14 @@ several things are waiting for a reply, a bare word goes to:
 
 `/w` always works, including while a daily English task is still open:
 commands are never treated as the task's answer.
+
+`/vocab export` sends the whole list as a tab-separated `.txt` file ready for
+Anki's File > Import: the front is the word and its phonetic, the back the
+meaning and the saved sentence (in italics), and each note is tagged
+`openclaw_lookup` (a word you looked up) or `openclaw_chunk` (a weekly chunk
+moved in on Sunday). The file's header lines set the separator, HTML and the
+tag column, so Anki needs no import settings; re-importing updates notes with
+the same front instead of duplicating them.
 
 ## Where meanings come from
 
