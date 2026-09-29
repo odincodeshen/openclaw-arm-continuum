@@ -1,6 +1,6 @@
 # OpenClaw Arm Continuum
 
-版本：`v1.21`
+版本：`v1.22`
 
 授權：Apache-2.0
 

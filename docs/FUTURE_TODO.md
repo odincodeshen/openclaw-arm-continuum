@@ -1,7 +1,7 @@
 # Future TODO List
 
 This document tracks candidate work items for `openclaw-arm-continuum`.
-Current release: **v1.21**.
+Current release: **v1.22**.
 
 The runtime is intentionally stable and text-first. The items below are
 future-facing and should be implemented incrementally without breaking the
@@ -162,7 +162,7 @@ v1.2 baseline. What has actually shipped since then:
   which emptied Saturday's cloze), cloze matching handles irregular forms,
   `-ing`, `someone`/`one's` placeholders and bracketed optional parts, and
   Friday lists each chunk's example.
-- **After v1.21 (unreleased).** Operator alerts on Telegram for problems
+- **v1.22 — buttons, night ritual, watchdog.** Operator alerts on Telegram for problems
   that only reached a log, plus a host-side container watchdog
   (`scripts/openclaw_watchdog.py`: crash restarts, crash loops, failing
   health checks, host reboots). bot2/bot3 knowledge reports became a Sunday
@@ -178,7 +178,7 @@ v1.2 baseline. What has actually shipped since then:
   `/night move`; `/cat merge` keeps PDFs and drops duplicates; uploads
   waiting for a category survive restarts; a weekly watchdog health summary.
 
-Still open, re-baselined against v1.21:
+Still open, re-baselined against v1.22:
 
 **Platform / runtime**
 
