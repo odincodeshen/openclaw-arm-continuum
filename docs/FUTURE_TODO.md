@@ -173,6 +173,10 @@ v1.2 baseline. What has actually shipped since then:
   confirm button; new category names are one word. bot2 gained a night
   ritual (`docs/NIGHT_RITUAL.md`): four questions at 22:30, a morning
   first-thing card, weekly and monthly reports, all kept on the host.
+  Then: buttons for `/vocab review` self-check, `/vocab` removal, Monday's
+  gist and a `/menu`; night-report trends, Add to tomorrow's schedule and
+  `/night move`; `/cat merge` keeps PDFs and drops duplicates; uploads
+  waiting for a category survive restarts; a weekly watchdog health summary.
 
 Still open, re-baselined against v1.21:
 
@@ -229,7 +233,8 @@ Still open, re-baselined against v1.21:
 
 **Testing**
 
-- L3 end-to-end script (`scripts/e2e_run.py`) -- planned, not written.
+- L3 end-to-end script (`scripts/e2e_run.py`) -- written and run live (10/10 on
+  bot2); still to wire into a GB10 runner on tags, plus VLM/router quality checks.
 
 Done since the v1.6 re-baseline, for reference: Telegram conversational
 memory (post-v1.6), concurrent multi-bot personas (see the section below),

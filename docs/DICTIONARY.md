@@ -9,7 +9,7 @@ and meant for a bot running the daily English coach.
 /w resilient | She's remarkably resilient.
                                        ...and say what it means in that sentence
 /vocab                                 your word list, newest first
-/vocab rm resilient                    remove a word
+/vocab rm resilient                    remove a word (or tap Remove words… under /vocab)
 /vocab review                          review the saved words due today
 /vocab export                          your word list as an Anki import file
 ```
@@ -72,6 +72,11 @@ further out; a wrong answer sends it back to box 0, due tomorrow:
 - Answer all of them in **one typed message**. Answers are judged by the same
   position-aware LLM judge as the Saturday cloze quiz, and the card shows when
   each word comes back.
+- Or tap **Self-check with buttons** on the review card: one word at a time,
+  **Show answer**, then **✅ Remembered** / **❌ Forgot** -- no typing, no
+  model call. Each tap moves that word to its next box straight away; a
+  summary card closes the review. While a self-check is running, typed
+  replies aren't taken as answers.
 - While a review is open, typed replies go to it and voice replies still go
   to the day's English task, so the two never mix. An unanswered review stops
   capturing replies after 60 minutes.

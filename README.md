@@ -231,6 +231,7 @@ Main commands:
 /w        look up a word (English-learning bot only, see docs/DICTIONARY.md)
 /vocab    word list and spaced-repetition review (English-learning bot only)
 /night    night ritual: start, history, reports (when enabled, see docs/NIGHT_RITUAL.md)
+/menu     buttons for the common commands
 ```
 
 Plain chat keeps the last few turns as context, folding older turns into a

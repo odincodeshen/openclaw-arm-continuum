@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import dataclasses
+import hashlib
 import json
 import mimetypes
 import shutil
@@ -83,6 +85,8 @@ from openclaw_runtime.llm_client import VLLM_NOT_READY_MESSAGE
 from openclaw_runtime.alerts import Alerter
 from openclaw_runtime.dictionary import LocalDictionary
 from openclaw_runtime.message_cards import RULE, esc, html_to_plain, split_html_message
+from openclaw_runtime.skills.memory import MemoryWriteSkill
+from openclaw_runtime.skills.english_bot import read_this_week_payload, record_gist_choice, render_gist_card
 from openclaw_runtime.night_ritual import (
     NightStore,
     build_report,
@@ -109,6 +113,7 @@ from openclaw_runtime.task_history import TaskHistory
 from openclaw_runtime.transcription_client import TranscriptionClient
 from openclaw_runtime.vision_client import DEFAULT_DESCRIBE_INSTRUCTION, VisionClient, VisionError
 from openclaw_runtime.vocabulary import (
+    LIST_LIMIT,
     LOOKUP_USAGE,
     MAX_LOOKUP_WORDS,
     TOO_LONG_MESSAGE,
@@ -118,11 +123,14 @@ from openclaw_runtime.vocabulary import (
     lookup_word,
     parse_bare_lookup,
     parse_lookup_command,
+    record_review,
     remove_from_word_list,
     render_anki_tsv,
     render_lookup_card,
     render_review_quiz,
     render_review_reminder,
+    render_self_check_question,
+    render_self_check_summary,
     render_word_list,
     save_to_word_list,
     start_review,
@@ -236,7 +244,9 @@ def save_pending_state() -> None:
         reviews = {str(chat_id): item for chat_id, item in VOCAB_REVIEW_PENDING.items()}
     with NIGHT_LOCK:
         night = {str(chat_id): item for chat_id, item in NIGHT_PENDING.items()}
-    data = {"english_task": english, "vocab_review": reviews, "night": night}
+    with PENDING_CATEGORY_LOCK:
+        uploads = {str(chat_id): item for chat_id, item in PENDING_CATEGORY.items()}
+    data = {"english_task": english, "vocab_review": reviews, "night": night, "category": uploads}
     try:
         with PENDING_SAVE_LOCK:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -271,9 +281,15 @@ def restore_pending_state() -> None:
         )
     with NIGHT_LOCK:
         NIGHT_PENDING.update({int(k): v for k, v in (data.get("night") or {}).items()})
+    # an upload waiting for its category: keep only files still in staging
+    with PENDING_CATEGORY_LOCK:
+        for key, pending in (data.get("category") or {}).items():
+            items = [item for item in pending.get("items", []) if Path(item.get("path", "")).exists()]
+            if items:
+                PENDING_CATEGORY[int(key)] = {**pending, "items": items}
     log(
         f"[pending] restored english_task={len(PENDING_ANSWER)} vocab_review={len(VOCAB_REVIEW_PENDING)} "
-        f"night={len(NIGHT_PENDING)}"
+        f"night={len(NIGHT_PENDING)} category={len(PENDING_CATEGORY)}"
     )
 
 # (chat_id, media_group_id) -> {"paths": [Path], "caption": str, "timer": Timer}
@@ -291,6 +307,9 @@ MEDIA_GROUP_BUFFER: dict[tuple[int, str], dict] = {}
 HELP_TEXT = f"""OpenClaw Arm Continuum quick reference
 
 Common commands
+/menu
+Buttons for the common commands.
+
 /mem <content>
 Save a piece of personal memory or working context. Add due:YYYY-MM-DD
 and/or tag:<word> anywhere in the text to attach them.
@@ -720,12 +739,17 @@ def set_pending_category(chat_id: int, item: dict) -> int:
         pending = PENDING_CATEGORY.setdefault(chat_id, {"items": [], "updated_at": 0})
         pending["items"].append(item)
         pending["updated_at"] = int(time.time())
-        return len(pending["items"])
+        count = len(pending["items"])
+    save_pending_state()
+    return count
 
 
 def pop_pending_category(chat_id: int) -> dict | None:
     with PENDING_CATEGORY_LOCK:
-        return PENDING_CATEGORY.pop(chat_id, None)
+        pending = PENDING_CATEGORY.pop(chat_id, None)
+    if pending is not None:
+        save_pending_state()
+    return pending
 
 
 def has_pending_category(chat_id: int) -> bool:
@@ -773,6 +797,7 @@ def send_category_picker(chat_id: int, html: str) -> None:
             pending = PENDING_CATEGORY.get(chat_id)
             if pending is not None:
                 pending.setdefault("prompt_ids", []).append(int(message_id))
+        save_pending_state()
 
 
 def close_category_pickers(chat_id: int, pending: dict) -> None:
@@ -822,6 +847,21 @@ def handle_callback_query(query: dict) -> None:
         return
     if data.startswith(NIGHT_CALLBACK_PREFIX):
         handle_night_callback(chat_id, message_id, data, answer)
+        return
+    if data.startswith(NIGHT_SCHEDULE_PREFIX):
+        handle_night_schedule_callback(chat_id, message_id, data, answer)
+        return
+    if data.startswith(MENU_PREFIX):
+        handle_menu_callback(chat_id, data, answer)
+        return
+    if data.startswith("gist:") and settings.english_bot_enabled:
+        handle_gist_callback(chat_id, message_id, data, answer)
+        return
+    if data.startswith("vw:") and settings.dictionary_enabled:
+        handle_word_list_callback(chat_id, message_id, data, answer)
+        return
+    if data.startswith("vr:") and settings.dictionary_enabled:
+        handle_vocab_review_callback(chat_id, message_id, data, answer)
         return
     if not settings.category_rag_enabled or not data.startswith("cat"):
         answer()
@@ -902,6 +942,8 @@ def sweep_expired_pending() -> None:
         for chat_id, pending in list(PENDING_CATEGORY.items()):
             if pending.get("updated_at", 0) < cutoff:
                 expired.append((chat_id, PENDING_CATEGORY.pop(chat_id)))
+    if expired:
+        save_pending_state()
     for chat_id, pending in expired:
         close_category_pickers(chat_id, pending)
         had_doc = any(item.get("kind") == "document" for item in pending.get("items", []))
@@ -940,6 +982,7 @@ def resolve_pending_with_category(chat_id: int, category_text: str) -> bool:
         # keep the pending items so the user can retry with a valid name
         with PENDING_CATEGORY_LOCK:
             PENDING_CATEGORY[chat_id] = pending
+        save_pending_state()
         send_message(chat_id, f"That category name will not work: {exc}. Send another name, or /cancel.")
         return True
 
@@ -1448,8 +1491,7 @@ CATEGORY_DELETE_PREFIX = "catdel:"
 
 
 def _category_file_count(slug: str) -> int:
-    folder = category_dir(slug)
-    return len(list(folder.glob("*.md"))) if folder.is_dir() else 0
+    return len(_category_documents(category_dir(slug)))
 
 
 def send_category_delete_confirm(chat_id: int, entry: dict) -> None:
@@ -1514,22 +1556,52 @@ def handle_category_delete_callback(chat_id: int, message_id: int | None, data: 
         )
 
 
-def _merge_category_files(from_slug: str, into_entry: dict) -> int:
-    """Move every file from one category's inbox directory into another's,
-    updating each .meta.json sidecar to point at the new category. The memory
-    watcher re-indexes moved files at its next poll -- merge does not touch
-    Qdrant data directly, so there is only ever one ingest path to reason
-    about."""
+def _category_documents(folder: Path) -> list[Path]:
+    """A category folder's documents: every top-level file (PDF, Markdown,
+    text...) except the .meta.json sidecars. Photos live in media/ and are
+    reached through their Markdown description."""
+    if not folder.is_dir():
+        return []
+    return sorted(
+        path
+        for path in folder.iterdir()
+        if path.is_file() and not path.name.endswith(META_SIDECAR_SUFFIX) and not path.name.endswith(".tmp")
+    )
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _merge_category_files(from_slug: str, into_entry: dict) -> tuple[int, int]:
+    """Move every document from one category's inbox directory into
+    another's, updating each .meta.json sidecar to point at the new
+    category. A document whose bytes are already in the target is dropped
+    instead of copied, so a merge never leaves the same file indexed twice.
+    The memory watcher re-indexes moved files at its next poll -- merge does
+    not touch Qdrant data directly, so there is only ever one ingest path to
+    reason about. Returns (moved, skipped duplicates)."""
     from_dir = category_dir(from_slug)
     if not from_dir.is_dir():
-        return 0
+        return 0, 0
     into_dir = category_dir(into_entry["slug"])
     into_media = into_dir / "media"
-    moved = 0
-    for md_path in sorted(from_dir.glob("*.md")):
-        meta_path = md_path.with_name(md_path.name + META_SIDECAR_SUFFIX)
-        target_md = unique_path(into_dir, md_path.name)
-        shutil.move(str(md_path), str(target_md))
+    existing = {_file_sha256(path) for path in _category_documents(into_dir)}
+    moved = skipped = 0
+    for doc_path in _category_documents(from_dir):
+        meta_path = doc_path.with_name(doc_path.name + META_SIDECAR_SUFFIX)
+        digest = _file_sha256(doc_path)
+        if digest in existing:
+            skipped += 1
+            continue  # removed with from_dir below
+        existing.add(digest)
+        into_dir.mkdir(parents=True, exist_ok=True)
+        target_doc = unique_path(into_dir, doc_path.name)
+        shutil.move(str(doc_path), str(target_doc))
 
         data: dict = {}
         if meta_path.exists():
@@ -1545,15 +1617,15 @@ def _merge_category_files(from_slug: str, into_entry: dict) -> int:
             data["image_path"] = str(target_image)
         data["category"] = into_entry["display"]
         data["category_slug"] = into_entry["slug"]
-        _write_meta_sidecar(target_md, data)
+        _write_meta_sidecar(target_doc, data)
         moved += 1
     shutil.rmtree(from_dir, ignore_errors=True)
-    return moved
+    return moved, skipped
 
 
 def _run_category_merge(chat_id: int, from_entry: dict, into_entry: dict) -> None:
     try:
-        moved_files = _merge_category_files(from_entry["slug"], into_entry)
+        moved_files, duplicates = _merge_category_files(from_entry["slug"], into_entry)
         qdrant.delete_collection(from_entry["collection"])
         remove_registry_entry(settings, from_entry["slug"])
     except Exception as exc:
@@ -1565,20 +1637,23 @@ def _run_category_merge(chat_id: int, from_entry: dict, into_entry: dict) -> Non
         return
     log(
         f"[category] merge chat_id={chat_id} from={from_entry['slug']} "
-        f"into={into_entry['slug']} files={moved_files}"
+        f"into={into_entry['slug']} files={moved_files} duplicates={duplicates}"
+    )
+    skipped_note = (
+        f" {duplicates} duplicate file(s) already in \"{into_entry['display']}\" were dropped." if duplicates else ""
     )
     if moved_files:
         send_message(
             chat_id,
-            f'Merged "{from_entry["display"]}" into "{into_entry["display"]}": {moved_files} file(s). '
-            "Give the indexer ~10 seconds to catch up, then query with "
+            f'Merged "{from_entry["display"]}" into "{into_entry["display"]}": {moved_files} file(s).'
+            f"{skipped_note} Give the indexer ~10 seconds to catch up, then query with "
             f'/rag #{into_entry["display"]}.',
         )
     else:
         send_message(
             chat_id,
-            f'"{from_entry["display"]}" had no files to move. "{into_entry["display"]}" is unchanged; '
-            f'"{from_entry["display"]}" no longer exists.',
+            f'"{from_entry["display"]}" had no new files to move.{skipped_note} '
+            f'"{into_entry["display"]}" is unchanged; "{from_entry["display"]}" no longer exists.',
         )
 
 
@@ -1896,7 +1971,9 @@ def _start_vocab_review(chat_id: int) -> None:
             "expires_at": time.time() + VOCAB_REVIEW_TTL_SECONDS,
         }
     save_pending_state()
-    send_html(chat_id, render_review_quiz(questions))
+    send_card_with_buttons(
+        chat_id, render_review_quiz(questions), [[{"text": "Self-check with buttons", "callback_data": "vr:self"}]]
+    )
 
 
 def _grade_vocab_review(chat_id: int, questions: list[dict], answer: str) -> None:
@@ -1920,6 +1997,9 @@ def handle_vocab_review_answer(chat_id: int, message: dict) -> bool:
     if not text or text.startswith("/") or message.get("voice") or message.get("audio"):
         return False
     with VOCAB_REVIEW_LOCK:
+        pending = VOCAB_REVIEW_PENDING.get(chat_id)
+        if pending is not None and pending.get("mode") == "self":
+            return False  # a button self-check is under way; typing doesn't answer it
         pending = VOCAB_REVIEW_PENDING.pop(chat_id, None)
     if pending is None:
         return False
@@ -1928,6 +2008,114 @@ def handle_vocab_review_answer(chat_id: int, message: dict) -> bool:
         return False
     threading.Thread(target=_grade_vocab_review, args=(chat_id, pending["questions"], text), daemon=True).start()
     return True
+
+
+def send_card_with_buttons(chat_id: int, html: str, rows: list[list[dict]]) -> int | None:
+    """An HTML card with inline buttons; returns its message id. Falls back
+    to the plain card (no buttons) if Telegram rejects it."""
+    try:
+        result = telegram(
+            "sendMessage",
+            {"chat_id": chat_id, "text": html, "parse_mode": "HTML", "reply_markup": {"inline_keyboard": rows}},
+        )
+        return (result.get("result") or {}).get("message_id")
+    except Exception as exc:  # noqa: BLE001
+        log(f"[telegram] card with buttons failed chat_id={chat_id}: {exc}")
+        send_html(chat_id, html)
+        return None
+
+
+def _edit_card_buttons(chat_id: int, message_id: int, html: str, rows: list[list[dict]]) -> None:
+    try:
+        telegram(
+            "editMessageText",
+            {"chat_id": chat_id, "message_id": message_id, "text": html, "parse_mode": "HTML",
+             "reply_markup": {"inline_keyboard": rows}},
+            timeout=20,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log(f"[telegram] could not edit card {message_id}: {exc}")
+
+
+def _send_self_check_question(chat_id: int, session: dict) -> None:
+    index = session["index"]
+    questions = session["questions"]
+    send_card_with_buttons(
+        chat_id,
+        render_self_check_question(index + 1, len(questions), questions[index]),
+        [[{"text": "Show answer", "callback_data": f"vr:show:{index}"}]],
+    )
+
+
+def handle_vocab_review_callback(chat_id: int, message_id: int | None, data: str, answer) -> None:
+    """Button self-check for /vocab review: Self-check -> per word Show
+    answer -> Remembered / Forgot, which moves the word to its next box."""
+    parts = data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    index = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else -1
+    with VOCAB_REVIEW_LOCK:
+        session = VOCAB_REVIEW_PENDING.get(chat_id)
+        if session is None or time.time() > session.get("expires_at", 0):
+            session = None
+        elif action == "self" and session.get("mode") != "self":
+            session.update({"mode": "self", "index": 0, "outcomes": []})
+        elif action != "self" and (session.get("mode") != "self" or index != session.get("index")):
+            session = None
+        session = dict(session) if session else None
+    if session is None:
+        answer("This review has ended -- send /vocab review for a new one.")
+        if message_id:
+            close_category_pickers(chat_id, {"prompt_ids": [message_id]})
+        return
+    questions = session["questions"]
+    if action == "self":
+        save_pending_state()
+        answer()
+        if message_id:
+            close_category_pickers(chat_id, {"prompt_ids": [message_id]})
+        _send_self_check_question(chat_id, session)
+        return
+    question = questions[index]
+    if action == "show":
+        answer()
+        if message_id:
+            _edit_card_buttons(
+                chat_id,
+                message_id,
+                render_self_check_question(index + 1, len(questions), question, reveal=True),
+                [[{"text": "✅ Remembered", "callback_data": f"vr:ok:{index}"},
+                  {"text": "❌ Forgot", "callback_data": f"vr:no:{index}"}]],
+            )
+        return
+    if action not in ("ok", "no"):
+        answer()
+        return
+    correct = action == "ok"
+    today = _vocab_today()
+    next_date = record_review(qdrant, settings.tracker_collection, question, correct, today)
+    answer("Remembered" if correct else "It'll come back sooner")
+    if message_id:
+        _edit_card(
+            chat_id,
+            message_id,
+            render_self_check_question(index + 1, len(questions), question, result=(correct, next_date, today)),
+        )
+    outcomes = session.get("outcomes", []) + [(question["phrase"], correct)]
+    with VOCAB_REVIEW_LOCK:
+        live = VOCAB_REVIEW_PENDING.get(chat_id)
+        finished = index + 1 >= len(questions)
+        if live is not None:
+            if finished:
+                VOCAB_REVIEW_PENDING.pop(chat_id, None)
+            else:
+                live.update({"index": index + 1, "outcomes": outcomes})
+                session = dict(live)
+    save_pending_state()
+    if finished:
+        send_html(chat_id, render_self_check_summary(outcomes))
+        log(f"[vocab] self-check done chat_id={chat_id} words={len(outcomes)}")
+    else:
+        _send_self_check_question(chat_id, session)
 
 
 def handle_bare_word_lookup(chat_id: int, message: dict) -> bool:
@@ -2019,11 +2207,94 @@ def handle_vocabulary_command(chat_id: int, text: str) -> bool:
             else:
                 send_message(chat_id, f'"{word}" isn\'t in your word list.')
             return True
-        entries = list_word_list(qdrant, settings.tracker_collection, owner)
-        due = count_due_words(qdrant, settings.tracker_collection, owner, _vocab_today()) if entries else 0
-        send_html(chat_id, render_word_list(entries, due))
+        show_word_list(chat_id)
         return True
     return False
+
+
+MENU_PREFIX = "menu:"
+
+
+def menu_items() -> list[tuple[str, str]]:
+    """(button label, command it runs) for this bot's /menu, by what's
+    enabled here. Every entry is an existing command, so a tap behaves
+    exactly like typing it."""
+    items: list[tuple[str, str]] = []
+    if settings.night_ritual_enabled:
+        items += [("Start tonight", "/night start"), ("Night history", "/night")]
+    if settings.dictionary_enabled:
+        items += [("Word list", "/vocab"), ("Word review", "/vocab review"), ("Anki export", "/vocab export")]
+    items += [("Memory", "/mem list"), ("Upcoming", "/mem upcoming")]
+    if settings.category_rag_enabled:
+        items.append(("Categories", "/cat list"))
+    items += [("Schedules", "/cron list"), ("Help", "/help")]
+    return items
+
+
+def send_menu(chat_id: int) -> None:
+    buttons = [{"text": label, "callback_data": MENU_PREFIX + command} for label, command in menu_items()]
+    rows = [buttons[i : i + 2] for i in range(0, len(buttons), 2)]
+    send_card_with_buttons(chat_id, f"<b>【選單】</b>· Menu\n{RULE}\nTap what you'd like to do.", rows)
+
+
+def handle_menu_callback(chat_id: int, data: str, answer) -> None:
+    command = data[len(MENU_PREFIX):]
+    if command not in {cmd for _, cmd in menu_items()}:
+        answer()
+        return
+    answer(command)
+    handle_message({"chat": {"id": chat_id}, "text": command})
+
+
+WORD_BUTTON_PREFIX = "vw:rm:"
+
+
+def _word_list_view(chat_id: int, editing: bool) -> tuple[str, list[list[dict]]]:
+    owner = str(chat_id)
+    entries = list_word_list(qdrant, settings.tracker_collection, owner)
+    due = count_due_words(qdrant, settings.tracker_collection, owner, _vocab_today()) if entries else 0
+    html = render_word_list(entries, due)
+    if not entries:
+        return html, []
+    if not editing:
+        return html, [[{"text": "Remove words…", "callback_data": "vw:edit"}]]
+    buttons = []
+    for entry in entries[:LIST_LIMIT]:
+        word = entry.get("display_word") or entry.get("word", "")
+        data = WORD_BUTTON_PREFIX + (entry.get("word") or word)
+        if word and len(data.encode("utf-8")) <= 64:
+            buttons.append({"text": f"✕ {word}", "callback_data": data})
+    rows = [buttons[i : i + 3] for i in range(0, len(buttons), 3)]
+    rows.append([{"text": "Done", "callback_data": "vw:done"}])
+    return html, rows
+
+
+def show_word_list(chat_id: int) -> None:
+    html, rows = _word_list_view(chat_id, editing=False)
+    if rows:
+        send_card_with_buttons(chat_id, html, rows)
+    else:
+        send_html(chat_id, html)
+
+
+def handle_word_list_callback(chat_id: int, message_id: int | None, data: str, answer) -> None:
+    """/vocab card buttons: Remove words… shows one ✕ button per word;
+    tapping one removes it and redraws the list; Done goes back."""
+    if data.startswith(WORD_BUTTON_PREFIX):
+        word = data[len(WORD_BUTTON_PREFIX):]
+        removed = remove_from_word_list(qdrant, settings.tracker_collection, str(chat_id), word)
+        answer(f"Removed {word}" if removed else "Already gone")
+        editing = True
+    else:
+        answer()
+        editing = data == "vw:edit"
+    if not message_id:
+        return
+    html, rows = _word_list_view(chat_id, editing=editing)
+    if rows:
+        _edit_card_buttons(chat_id, message_id, html, rows)
+    else:
+        _edit_card(chat_id, message_id, html)
 
 
 def cron_help_text() -> str:
@@ -2373,6 +2644,7 @@ def setup_bot_commands() -> None:
             {"command": "w", "description": "Look up a word (added to your word list)"},
             {"command": "vocab", "description": "Show your word list"},
         ]
+    commands.insert(0, {"command": "menu", "description": "Buttons for the common commands"})
     if settings.night_ritual_enabled:
         commands.insert(1, {"command": "night", "description": "Night ritual: start, history, reports"})
     telegram("setMyCommands", {"commands": commands}, timeout=20)
@@ -2449,6 +2721,10 @@ def handle_message(message: dict) -> None:
             sweep_expired_pending()
         except Exception as exc:  # noqa: BLE001 - never let housekeeping drop a message
             log(f"[category] sweep error: {exc}")
+
+    if text.lower() in ("/menu", "/start menu"):
+        send_menu(chat_id)
+        return
 
     try:
         if night_command(chat_id, text):
@@ -2591,6 +2867,7 @@ NIGHT_LOCK = threading.Lock()
 # serializes answers so two quick messages can't both claim the same step
 NIGHT_ANSWER_LOCK = threading.Lock()
 NIGHT_CALLBACK_PREFIX = "night_first:"
+NIGHT_SCHEDULE_PREFIX = "night_sched:"
 NIGHT_HELP_TEXT = """
 Night ritual (22:30, Sun-Fri):
 /night            Recent nights and the latest entry
@@ -2598,6 +2875,7 @@ Night ritual (22:30, Sun-Fri):
 /night 7d         The last 7 nights in full
 /night 2026-09-28 One night
 /night week       Last week's report · /night month  last month's
+/night move 2026-09-29 2026-09-28   Re-date a night (e.g. one you wrote about yesterday)
 """
 
 
@@ -2738,8 +3016,58 @@ def _night_answer(chat_id: int, text: str) -> None:
     closing = closing_line(llm, entry)
     entry["closing"] = closing
     store.save(owner, entry)
-    send_html(chat_id, render_closing(entry, closing))
+    send_card_with_buttons(
+        chat_id,
+        render_closing(entry, closing),
+        [[{"text": "Add to tomorrow's schedule", "callback_data": NIGHT_SCHEDULE_PREFIX + entry["date"]}]],
+    )
     log(f"[night] done date={entry['date']}")
+
+
+def add_first_thing_to_schedule(entry: dict) -> None:
+    """Save the night's first thing as a /mem item due the next day, in the
+    schedule collection (another bot's tracker memory, so it shows in that
+    bot's morning schedule report) or this bot's own."""
+    first = (entry.get("answers") or {}).get("first", "").strip()
+    due = date.fromisoformat(entry["date"]) + timedelta(days=1)
+    target = settings.night_ritual_schedule_collection or settings.tracker_collection
+    skill = MemoryWriteSkill(dataclasses.replace(settings, tracker_collection=target), {}, embeddings, qdrant)
+    skill.run(f"/mem {first} due:{due.isoformat()} tag:night")
+
+
+def handle_night_schedule_callback(chat_id: int, message_id: int | None, data: str, answer) -> None:
+    if not is_night_owner(chat_id):
+        answer()
+        return
+    try:
+        day = date.fromisoformat(data[len(NIGHT_SCHEDULE_PREFIX):])
+    except ValueError:
+        answer()
+        return
+    store = night_store()
+    entry = store.load(str(chat_id), day)
+    if not entry or not (entry.get("answers") or {}).get("first"):
+        answer()
+        return
+    if entry.get("scheduled"):
+        answer("Already on tomorrow's schedule")
+    else:
+        try:
+            add_first_thing_to_schedule(entry)
+        except Exception as exc:  # noqa: BLE001
+            log(f"[night] schedule add failed: {exc}")
+            answer("Couldn't add it -- try again later.")
+            return
+        entry["scheduled"] = True
+        store.save(str(chat_id), entry)
+        answer("Added to tomorrow's schedule")
+        log(f"[night] first thing scheduled date={day}")
+    if message_id:
+        _edit_card(
+            chat_id,
+            message_id,
+            render_closing(entry, entry.get("closing") or "") + "\n\n<i>Added to tomorrow's schedule.</i>",
+        )
 
 
 def handle_night_reply(chat_id: int, message: dict) -> bool:
@@ -2817,6 +3145,25 @@ def night_command(chat_id: int, text: str) -> bool:
     ritual_days = _night_ritual_days()
     if arg == "start":
         start_night(chat_id, manual=True)
+        return True
+    if arg.startswith("move"):
+        parts = arg.split()
+        try:
+            source, target = date.fromisoformat(parts[1]), date.fromisoformat(parts[2])
+        except (IndexError, ValueError):
+            send_message(chat_id, "Use /night move <from> <to>, e.g. /night move 2026-09-29 2026-09-28.")
+            return True
+        pending = _peek_night_pending(chat_id)
+        if pending and pending.get("date") == source.isoformat():
+            send_message(chat_id, "That night is still open -- finish it (or wait for midnight) before moving it.")
+            return True
+        try:
+            store.move(owner, source, target)
+        except ValueError as exc:
+            send_message(chat_id, f"Couldn't move it: {exc}.")
+            return True
+        send_message(chat_id, f"Moved the night of {source.isoformat()} to {target.isoformat()}.")
+        log(f"[night] moved {source} -> {target}")
         return True
     if arg in ("week", "month"):
         send_message(chat_id, f"Putting together the {arg} report…")
@@ -2985,6 +3332,51 @@ def _english_bot_send_audio(owner: str, path: Path, caption: str) -> None:
 
 def _english_bot_set_pending_answer(owner: str, item: dict) -> None:
     set_pending_answer(int(owner), item)
+    if item.get("kind") == "eng_mon":
+        _send_gist_card(int(owner), int(item.get("week_number") or 0))
+
+
+def _send_gist_card(chat_id: int, week_number: int) -> None:
+    """Monday's gist as A/B/C buttons, sent as the task opens (both for a
+    prepared and a live push). Weeks without stored options keep the typed
+    gist and get no card."""
+    try:
+        payload = read_this_week_payload(qdrant, settings.tracker_collection, week_number)
+    except ValueError:
+        return
+    options = list(payload.get("gist_options") or [])
+    if len(options) != 3:
+        return
+    send_card_with_buttons(
+        chat_id,
+        render_gist_card(week_number, options),
+        [[{"text": letter, "callback_data": f"gist:{week_number}:{index}"} for index, letter in enumerate("ABC")]],
+    )
+
+
+def handle_gist_callback(chat_id: int, message_id: int | None, data: str, answer) -> None:
+    try:
+        _, week_text, choice_text = data.split(":")
+        week_number, choice = int(week_text), int(choice_text)
+        payload = read_this_week_payload(qdrant, settings.tracker_collection, week_number)
+    except ValueError:
+        answer()
+        return
+    options = list(payload.get("gist_options") or [])
+    correct_index = int(payload.get("gist_answer", -1))
+    if len(options) != 3 or not 0 <= choice < 3:
+        answer()
+        return
+    first = record_gist_choice(
+        qdrant, embeddings, settings.tracker_collection, str(chat_id), week_number, choice, correct_index
+    )
+    if not first:
+        answer("You've already answered this one.")
+    else:
+        answer("Right!" if choice == correct_index else f"Not quite -- it's {'ABC'[correct_index]}")
+        log(f"[english_bot] gist answered chat_id={chat_id} week={week_number} correct={choice == correct_index}")
+    if message_id and first:
+        _edit_card(chat_id, message_id, render_gist_card(week_number, options, chosen=choice, answer=correct_index))
 
 
 def _english_bot_scheduler_loop() -> None:

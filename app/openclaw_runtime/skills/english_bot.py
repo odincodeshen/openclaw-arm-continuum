@@ -19,7 +19,7 @@ through daily_task_tracking, which is owner-scoped.
 import json
 import random
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
@@ -32,6 +32,7 @@ from openclaw_runtime.http_client import get_bytes, get_text
 from openclaw_runtime.llm_client import LlmClient
 from openclaw_runtime.message_cards import (
     DONE_STEP,
+    RULE,
     FeedbackCard,
     TaskCard,
     bold,
@@ -90,6 +91,10 @@ class WeeklyContent:
     listening_check: bool = False
     dictation_prompt: str = ""
     dictation_answers: list[str] = field(default_factory=list)
+    # Gist as a three-way choice answered with buttons (weeks from v1.22 on);
+    # empty = the older typed gist, judged by the model.
+    gist_options: list[str] = field(default_factory=list)
+    gist_answer: int = -1
 
 
 GUEST_WINDOW_SCHEMA = {
@@ -357,6 +362,8 @@ def store_weekly_content(
                 "listening_check": content.listening_check,
                 "dictation_prompt": content.dictation_prompt,
                 "dictation_answers": content.dictation_answers,
+                "gist_options": content.gist_options,
+                "gist_answer": content.gist_answer,
                 "mastered": False,
                 "needs_review": False,
             },
@@ -441,6 +448,42 @@ def choose_dictation(
     return " ".join(tokens), answers
 
 
+GIST_OPTIONS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "correct": {"type": "string", "minLength": 1},
+        "distractors": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 2, "maxItems": 2},
+    },
+    "required": ["correct", "distractors"],
+    "additionalProperties": False,
+}
+
+
+def generate_gist_options(llm: LlmClient, excerpt: str, seed: int) -> tuple[list[str], int]:
+    """Three one-line answers to "what is the guest mainly talking about?":
+    the right one and two plausible but wrong ones, shuffled (seeded, so a
+    week always shows the same order). ([], -1) if the model fails -- the
+    week then falls back to a typed gist."""
+    prompt = (
+        "This is what a guest said in a clip from a British radio interview:\n\n"
+        f"\"{excerpt}\"\n\n"
+        "Write a multiple-choice gist question for an English learner. correct: one short "
+        "sentence (max 15 words) saying what the guest is mainly talking about. distractors: two "
+        "sentences of the same length and style that sound plausible -- they may reuse words "
+        "from the clip -- but are clearly wrong for someone who understood it. Plain English."
+    )
+    try:
+        data = json.loads(llm.chat_json(prompt, GIST_OPTIONS_SCHEMA, schema_name="gist_options", max_tokens=300))
+        options = [data["correct"].strip()] + [d.strip() for d in data["distractors"]][:2]
+    except Exception:  # noqa: BLE001
+        return [], -1
+    if len(options) != 3 or not all(options):
+        return [], -1
+    order = [0, 1, 2]
+    random.Random(seed).shuffle(order)
+    return [options[i] for i in order], order.index(0)
+
+
 def _mmss(seconds: float) -> str:
     total = int(round(seconds))
     return f"{total // 60}:{total % 60:02d}"
@@ -476,7 +519,10 @@ def build_monday_message(content: WeeklyContent) -> str:
                 ],
             )
         )
-    parts = [f"{bold('1. Gist')}\nIn one or two English sentences: what is the guest talking about?"]
+    if content.gist_options:
+        parts = [f"{bold('1. Gist')}\nWhat is the guest mainly talking about? Tap A, B or C on the card below."]
+    else:
+        parts = [f"{bold('1. Gist')}\nIn one or two English sentences: what is the guest talking about?"]
     if content.dictation_prompt:
         parts.append(
             f"{bold('2. Dictation')}\nFill the {len(content.dictation_answers)} gaps with the exact words you hear:\n"
@@ -496,8 +542,13 @@ def build_monday_message(content: WeeklyContent) -> str:
             content_html=content_html,
             steps=[
                 "Listen to the audio clip as many times as you like",
-                "Reply in one message: 1. the gist  2. the missing words  3. your sentence "
-                "(type the dictation; voice is fine for 1 and 3)",
+                (
+                    "Tap your gist answer, then reply in one message: 2. the missing words  3. your sentence "
+                    "(type the dictation; voice is fine for 3)"
+                    if content.gist_options
+                    else "Reply in one message: 1. the gist  2. the missing words  3. your sentence "
+                    "(type the dictation; voice is fine for 1 and 3)"
+                ),
                 DONE_STEP,
             ],
         )
@@ -561,6 +612,8 @@ def run_monday_task(
         dictation_prompt=dictation[0] if dictation else "",
         dictation_answers=dictation[1] if dictation else [],
     )
+    gist_options, gist_answer = generate_gist_options(llm, window["excerpt_text"], seed=week_number)
+    content = replace(content, gist_options=gist_options, gist_answer=gist_answer)
     store_weekly_content(qdrant, embeddings, collection, content)
 
     # The selected stretch as its own audio clip, so the listening task can be
@@ -716,6 +769,36 @@ def _record_listening_check(
     write_owned_point(qdrant, collection, owner, text, vector_source(text), {"tag": tag, "kind": "listening_check", **fields})
 
 
+def render_gist_card(week_number: int, options: list[str], *, chosen: int | None = None, answer: int = -1) -> str:
+    """The button card for Monday's gist. Once answered, each option is
+    marked: ✅ the right one, ❌ a wrong pick."""
+    lines = [f"<b>【週一聽力】</b>· Gist · Week {week_number}", RULE, "What is the guest mainly talking about?", ""]
+    for index, option in enumerate(options):
+        mark = ""
+        if chosen is not None:
+            mark = "✅ " if index == answer else ("❌ " if index == chosen else "")
+        lines.append(f"{mark}{bold('ABC'[index] + '.')} {esc(option)}")
+    if chosen is not None:
+        lines += ["", "Right!" if chosen == answer else f"The answer is {'ABC'[answer]}. Replay the clip and listen for it."]
+    return "\n".join(lines)
+
+
+def record_gist_choice(
+    qdrant: QdrantClient, embeddings: EmbeddingClient, collection: str, owner: str, week_number: int, choice: int,
+    answer: int,
+) -> bool:
+    """Save a button gist answer on the learner's listening record. The
+    first tap counts; returns False if the gist was already answered."""
+    existing = read_listening_check(qdrant, collection, owner, week_number)
+    if existing is not None and existing.get("gist_choice") is not None:
+        return False
+    _record_listening_check(
+        qdrant, collection, owner, week_number,
+        {"gist_correct": choice == answer, "gist_choice": choice}, embeddings.embed,
+    )
+    return True
+
+
 def read_listening_check(qdrant: QdrantClient, collection: str, owner: str, week_number: int) -> dict | None:
     points = read_owned_points(
         qdrant, collection, owner, {"tag": f"eng_wk{week_number}", "kind": "listening_check"}, limit=1
@@ -743,10 +826,17 @@ def evaluate_monday_listening(
     dictation_prompt = payload.get("dictation_prompt") or ""
     answers = list(payload.get("dictation_answers") or [])
     phrase_list = "\n".join(f"- {c['phrase']}" for c in chunks)
+    button_gist = bool(payload.get("gist_options"))
+    gist_note = (
+        "(Part 1, the gist, was answered separately with a button -- the reply has only parts 2 and 3; "
+        "still fill gist_correct with false, gist_feedback with an empty string, and gist_model.) "
+        if button_gist
+        else ""
+    )
     prompt = (
         "A language learner listened to a clip from a British radio interview and "
         "answered in one message: 1. the gist, 2. a dictation (the missing words), "
-        "3. a sentence using one of this week's chunks.\n\n"
+        "3. a sentence using one of this week's chunks. " + gist_note + "\n\n"
         f"What was said in the clip:\n\"{transcript}\"\n\n"
         f"Dictation sentence (with gaps):\n{dictation_prompt or '(none this week)'}\n\n"
         f"This week's chunks:\n{phrase_list}\n\n"
@@ -763,7 +853,20 @@ def evaluate_monday_listening(
     )
     data = json.loads(llm.chat_json(prompt, MONDAY_LISTENING_SCHEMA, schema_name="monday_listening", max_tokens=1000))
 
-    result_lines = [f"{'✅' if data['gist_correct'] else '❌'} Gist — {data['gist_feedback'].strip()}"]
+    fields: dict = {}
+    if button_gist:
+        earlier = read_listening_check(qdrant, collection, owner, week_number) or {}
+        options = list(payload.get("gist_options") or [])
+        answer_index = int(payload.get("gist_answer", -1))
+        if earlier.get("gist_choice") is None:
+            result_lines = ["— Gist — not answered yet: tap A, B or C on the gist card"]
+        elif earlier.get("gist_correct"):
+            result_lines = [f"✅ Gist — {'ABC'[answer_index]}. {options[answer_index]}"]
+        else:
+            result_lines = [f"❌ Gist — the answer was {'ABC'[answer_index]}. {options[answer_index]}"]
+    else:
+        result_lines = [f"{'✅' if data['gist_correct'] else '❌'} Gist — {data['gist_feedback'].strip()}"]
+        fields["gist_correct"] = bool(data["gist_correct"])
     tips: list[str] = []
     dictation_correct = 0
     if answers:
@@ -798,12 +901,8 @@ def evaluate_monday_listening(
         result_lines.append("❌ No chunk from this week spotted")
         tips.append("Use one of this week's chunks in a sentence about your own life")
 
-    _record_listening_check(
-        qdrant, collection, owner, week_number,
-        {"gist_correct": bool(data["gist_correct"]), "dictation_correct": dictation_correct,
-         "dictation_total": len(answers)},
-        embeddings.embed,
-    )
+    fields.update({"dictation_correct": dictation_correct, "dictation_total": len(answers)})
+    _record_listening_check(qdrant, collection, owner, week_number, fields, embeddings.embed)
     mark_task_completed(qdrant, collection, week_number, "mon", owner)
     example = (
         f"Gist:\n{data['gist_model'].strip()}\n\n"

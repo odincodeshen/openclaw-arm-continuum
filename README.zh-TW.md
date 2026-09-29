@@ -202,6 +202,7 @@ curl -I http://127.0.0.1:18789/
 /w        查字（僅英文學習 bot，見 docs/DICTIONARY.md）
 /vocab    生字本與間隔重複複習（僅英文學習 bot）
 /night    晚安儀式：開始、紀錄、報告（啟用時，見 docs/NIGHT_RITUAL.md）
+/menu     常用指令的按鈕選單
 ```
 
 一般聊天會記得最近幾輪對話，超出視窗的部分會摺進滾動摘要而不是直接丟棄

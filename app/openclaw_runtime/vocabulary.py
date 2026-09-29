@@ -484,7 +484,8 @@ def render_review_quiz(questions: list[dict]) -> str:
             reply_mode="Typed reply",
             content_html="\n".join(lines),
             steps=[
-                f"Answer all {len(questions)} in one typed message, by number",
+                f"Answer all {len(questions)} in one typed message, by number -- or tap Self-check to go "
+                "one by one with buttons",
                 "Until you answer, typed replies go to this review; voice replies still go to today's task",
                 "One answer finishes the review — no /Done needed",
             ],
@@ -499,6 +500,51 @@ def render_review_reminder(due_count: int) -> str:
         return ""
     noun = "word is" if due_count == 1 else "words are"
     return f"\n\n{bold('Word review')}\n{due_count} saved {noun} due today — send /vocab review"
+
+
+def record_review(
+    qdrant: QdrantClient, collection: str, question: dict, correct: bool, today: date, *, now: datetime | None = None
+) -> date:
+    """Move one reviewed word to its next box and date; returns the date."""
+    now = now or datetime.now(timezone.utc)
+    box, next_date = next_review_after(question["box"], correct, today)
+    fields = {
+        "review_box": box,
+        "next_review": next_date.isoformat(),
+        "last_review_at": now.isoformat(),
+        "correct_count": question.get("correct_count", 0) + (1 if correct else 0),
+        "wrong_count": question.get("wrong_count", 0) + (0 if correct else 1),
+    }
+    qdrant.set_payload(collection, question["point_id"], fields)
+    return next_date
+
+
+def _next_review_words(next_date: date, today: date) -> str:
+    days = (next_date - today).days
+    return "tomorrow" if days == 1 else f"in {days} days"
+
+
+def render_self_check_question(index: int, total: int, question: dict, *, reveal: bool = False,
+                               result: tuple[bool, date, date] | None = None) -> str:
+    """One word of a button self-check: the question, then (after Show
+    answer) the word, then (after Remembered / Forgot) the outcome."""
+    lines = [f"<b>【生字複習 {index}/{total}】</b>· Self-check", RULE, esc(question["prompt_text"])]
+    if reveal or result is not None:
+        lines += ["", f"Answer: {bold(question['phrase'])}"]
+    if result is not None:
+        correct, next_date, today = result
+        lines.append(f"{'✅ Remembered' if correct else '❌ Forgot'} — next review {_next_review_words(next_date, today)}")
+    elif reveal:
+        lines += ["", "Did you remember it?"]
+    return "\n".join(lines)
+
+
+def render_self_check_summary(outcomes: list[tuple[str, bool]]) -> str:
+    remembered = sum(1 for _, ok in outcomes if ok)
+    lines = ["<b>【生字複習】</b>· Done", RULE, f"{remembered} of {len(outcomes)} remembered"]
+    lines += [f"{'✅' if ok else '❌'} {esc(word)}" for word, ok in outcomes]
+    lines += ["", REVIEW_FEEDBACK_FOOTER]
+    return "\n".join(lines)
 
 
 def grade_review(
@@ -520,17 +566,8 @@ def grade_review(
     answer_key: list[str] = []
     for index, (question, result) in enumerate(zip(questions, results), start=1):
         correct = bool(result["correct"])
-        box, next_date = next_review_after(question["box"], correct, today)
-        fields = {
-            "review_box": box,
-            "next_review": next_date.isoformat(),
-            "last_review_at": now.isoformat(),
-            "correct_count": question.get("correct_count", 0) + (1 if correct else 0),
-            "wrong_count": question.get("wrong_count", 0) + (0 if correct else 1),
-        }
-        qdrant.set_payload(collection, question["point_id"], fields)
-        days = (next_date - today).days
-        when = "tomorrow" if days == 1 else f"in {days} days"
+        next_date = record_review(qdrant, collection, question, correct, today, now=now)
+        when = _next_review_words(next_date, today)
         result_lines.append(f"{'✅' if correct else '❌'} {index}. {question['phrase']} — next review {when}")
         result_lines.append(f"    {result['explanation_zh']}")
         tips.append(f"{question['phrase']}: {result['example_sentence']}")

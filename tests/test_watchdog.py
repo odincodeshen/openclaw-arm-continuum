@@ -66,5 +66,40 @@ class WatchdogEvaluateTest(unittest.TestCase):
         self.assertEqual(state["boot_id"], "boot2")
 
 
+class WatchdogWeeklySummaryTest(unittest.TestCase):
+    def _at(self, day: int, hour: int):
+        import time as _time
+
+        return _time.struct_time((2026, 10, day, hour, 0, 0, (day - 5) % 7, 0, 0))  # 5 Oct 2026 = Monday
+
+    def test_restarts_reboots_and_alerts_are_counted_for_the_week(self) -> None:
+        _, state = watchdog.evaluate({}, {"x": _c()}, "b1", 0.0)
+        _, state = watchdog.evaluate(state, {"x": _c(restarts=2, exit_code=1)}, "b1", 300.0)
+        _, state = watchdog.evaluate(state, {"x": _c(restarts=2)}, "b2", 600.0)
+        self.assertEqual(state["week"], {"restarts": {"x": 2}, "reboots": 1, "alerts": 2})
+
+    def test_due_monday_from_the_hour_once_per_week(self) -> None:
+        self.assertIsNone(watchdog.summary_due(self._at(5, 7), {}))
+        self.assertEqual(watchdog.summary_due(self._at(5, 8), {}), "2026-W41")
+        self.assertIsNone(watchdog.summary_due(self._at(5, 9), {"summary_week": "2026-W41"}))
+        self.assertIsNone(watchdog.summary_due(self._at(6, 9), {}))  # Tuesday
+
+    def test_summary_text(self) -> None:
+        containers = {"a": _c(), "b": _c(status="restarting"), "old": _c(status="exited"),
+                      "c": _c(health="unhealthy")}
+        state = {"week": {"restarts": {"b": 3}, "alerts": 4, "reboots": 1}}
+        text = watchdog.render_summary(containers, state, "13% used (3100 GiB free)", "NVIDIA GB10: 0% busy, 43°C")
+        self.assertIn("Containers running: 2", text)
+        self.assertIn("Not healthy: b", text)
+        self.assertIn("Failing health check: c", text)
+        self.assertIn("Crash restarts this week: b ×3", text)
+        self.assertIn("Alerts sent this week: 4", text)
+        self.assertIn("Host reboots: 1", text)
+        self.assertIn("GPU: NVIDIA GB10", text)
+        quiet = watchdog.render_summary({"a": _c()}, {}, "1% used", "")
+        self.assertIn("Crash restarts this week: none", quiet)
+        self.assertNotIn("GPU", quiet)
+
+
 if __name__ == "__main__":
     unittest.main()

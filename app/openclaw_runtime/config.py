@@ -164,6 +164,10 @@ class Settings:
     night_ritual_report_time: str = "07:30"
     night_ritual_prepare_time: str = "04:00"
     night_ritual_dir: Path = Path("/workspace/.openclaw/night")
+    # Where "Add to tomorrow's schedule" saves the first thing as a /mem item
+    # due tomorrow -- another bot's tracker collection on the same Qdrant, so
+    # it shows in that bot's morning schedule report. Empty = this bot's own.
+    night_ritual_schedule_collection: str = ""
 
 
 def load_settings() -> Settings:
@@ -314,4 +318,5 @@ def load_settings() -> Settings:
         night_ritual_report_time=os.environ.get("OPENCLAW_NIGHT_RITUAL_REPORT_TIME", "07:30"),
         night_ritual_prepare_time=os.environ.get("OPENCLAW_NIGHT_RITUAL_PREPARE_TIME", "04:00"),
         night_ritual_dir=Path(os.environ.get("OPENCLAW_NIGHT_RITUAL_DIR", "/workspace/.openclaw/night")),
+        night_ritual_schedule_collection=os.environ.get("OPENCLAW_NIGHT_RITUAL_SCHEDULE_COLLECTION", "").strip(),
     )

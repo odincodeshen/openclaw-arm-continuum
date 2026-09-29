@@ -107,6 +107,12 @@ from the host's crontab:
 */5 * * * * cd /path/to/openclaw-arm-continuum && /usr/bin/python3 scripts/openclaw_watchdog.py >> .cache/openclaw-watchdog.log 2>&1
 ```
 
+Once a week -- Monday from 08:00 host time (`OPENCLAW_WATCHDOG_SUMMARY_DAY`,
+0 = Monday, and `OPENCLAW_WATCHDOG_SUMMARY_HOUR`) -- the same run also sends
+a **weekly health summary**: containers running, any not healthy or failing
+their health check, crash restarts and alerts over the week, host reboots,
+disk use, and the GPU (from `nvidia-smi`, when there is one).
+
 ## Boot modes
 
 `bin/openclawctl boot` reads `OPENCLAW_BOOT_MODE` (from the process env; wire it

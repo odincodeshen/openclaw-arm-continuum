@@ -106,6 +106,21 @@ class ModuleTest(unittest.TestCase):
         self.assertEqual(saved.read_text(encoding="utf-8"), markdown)
         self.assertIn("### 2026-09-29 (partial)", markdown)
 
+    def test_trend_streak_and_comparison_with_the_week_before(self) -> None:
+        days = nr.parse_ritual_days("sun,mon,tue,wed,thu,fri")
+        full = {"wins": "w", "better": "b", "adjust": "a", "first": "f"}
+        # week before (21-27 Sep): 3 of 6 done, one first thing checked and not done
+        for d in ("2026-09-22", "2026-09-23", "2026-09-24"):
+            self.store.save("o", {"date": d, "status": "done", "answers": full, "first_done": False})
+        # this week (28 Sep - 4 Oct): Fri 2, Sun 4 done, Sat not a ritual night; Thu missed
+        for d in ("2026-09-28", "2026-09-29", "2026-09-30", "2026-10-02", "2026-10-04"):
+            self.store.save("o", {"date": d, "status": "done", "answers": full, "first_done": True})
+        html, markdown = nr.build_report(FakeLlm(), self.store, "o", "week", date(2026, 10, 5), days)
+        self.assertIn("<b>Trend</b>\nStreak: 2 nights in a row", html)
+        self.assertIn("Nights done: 83% (last week 50%) ↑", html)
+        self.assertIn("First things done: 100% (last week 0%) ↑", html)
+        self.assertIn("- Streak: 2 nights in a row", markdown)
+
     def test_empty_month_skips_the_model(self) -> None:
         llm = FakeLlm()
         html, _ = nr.build_report(llm, self.store, "o", "month", date(2026, 10, 1), {0})
@@ -252,6 +267,49 @@ class GatewayNightTest(unittest.TestCase):
         self.assertIn("Wins: w1", html)
         gateway.night_command(OWNER, "/night 2026-09-28")
         self.assertIn("First: f", self.sent[-1])
+
+    def test_add_first_thing_to_tomorrows_schedule(self) -> None:
+        runs = []
+
+        class FakeSkill:
+            def __init__(self, settings, config, embeddings, qdrant):
+                self.collection = settings.tracker_collection
+
+            def run(self, text):
+                runs.append((self.collection, text))
+
+        with patch.object(gateway, "MemoryWriteSkill", FakeSkill), patch.object(
+            gateway, "settings", dataclasses.replace(gateway.settings, night_ritual_schedule_collection="bot1_memory")
+        ):
+            gateway.night_command(OWNER, "/night start")
+            for answer in ["a", "b", "c", "Book the dentist"]:
+                self._say(answer)
+            closing = [p for m, p in self.api if m == "sendMessage"][-1]
+            button = closing["reply_markup"]["inline_keyboard"][0][0]
+            tap = {"id": "q", "data": button["callback_data"], "message": {"message_id": 8, "chat": {"id": OWNER}}}
+            gateway.handle_callback_query(tap)
+            gateway.handle_callback_query(tap)  # a second tap doesn't add it twice
+        self.assertEqual(runs, [("bot1_memory", "/mem Book the dentist due:2026-09-30 tag:night")])
+        self.assertTrue(self.store.load(str(OWNER), TUE)["scheduled"])
+        self.assertIn("Added to tomorrow's schedule.", [p for m, p in self.api if m == "editMessageText"][-1]["text"])
+
+    def test_move_a_night_to_yesterday(self) -> None:
+        gateway.night_command(OWNER, "/night start")
+        gateway.night_command(OWNER, "/night move 2026-09-29 2026-09-28")
+        self.assertIn("still open", self.sent[-1])
+        for answer in ["a", "b", "c", "d"]:
+            self._say(answer)
+        gateway.night_command(OWNER, "/night move 2026-09-29 2026-09-28")
+        self.assertIn("Moved", self.sent[-1])
+        self.assertIsNone(self.store.load(str(OWNER), TUE))
+        moved = self.store.load(str(OWNER), date(2026, 9, 28))
+        self.assertEqual((moved["date"], moved["moved_from"]), ("2026-09-28", "2026-09-29"))
+        gateway.night_command(OWNER, "/night move 2026-09-28 2026-09-28")
+        self.assertIn("already has a night", self.sent[-1])
+        gateway.night_command(OWNER, "/night move yesterday")
+        self.assertIn("Use /night move", self.sent[-1])
+        self._tick(22, 30, {})  # tonight still starts, asking about the moved night's first thing
+        self.assertIn("d", self.sent[-1])
 
     def test_weekly_report_is_prepared_off_peak_and_sent_at_report_time(self) -> None:
         self.store.save(str(OWNER), {"date": "2026-09-29", "status": "done",

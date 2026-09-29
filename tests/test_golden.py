@@ -16,7 +16,7 @@ from openclaw_runtime.categories import category_slug
 _CJK = re.compile("[぀-ヿ㐀-鿿＀-￯]")
 
 EXPECTED_MENU = [
-    "help", "mem", "rag", "doc", "cat", "search",
+    "menu", "help", "mem", "rag", "doc", "cat", "search",
     "cron", "new", "keep", "history", "agents", "tasks", "review", "start",
 ]
 

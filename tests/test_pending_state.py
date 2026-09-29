@@ -19,13 +19,14 @@ class PendingStatePersistenceTest(unittest.TestCase):
         patcher = patch.object(gateway, "settings", dataclasses.replace(gateway.settings, pending_state_path=self.path))
         patcher.start()
         self.addCleanup(patcher.stop)
-        for store in (gateway.PENDING_ANSWER, gateway.VOCAB_REVIEW_PENDING):
+        for store in (gateway.PENDING_ANSWER, gateway.VOCAB_REVIEW_PENDING, gateway.PENDING_CATEGORY):
             store.clear()
             self.addCleanup(store.clear)
 
     def _restart(self) -> None:
         gateway.PENDING_ANSWER.clear()
         gateway.VOCAB_REVIEW_PENDING.clear()
+        gateway.PENDING_CATEGORY.clear()
         with patch.object(gateway, "log", lambda message: None):
             gateway.restore_pending_state()
 
@@ -54,8 +55,22 @@ class PendingStatePersistenceTest(unittest.TestCase):
         gateway.set_pending_answer(7, {"kind": "eng_fri", "week_number": 2})
         data = json.loads(self.path.read_text(encoding="utf-8"))
         self.assertEqual(
-            data, {"english_task": {"7": {"kind": "eng_fri", "week_number": 2}}, "vocab_review": {}, "night": {}}
+            data,
+            {"english_task": {"7": {"kind": "eng_fri", "week_number": 2}}, "vocab_review": {}, "night": {}, "category": {}},
         )
+
+    def test_upload_waiting_for_a_category_survives_a_restart(self) -> None:
+        staged = self.path.parent / "staged.pdf"
+        staged.parent.mkdir(parents=True, exist_ok=True)
+        staged.write_bytes(b"%PDF")
+        gateway.set_pending_category(5, {"path": str(staged), "kind": "document", "note": "", "original_name": "a.pdf"})
+        gateway.set_pending_category(6, {"path": str(self.path.parent / "gone.pdf"), "kind": "document"})
+        self._restart()
+        self.assertEqual(gateway.PENDING_CATEGORY[5]["items"][0]["original_name"], "a.pdf")
+        self.assertNotIn(6, gateway.PENDING_CATEGORY)  # its file is no longer in staging
+        gateway.pop_pending_category(5)
+        self._restart()
+        self.assertEqual(gateway.PENDING_CATEGORY, {})
 
     def test_unreadable_file_is_ignored(self) -> None:
         self.path.parent.mkdir(parents=True)

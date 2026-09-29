@@ -10,6 +10,9 @@ from openclaw_runtime.skills.english_bot import (
     choose_dictation,
     dictation_word_correct,
     evaluate_monday_reply,
+    generate_gist_options,
+    record_gist_choice,
+    render_gist_card,
 )
 from openclaw_runtime.transcription_client import TranscriptSegment
 from tests.card_checks import assert_feedback_card, assert_task_card
@@ -169,6 +172,72 @@ class EvaluateMondayListeningTest(unittest.TestCase):
         self.assertEqual(llm.chat_json.call_args.kwargs["schema_name"], "friday_chunk_usage")
 
 
+OPTIONS = ["He talks about moving to London.", "He talks about his first job.", "He talks about a holiday."]
+BUTTON_PAYLOAD = {**LISTENING_PAYLOAD, "gist_options": OPTIONS, "gist_answer": 0}
+
+
+class GistButtonsTest(unittest.TestCase):
+    def test_options_are_shuffled_the_same_way_every_time(self) -> None:
+        llm = FakeLlm({"correct": "Right one.", "distractors": ["Wrong one.", "Other wrong."]})
+        first = generate_gist_options(llm, "excerpt", seed=3)
+        self.assertEqual(first, generate_gist_options(llm, "excerpt", seed=3))
+        options, answer = first
+        self.assertEqual(sorted(options), ["Other wrong.", "Right one.", "Wrong one."])
+        self.assertEqual(options[answer], "Right one.")
+        self.assertEqual(llm.calls[0][1], "gist_options")
+
+    def test_model_failure_falls_back_to_the_typed_gist(self) -> None:
+        llm = MagicMock()
+        llm.chat_json.side_effect = RuntimeError("down")
+        self.assertEqual(generate_gist_options(llm, "x", seed=1), ([], -1))
+
+    def test_card_asks_for_a_tap_and_parts_two_and_three(self) -> None:
+        content = _content(True)
+        import dataclasses
+        html = build_monday_message(dataclasses.replace(content, gist_options=OPTIONS, gist_answer=0))
+        self.assertIn("Tap A, B or C on the card below", html)
+        self.assertIn("reply in one message: 2. the missing words  3. your sentence", html)
+
+    def test_gist_card_before_and_after_the_tap(self) -> None:
+        html = render_gist_card(3, OPTIONS)
+        self.assertIn("<b>【週一聽力】</b>· Gist · Week 3", html)
+        self.assertIn("<b>B.</b> He talks about his first job.", html)
+        answered = render_gist_card(3, OPTIONS, chosen=1, answer=0)
+        self.assertIn("✅ <b>A.</b>", answered)
+        self.assertIn("❌ <b>B.</b>", answered)
+        self.assertIn("The answer is A.", answered)
+
+    def test_first_tap_counts(self) -> None:
+        qdrant = _qdrant(BUTTON_PAYLOAD)
+        embeddings = MagicMock()
+        embeddings.embed.return_value = [0.1]
+        self.assertTrue(record_gist_choice(qdrant, embeddings, "coll", "o", 3, 1, 0))
+        fields = qdrant.upsert_text.call_args.args[3]
+        self.assertEqual((fields["gist_correct"], fields["gist_choice"]), (False, 1))
+        qdrant.scroll_by_filters.side_effect = lambda c, f, limit=64, **kw: (
+            [{"id": "l", "payload": {"gist_choice": 1}}] if f.get("kind") == "listening_check" else []
+        )
+        self.assertFalse(record_gist_choice(qdrant, embeddings, "coll", "o", 3, 0, 0))
+
+    def test_grading_uses_the_button_answer_and_keeps_it(self) -> None:
+        qdrant = _qdrant(BUTTON_PAYLOAD)
+        base = qdrant.scroll_by_filters.side_effect
+        qdrant.scroll_by_filters.side_effect = lambda c, f, limit=64, **kw: (
+            [{"id": "l", "payload": {"gist_choice": 0, "gist_correct": True}}]
+            if f.get("kind") == "listening_check" else base(c, f, limit)
+        )
+        embeddings = MagicMock()
+        embeddings.embed.return_value = [0.1]
+        llm = FakeLlm({"gist_correct": False, "gist_feedback": "", "gist_model": "He moved.",
+                       "dictation_words": ["London", "brother"], "chunk_results": [], "model_answer": ""})
+        html = evaluate_monday_reply(qdrant, embeddings, llm, "coll", "o", 3, [{"phrase": "move on"}], "2. London brother")
+        self.assertIn("✅ Gist — A. He talks about moving to London.", html)
+        self.assertIn("answered separately with a button", llm.calls[0][0])
+        updated = [c.args[2] for c in qdrant.set_payload.call_args_list if c.args[1] == "l"][0]
+        self.assertNotIn("gist_correct", updated)  # the model's placeholder never overwrites the tap
+        self.assertEqual(updated["dictation_correct"], 2)
+
+
 class RecapListeningLineTest(unittest.TestCase):
     def test_score_or_not_answered(self) -> None:
         html = render_weekly_recap(3, {}, [], promoted=[], listening_expected=True,
@@ -177,6 +246,37 @@ class RecapListeningLineTest(unittest.TestCase):
         html = render_weekly_recap(3, {}, [], promoted=[], listening_expected=True, listening=None)
         self.assertIn("<b>Listening</b>\nNot answered this week", html)
         self.assertNotIn("Listening", render_weekly_recap(3, {}, [], promoted=[]))
+
+
+class GatewayGistTest(unittest.TestCase):
+    def test_pending_monday_sends_the_card_and_a_tap_is_recorded(self) -> None:
+        import dataclasses
+        from unittest.mock import patch
+
+        import openclaw_telegram_gateway as gateway
+
+        calls, recorded = [], []
+
+        def fake_telegram(method, payload=None, timeout=60):
+            calls.append((method, payload or {}))
+            return {"result": {"message_id": 4}}
+
+        settings = dataclasses.replace(gateway.settings, english_bot_enabled=True, pending_state_path=None)
+        with patch.object(gateway, "settings", settings), patch.object(gateway, "telegram", fake_telegram), \
+                patch.object(gateway, "read_this_week_payload", lambda q, c, w: BUTTON_PAYLOAD), \
+                patch.object(gateway, "record_gist_choice", lambda *a: recorded.append(a[-2:]) or True):
+            gateway._english_bot_set_pending_answer("5", {"kind": "eng_mon", "week_number": 3})
+            card = [p for m, p in calls if m == "sendMessage"][-1]
+            self.assertIn("【週一聽力】", card["text"])
+            buttons = card["reply_markup"]["inline_keyboard"][0]
+            self.assertEqual([b["text"] for b in buttons], ["A", "B", "C"])
+            gateway.handle_callback_query(
+                {"id": "q", "data": buttons[2]["callback_data"], "message": {"message_id": 4, "chat": {"id": 5}}}
+            )
+        gateway.PENDING_ANSWER.pop(5, None)
+        self.assertEqual(recorded, [(2, 0)])
+        self.assertIn(("answerCallbackQuery", {"callback_query_id": "q", "text": "Not quite -- it's A"}), calls)
+        self.assertIn("The answer is A.", [p for m, p in calls if m == "editMessageText"][-1]["text"])
 
 
 if __name__ == "__main__":

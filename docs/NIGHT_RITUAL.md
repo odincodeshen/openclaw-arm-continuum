@@ -29,6 +29,12 @@ no analysis.
 Cards follow the bots' format: a Chinese title, English content; your own
 answers are shown as you wrote them.
 
+The closing card has an **Add to tomorrow's schedule** button: it saves the
+first thing as a `/mem` item due the next day, tagged `night`, in
+`OPENCLAW_NIGHT_RITUAL_SCHEDULE_COLLECTION` -- another bot's tracker memory
+on the same Qdrant, so it shows in that bot's morning schedule report
+(`/mem upcoming`) -- or this bot's own when that's empty. One tap only.
+
 - **Reminders** at `OPENCLAW_NIGHT_RITUAL_REMINDERS` (default 23:00 and
   23:30, the last one a "last call"), only while the night is still open.
   They say where to pick up (e.g. 2/4).
@@ -50,6 +56,7 @@ card repeats last night's first thing. No ritual last night, no card.
 /night 7d          the last 7 nights in full (up to 31d)
 /night 2026-09-28  one night
 /night start       start or pick up tonight
+/night move 2026-09-29 2026-09-28   re-date a night (the target must be empty)
 /night week        last week's report now · /night month  last month's
 ```
 
@@ -59,7 +66,10 @@ card repeats last night's first thing. No ritual last night, no card.
   (default 07:30): the seven days up to Sunday.
 - **Monthly** (【晚安月報】), on the 1st: the previous month.
 
-Each shows nights done / partly done, up to three highlights, the
+Each shows nights done / partly done, a **Trend** block (the current streak
+of done nights -- a skipped Saturday doesn't break it -- and the share of
+nights done and of first things done, against the week or month before,
+with ↑ / ↓ / →), up to three highlights, the
 improvement that shows up most, the adjustment that keeps coming back,
 how many "first things" were written and done, and a closing line. The
 counts are computed in code; the wording comes from the local model. They
@@ -91,6 +101,7 @@ OPENCLAW_NIGHT_RITUAL_MORNING_TIME=07:05
 OPENCLAW_NIGHT_RITUAL_REPORT_TIME=07:30
 OPENCLAW_NIGHT_RITUAL_PREPARE_TIME=04:00
 OPENCLAW_NIGHT_RITUAL_DIR=/workspace/.openclaw/night
+OPENCLAW_NIGHT_RITUAL_SCHEDULE_COLLECTION=      # e.g. bot1's OPENCLAW_TRACKER_COLLECTION
 ```
 
 Recreate the bot's Telegram container after changing them

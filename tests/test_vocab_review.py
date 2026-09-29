@@ -187,13 +187,105 @@ class GatewayReviewRoutingTest(unittest.TestCase):
         self.assertNotIn(5, gateway.VOCAB_REVIEW_PENDING)
 
     def test_vocab_review_command_opens_a_session(self) -> None:
-        sent = []
+        calls = []
         questions = [{"phrase": "x", "prompt_text": "Q"}]
         with patch.object(gateway, "start_review", lambda *args: questions), \
-                patch.object(gateway, "send_html", lambda chat_id, html: sent.append(html)):
+                patch.object(gateway, "telegram", lambda method, payload=None, timeout=60: calls.append(payload) or {}):
             self.assertTrue(gateway.handle_vocabulary_command(5, "/vocab review"))
         self.assertEqual(gateway.VOCAB_REVIEW_PENDING[5]["questions"], questions)
-        self.assertIn("生字複習", sent[0])
+        self.assertIn("生字複習", calls[0]["text"])
+        self.assertEqual(calls[0]["reply_markup"]["inline_keyboard"][0][0]["callback_data"], "vr:self")
+
+    def test_button_self_check_walks_each_word_and_records_it(self) -> None:
+        questions = [
+            {"phrase": "resilient", "prompt_text": "She is ____.", "point_id": "a", "box": 1,
+             "correct_count": 0, "wrong_count": 0},
+            {"phrase": "chill out", "prompt_text": "Which word means: 放鬆", "point_id": "b", "box": 2,
+             "correct_count": 0, "wrong_count": 0},
+        ]
+        gateway.VOCAB_REVIEW_PENDING[5] = {"questions": questions, "expires_at": time.time() + 60}
+        calls, html_sent = [], []
+        qdrant = MagicMock()
+
+        def fake_telegram(method, payload=None, timeout=60):
+            calls.append((method, payload or {}))
+            return {"result": {"message_id": 10 + len(calls)}}
+
+        def tap(data):
+            gateway.handle_callback_query({"id": "q", "data": data, "message": {"message_id": 9, "chat": {"id": 5}}})
+
+        with patch.object(gateway, "telegram", fake_telegram), patch.object(gateway, "qdrant", qdrant), \
+                patch.object(gateway, "send_html", lambda chat_id, html: html_sent.append(html)), \
+                patch.object(gateway, "_vocab_today", lambda: TODAY):
+            tap("vr:self")
+            self.assertIn("【生字複習 1/2】", [p for m, p in calls if m == "sendMessage"][-1]["text"])
+            self.assertFalse(gateway.handle_vocab_review_answer(5, {"text": "resilient"}))  # typing doesn't answer
+            tap("vr:show:0")
+            revealed = [p for m, p in calls if m == "editMessageText"][-1]
+            self.assertIn("Answer: <b>resilient</b>", revealed["text"])
+            tap("vr:ok:0")
+            tap("vr:ok:0")  # a double tap on the old card is ignored
+            self.assertEqual(qdrant.set_payload.call_count, 1)
+            self.assertIn("【生字複習 2/2】", [p for m, p in calls if m == "sendMessage"][-1]["text"])
+            tap("vr:show:1")
+            tap("vr:no:1")
+        fields = {c.args[1]: c.args[2] for c in qdrant.set_payload.call_args_list}
+        self.assertEqual((fields["a"]["review_box"], fields["b"]["review_box"]), (2, 0))
+        self.assertEqual(fields["b"]["next_review"], "2026-09-28")
+        self.assertNotIn(5, gateway.VOCAB_REVIEW_PENDING)
+        self.assertIn("1 of 2 remembered", html_sent[-1])
+        self.assertIn("❌ chill out", html_sent[-1])
+
+    def test_word_list_remove_buttons(self) -> None:
+        calls = []
+        words = [{"word": "resilient", "display_word": "resilient", "meaning": "堅韌"},
+                 {"word": "chill out", "display_word": "chill out", "meaning": "放鬆"}]
+        removed = []
+
+        def fake_telegram(method, payload=None, timeout=60):
+            calls.append((method, payload or {}))
+            return {"result": {"message_id": 3}}
+
+        def fake_remove(qdrant, collection, owner, word):
+            removed.append((owner, word))
+            words[:] = [w for w in words if w["word"] != word]
+            return True
+
+        def tap(data):
+            gateway.handle_callback_query({"id": "q", "data": data, "message": {"message_id": 3, "chat": {"id": 5}}})
+
+        with patch.object(gateway, "telegram", fake_telegram), \
+                patch.object(gateway, "list_word_list", lambda *a: list(words)), \
+                patch.object(gateway, "count_due_words", lambda *a: 0), \
+                patch.object(gateway, "remove_from_word_list", fake_remove):
+            gateway.handle_vocabulary_command(5, "/vocab")
+            self.assertEqual(calls[-1][1]["reply_markup"]["inline_keyboard"], [[{"text": "Remove words…", "callback_data": "vw:edit"}]])
+            tap("vw:edit")
+            rows = calls[-1][1]["reply_markup"]["inline_keyboard"]
+            self.assertEqual([b["text"] for b in rows[0]], ["✕ resilient", "✕ chill out"])
+            tap(rows[0][1]["callback_data"])
+            self.assertEqual(removed, [("5", "chill out")])
+            edited = [p for m, p in calls if m == "editMessageText"][-1]
+            self.assertIn("1 words", edited["text"])
+            self.assertEqual([b["text"] for b in edited["reply_markup"]["inline_keyboard"][0]], ["✕ resilient"])
+            tap("vw:done")
+            self.assertEqual(calls[-1][1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"], "vw:edit")
+
+    def test_menu_buttons_run_their_command(self) -> None:
+        calls, handled = [], []
+        with patch.object(gateway, "telegram", lambda m, p=None, timeout=60: calls.append((m, p)) or {}), \
+                patch.object(gateway, "handle_message", lambda message: handled.append(message["text"])):
+            gateway.send_menu(5)
+            buttons = [b for row in calls[-1][1]["reply_markup"]["inline_keyboard"] for b in row]
+            labels = [b["text"] for b in buttons]
+            self.assertIn("Word review", labels)  # dictionary on in this test class
+            self.assertEqual(labels[-1], "Help")
+            review = next(b for b in buttons if b["text"] == "Word review")
+            gateway.handle_callback_query({"id": "q", "data": review["callback_data"],
+                                           "message": {"message_id": 1, "chat": {"id": 5}}})
+            gateway.handle_callback_query({"id": "q", "data": "menu:/cron add daily 01:00 x :: y",
+                                           "message": {"message_id": 1, "chat": {"id": 5}}})
+        self.assertEqual(handled, ["/vocab review"])  # only listed commands can be run from a button
 
     def test_daily_card_gets_the_reminder_for_that_owner(self) -> None:
         sent = []

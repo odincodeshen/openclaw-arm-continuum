@@ -8,7 +8,7 @@ first.
 | **L0** static + unit | `tests/`, `scripts/ci_validate.py` | every PR (`ci.yml`) | nothing | ~2 min |
 | **L1** contract / golden | `tests/test_golden.py` | every PR (in the L0 `pytest` run) | nothing | seconds |
 | **L2** integration scenarios | `tests/test_scenarios_integration.py` | every PR (`integration.yml`) | Qdrant | ~1 min |
-| **L3** full functional e2e | (planned) `scripts/e2e_run.py` | tag / manual | GB10 + real models | ~15 min |
+| **L3** full functional e2e | `scripts/e2e_run.py` | manual (on the host) | GB10 + real models | ~1 min |
 
 ## Running locally
 
@@ -98,6 +98,7 @@ one layer that fails if it breaks.
 | Monday listening check: deterministic 3-gap dictation (spread content words, never chunk words), one-call gist + dictation extraction + chunk judging, typo-tolerant grading, transcript reveal, weekly-recap Listening line, older weeks keep the chunk-only path | `test_monday_listening` | — | dictation chosen from the real week-2 transcript; first live Monday 2026-10-05 |
 | Operator alerts (cron job failure, lasting Gateway outage, preparation failure, English scheduler error, watcher scan/index failure; cooldown + one "recovered") | `test_alerts` | — | test alert delivered on bot4 |
 | Weekly `/rag digest week` (7 days up to yesterday, weekly jobs prepared off-peak on their day), Monday clip as a voice message (Opus), `/vocab export` (Anki TSV), host container watchdog (crash restart / restarting / unhealthy / reboot; manual restart and stopped containers stay quiet) | `test_daily_reports`, `test_cron_worker`, `test_send_audio::SendVoiceAndDocumentTest`, `test_vocabulary::AnkiExportTest`, `test_watchdog` | — | Opus clip encoded in `openclaw-whisper`; bot2/bot3 jobs switched to Sunday; watchdog run live against the host's containers |
+| Buttons: `/vocab review` self-check (Show answer → Remembered / Forgot, one box move per tap), `/vocab` Remove words…, Monday gist A/B/C (first tap counts, model placeholder never overwrites it), `/menu` (only listed commands run); night ritual trend (streak, vs previous period), Add to tomorrow's schedule (into another bot's tracker memory), `/night move`; `/cat merge` moves PDFs and drops duplicates; an upload waiting for its category survives a restart; watchdog weekly summary | `test_vocab_review`, `test_monday_listening::GistButtonsTest`, `::GatewayGistTest`, `test_night_ritual`, `test_category_gateway`, `test_pending_state`, `test_watchdog` | — | `scripts/e2e_run.py` 10/10 on bot2 |
 | Night ritual: four single questions (text/voice), yesterday's first-thing check by button, closing card with a local-model line, 23:00/23:30 reminders only while open, midnight partial/missed, Saturday skipped, `/night start` early, morning first-thing card, weekly/monthly reports prepared off-peak with a Markdown copy, open night survives a restart | `test_night_ritual` | — | enabled on bot2 2026-09-29; first live night that evening |
 | Inline-button category picker (existing categories, + New category with force-reply, Cancel, buttons closed on file/cancel/expiry, bare `cancel`), `/cat delete` with a confirm card, one-word category names (legacy multi-word names still resolve) | `test_category_gateway::CategoryPickerTest`, `::CategoryDeleteTest`, `::CategoryRenameCommandTest` | — | picker, New category and filing tried on bot2 |
 | `/cat rename` / `/cat merge` | `test_categories`, `test_category_gateway`, `test_qdrant_client` | `TrackerMemoryManagementScenario::test_delete_collection_against_real_qdrant` | full merge round trip with real ingest |
@@ -125,10 +126,24 @@ one layer that fails if it breaks.
 | `bin/openclawctl` | `test_openclawctl` | — | real `docker compose` on a host |
 | Command menu / `/help` consistency | `test_golden` | — | — |
 
-## L3 -- planned
+## L3 -- `scripts/e2e_run.py`
 
-Same scenario definitions, real vLLM + Ollama + Qdrant on the GB10 self-hosted
-runner, plus quality assertions a fake can't make (the VLM actually reads an
-image; the router classifies correctly). Triggered by `workflow_dispatch` and
-on `v*` tags; produces an `e2e-report.md` artifact that gates the GitHub
-Release.
+Runs inside a bot's Telegram container against that bot's real vLLM,
+embedding model, Qdrant, Whisper, Gateway and Telegram token, using only
+throwaway collections and a temporary inbox (deleted afterwards). It sends
+no Telegram messages -- only a read-only `getMe`.
+
+```bash
+docker exec -i openclaw-telegram-<bot> python3 - < scripts/e2e_run.py
+docker exec -i openclaw-telegram-<bot> python3 - --out /workspace/e2e-report.md < scripts/e2e_run.py
+```
+
+Checks: model reply, embeddings, category RAG (ingest, isolation,
+`Sources:`), knowledge RAG, `/mem` write + `upcoming` + `list`, Whisper and
+Gateway reachability, Telegram `getMe`, the night ritual's closing line and
+weekly summary (English, not the fallback) and Monday's gist options (three,
+with an answer). Prints a Markdown table; exit code 1 if anything failed.
+First run 2026-09-29 on bot2: 10/10 passed.
+
+Still planned: running it from a GB10 self-hosted runner on `v*` tags, and
+the VLM image and intent-router quality checks.

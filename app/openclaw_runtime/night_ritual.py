@@ -135,6 +135,20 @@ class NightStore:
             return None  # only the latest earlier night is asked about
         return None
 
+    def move(self, owner: str, source: date, target: date) -> dict:
+        """Re-date a night, e.g. one answered about the previous day. Refuses
+        to overwrite an existing night."""
+        entry = self.load(owner, source)
+        if entry is None:
+            raise ValueError(f"no night recorded on {source.isoformat()}")
+        if self.load(owner, target) is not None:
+            raise ValueError(f"{target.isoformat()} already has a night")
+        entry["date"] = target.isoformat()
+        entry["moved_from"] = source.isoformat()
+        self.save(owner, entry)
+        self._path(owner, source).unlink(missing_ok=True)
+        return entry
+
     def write_report(self, owner: str, name: str, markdown: str) -> Path:
         path = self.root / str(owner) / "reports" / f"{name}.md"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -272,7 +286,7 @@ def render_history(entries_by_day: dict[date, dict], days: list[date], ritual_da
                 lines.append(f"{SHORT_LABELS[step]}: {esc(value)}")
         if entry.get("first_done") is not None:
             lines.append(f"First done: {'✅' if entry['first_done'] else '❌'}")
-    lines += ["", "<i>/night 7d · /night 2026-09-28 · /night start · /night week · /night month</i>"]
+    lines += ["", "<i>/night 7d · /night 2026-09-28 · /night start · /night week · /night month · /night move</i>"]
     return "\n".join(lines)
 
 
@@ -384,11 +398,72 @@ def period_stats(entries_by_day: dict[date, dict], start: date, end: date, ritua
     )
 
 
+@dataclass(frozen=True)
+class Trend:
+    streak: int  # ritual nights done in a row, ending with the period's last one
+    done_rate: float | None
+    previous_done_rate: float | None
+    first_rate: float | None
+    previous_first_rate: float | None
+
+
+def _rate(part: int, whole: int) -> float | None:
+    return part / whole if whole else None
+
+
+def current_streak(store: "NightStore", owner: str, end: date, ritual_days: set[int], max_days: int = 400) -> int:
+    """Done nights in a row, counting back from end over ritual days only
+    (a skipped Saturday doesn't break it; a partial or missed night does)."""
+    streak = 0
+    day = end
+    for _ in range(max_days):
+        if day.weekday() in ritual_days:
+            entry = store.load(owner, day)
+            if not entry or entry.get("status") != "done":
+                break
+            streak += 1
+        day -= timedelta(days=1)
+    return streak
+
+
+def compute_trend(stats: PeriodStats, previous: PeriodStats, streak: int) -> Trend:
+    return Trend(
+        streak=streak,
+        done_rate=_rate(stats.done, stats.nights),
+        previous_done_rate=_rate(previous.done, previous.nights),
+        first_rate=_rate(stats.first_done, stats.first_done + stats.first_not_done),
+        previous_first_rate=_rate(previous.first_done, previous.first_done + previous.first_not_done),
+    )
+
+
+def _trend_line(label: str, now: float | None, before: float | None, previous_name: str) -> str | None:
+    if now is None:
+        return None
+    text = f"{label}: {round(now * 100)}%"
+    if before is None:
+        return text
+    arrow = "↑" if now > before + 0.005 else ("↓" if now < before - 0.005 else "→")
+    return f"{text} ({previous_name} {round(before * 100)}%) {arrow}"
+
+
+def trend_lines(trend: Trend, kind: str) -> list[str]:
+    previous_name = "last week" if kind == "week" else "last month"
+    lines = [f"Streak: {trend.streak} night{'s' if trend.streak != 1 else ''} in a row"]
+    for line in (
+        _trend_line("Nights done", trend.done_rate, trend.previous_done_rate, previous_name),
+        _trend_line("First things done", trend.first_rate, trend.previous_first_rate, previous_name),
+    ):
+        if line:
+            lines.append(line)
+    return lines
+
+
 def _period_label(start: date, end: date) -> str:
     return f"{start.day} {start.strftime('%b')} – {end.day} {end.strftime('%b')}"
 
 
-def render_report(kind: str, start: date, end: date, stats: PeriodStats, summary: ReportSummary) -> str:
+def render_report(kind: str, start: date, end: date, stats: PeriodStats, summary: ReportSummary,
+                  trend: Trend | None = None) -> str:
     """kind: "week" or "month"."""
     zh = "晚安週報" if kind == "week" else "晚安月報"
     label = _period_label(start, end) if kind == "week" else start.strftime("%B %Y")
@@ -399,6 +474,8 @@ def render_report(kind: str, start: date, end: date, stats: PeriodStats, summary
     if stats.partial:
         done_text += f" · {stats.partial} partly"
     lines.append(done_text)
+    if trend is not None:
+        lines += ["", bold("Trend")] + [esc(line) for line in trend_lines(trend, kind)]
     if summary.highlights:
         lines += ["", bold("Highlights")] + [f"• {esc(item)}" for item in summary.highlights]
     if summary.growing:
@@ -416,7 +493,7 @@ def render_report(kind: str, start: date, end: date, stats: PeriodStats, summary
 
 
 def render_report_markdown(kind: str, start: date, end: date, stats: PeriodStats, summary: ReportSummary,
-                           entries: list[dict]) -> str:
+                           entries: list[dict], trend: Trend | None = None) -> str:
     title = "Night ritual — week of " + _period_label(start, end) if kind == "week" else (
         "Night ritual — " + start.strftime("%B %Y")
     )
@@ -425,6 +502,8 @@ def render_report_markdown(kind: str, start: date, end: date, stats: PeriodStats
     if stats.first_written:
         lines.append(f"- First things: {stats.first_written} written, {stats.first_done} done, "
                      f"{stats.first_not_done} not yet")
+    if trend is not None:
+        lines += [f"- {line}" for line in trend_lines(trend, kind)]
     if summary.highlights:
         lines += ["", "## Highlights", ""] + [f"- {item}" for item in summary.highlights]
     if summary.growing:
@@ -473,9 +552,15 @@ def build_report(llm, store: NightStore, owner: str, kind: str, report_day: date
     entries = store.between(owner, start, end)
     by_day = {date.fromisoformat(e["date"]): e for e in entries}
     stats = period_stats(by_day, start, end, ritual_days, report_day)
+    previous_start, previous_end = report_period(kind, start)
+    previous_entries = store.between(owner, previous_start, previous_end)
+    previous = period_stats(
+        {date.fromisoformat(e["date"]): e for e in previous_entries}, previous_start, previous_end, ritual_days, report_day
+    )
+    trend = compute_trend(stats, previous, current_streak(store, owner, end, ritual_days))
     summary = summarize_period(llm, entries, "week" if kind == "week" else "month")
-    html = render_report(kind, start, end, stats, summary)
-    markdown = render_report_markdown(kind, start, end, stats, summary, entries)
+    html = render_report(kind, start, end, stats, summary, trend)
+    markdown = render_report_markdown(kind, start, end, stats, summary, entries, trend)
     name = f"week-{start.isoformat()}" if kind == "week" else f"month-{start.strftime('%Y-%m')}"
     store.write_report(owner, name, markdown)
     return html, markdown

@@ -41,6 +41,8 @@ not attached as a note. If you want a note, use the caption shortcut instead.
 
 - `/cancel`, the **Cancel** button, or a bare `cancel` / `skip` drops a
   waiting file (a document then goes to the general knowledge base).
+- A file waiting for its category survives a restart of the bot
+  (it's saved with the other open tasks, `OPENCLAW_PENDING_STATE_PATH`).
 - If you don't answer within `OPENCLAW_CATEGORY_PENDING_TTL_SECONDS`
   (default 10 min), a waiting document is filed into the general knowledge
   base automatically.
@@ -173,8 +175,11 @@ still resolves to the same category after a rename (it just reports the new
 display name back) -- renaming doesn't break old references, it only changes
 what's shown.
 
-`/cat merge <source> <target>` moves every file from `<source>` into
-`<target>`'s inbox directory (updating each `.meta.json` sidecar), deletes
+`/cat merge <source> <target>` moves every document (PDFs, Markdown, text,
+and photos' descriptions with their media) from `<source>` into `<target>`'s
+inbox directory (updating each `.meta.json` sidecar) -- a document whose
+bytes are already in `<target>` is dropped instead of copied, so the same
+file is never indexed twice -- then deletes
 `<source>`'s Qdrant collection, and removes it from the registry. The moved
 files are picked up by the memory watcher's next poll (~10s) and indexed
 fresh into `<target>` -- merge does not copy Qdrant points directly, so

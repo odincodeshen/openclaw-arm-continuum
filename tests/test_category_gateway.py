@@ -279,6 +279,7 @@ class CategoryDeleteTest(CategoryGatewayTestBase):
         (folder / "media").mkdir(parents=True)
         (folder / "a.md").write_text("x", encoding="utf-8")
         (folder / "a.md.meta.json").write_text("{}", encoding="utf-8")
+        (folder / "b.pdf").write_bytes(b"%PDF")
 
     def _confirm_card(self) -> dict:
         gateway.handle_category_command(42, "/cat delete :cancel")
@@ -291,7 +292,7 @@ class CategoryDeleteTest(CategoryGatewayTestBase):
 
     def test_asks_first_with_the_size(self) -> None:
         card = self._confirm_card()
-        self.assertIn("#:cancel · 1 file, 12 chunks", card["text"])
+        self.assertIn("#:cancel · 2 files, 12 chunks", card["text"])
         self.assertTrue(gateway.category_dir(self.entry["slug"]).is_dir())
         self.qdrant.delete_collection.assert_not_called()
 
@@ -843,6 +844,26 @@ class CategoryMergeCommandTest(CategoryGatewayTestBase):
         self.assertFalse(categories.resolve_category(self.settings, "trip")["known"])
         self.assertEqual(self.fake_qdrant.deleted, [from_entry["collection"]])
 
+    def test_merge_moves_pdfs_and_drops_duplicates(self) -> None:
+        from_entry = categories.upsert_registry_entry(self.settings, "cancel")
+        into_entry = categories.upsert_registry_entry(self.settings, "aitool")
+        from_dir = self.inbox / "categories" / from_entry["slug"]
+        into_dir = self.inbox / "categories" / into_entry["slug"]
+        from_dir.mkdir(parents=True)
+        into_dir.mkdir(parents=True)
+        (into_dir / "20260928-222552-Life.pdf").write_bytes(b"%PDF same")
+        (from_dir / "20260928-221810-Life.pdf").write_bytes(b"%PDF same")  # uploaded twice
+        (from_dir / "20260928-221810-Life.pdf.meta.json").write_text("{}", encoding="utf-8")
+        (from_dir / "20260929-070000-Other.pdf").write_bytes(b"%PDF other")
+
+        gateway.handle_category_command(100, "/cat merge cancel aitool")
+        self.assertTrue(self._wait_for_send("Merged"))
+        self.assertEqual(sorted(p.name for p in into_dir.glob("*.pdf")),
+                         ["20260928-222552-Life.pdf", "20260929-070000-Other.pdf"])
+        self.assertTrue((into_dir / "20260929-070000-Other.pdf.meta.json").exists())
+        self.assertFalse(from_dir.exists())
+        self.assertTrue(any("1 file(s). 1 duplicate file(s)" in t for _, t in self.sent))
+
     def test_merge_unknown_source_or_target(self) -> None:
         categories.upsert_registry_entry(self.settings, "trip")
         gateway.handle_category_command(100, "/cat merge ghost trip")
@@ -866,7 +887,7 @@ class CategoryMergeCommandTest(CategoryGatewayTestBase):
         from_entry = categories.upsert_registry_entry(self.settings, "empty-cat")
         categories.upsert_registry_entry(self.settings, "target-cat")
         gateway.handle_category_command(100, "/cat merge empty-cat target-cat")
-        self.assertTrue(self._wait_for_send("had no files to move"))
+        self.assertTrue(self._wait_for_send("had no new files to move"))
         self.assertFalse(categories.resolve_category(self.settings, "empty-cat")["known"])
         self.assertEqual(self.fake_qdrant.deleted, [from_entry["collection"]])
         self.assertTrue(categories.resolve_category(self.settings, "target-cat")["known"])
