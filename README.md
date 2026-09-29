@@ -34,6 +34,9 @@ Copy-paste ready Telegram examples are in [`examples/`](examples/).
 - Optional English-learning coach bot: a daily speaking/listening task with
   voice evaluation, plus word lookup and spaced-repetition review
   (`docs/ENGLISH_BOT.md`, `docs/DICTIONARY.md`).
+- Optional night ritual: a four-question wind-down journal at 22:30 with a
+  morning "first thing" card and weekly/monthly reports, kept only on the
+  host (`docs/NIGHT_RITUAL.md`).
 - Optional video summary relay for bare YouTube links
   (`docs/VIDEO_SUMMARY_RELAY.md`).
 - English use-case guide and copy-paste ready Telegram examples.
@@ -227,6 +230,7 @@ Main commands:
 /tasks    inspect recent task history
 /w        look up a word (English-learning bot only, see docs/DICTIONARY.md)
 /vocab    word list and spaced-repetition review (English-learning bot only)
+/night    night ritual: start, history, reports (when enabled, see docs/NIGHT_RITUAL.md)
 ```
 
 Plain chat keeps the last few turns as context, folding older turns into a

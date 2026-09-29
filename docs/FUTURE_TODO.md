@@ -170,7 +170,9 @@ v1.2 baseline. What has actually shipped since then:
   `/vocab export` sends the word list as an Anki import file. Filing an
   upload is a tap: the category prompt lists existing categories as inline
   buttons (+ New category, Cancel); `/cat delete` removes a category after a
-  confirm button; new category names are one word.
+  confirm button; new category names are one word. bot2 gained a night
+  ritual (`docs/NIGHT_RITUAL.md`): four questions at 22:30, a morning
+  first-thing card, weekly and monthly reports, all kept on the host.
 
 Still open, re-baselined against v1.21:
 

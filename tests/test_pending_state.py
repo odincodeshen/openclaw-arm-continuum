@@ -53,7 +53,9 @@ class PendingStatePersistenceTest(unittest.TestCase):
     def test_file_holds_both_kinds_keyed_by_chat_id(self) -> None:
         gateway.set_pending_answer(7, {"kind": "eng_fri", "week_number": 2})
         data = json.loads(self.path.read_text(encoding="utf-8"))
-        self.assertEqual(data, {"english_task": {"7": {"kind": "eng_fri", "week_number": 2}}, "vocab_review": {}})
+        self.assertEqual(
+            data, {"english_task": {"7": {"kind": "eng_fri", "week_number": 2}}, "vocab_review": {}, "night": {}}
+        )
 
     def test_unreadable_file_is_ignored(self) -> None:
         self.path.parent.mkdir(parents=True)

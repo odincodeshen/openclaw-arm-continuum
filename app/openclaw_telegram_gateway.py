@@ -11,7 +11,8 @@ import time
 import traceback
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+from datetime import time as dt_time
 from zoneinfo import ZoneInfo
 
 from openclaw_runtime.audio_clip_client import AudioClipClient
@@ -38,6 +39,7 @@ from openclaw_runtime.cron_jobs import (
     describe_job,
     get_job,
     load_jobs,
+    validate_time,
 )
 from openclaw_runtime.gateway_cron import (
     GatewayCronError,
@@ -81,6 +83,23 @@ from openclaw_runtime.llm_client import VLLM_NOT_READY_MESSAGE
 from openclaw_runtime.alerts import Alerter
 from openclaw_runtime.dictionary import LocalDictionary
 from openclaw_runtime.message_cards import RULE, esc, html_to_plain, split_html_message
+from openclaw_runtime.night_ritual import (
+    NightStore,
+    build_report,
+    close_status,
+    closing_line,
+    new_entry,
+    next_step,
+    parse_ritual_days,
+    render_closing,
+    render_first_check,
+    render_first_check_answered,
+    render_history,
+    render_morning,
+    render_question,
+    render_reminder,
+    reports_due,
+)
 from openclaw_runtime.model_catalog import load_model_registry
 from openclaw_runtime.model_client_factory import ModelClientFactory
 from openclaw_runtime.qdrant_client import QdrantClient
@@ -215,7 +234,9 @@ def save_pending_state() -> None:
         english = {str(chat_id): item for chat_id, item in PENDING_ANSWER.items()}
     with VOCAB_REVIEW_LOCK:
         reviews = {str(chat_id): item for chat_id, item in VOCAB_REVIEW_PENDING.items()}
-    data = {"english_task": english, "vocab_review": reviews}
+    with NIGHT_LOCK:
+        night = {str(chat_id): item for chat_id, item in NIGHT_PENDING.items()}
+    data = {"english_task": english, "vocab_review": reviews, "night": night}
     try:
         with PENDING_SAVE_LOCK:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -248,7 +269,12 @@ def restore_pending_state() -> None:
                 if float(v.get("expires_at") or 0) > now
             }
         )
-    log(f"[pending] restored english_task={len(PENDING_ANSWER)} vocab_review={len(VOCAB_REVIEW_PENDING)}")
+    with NIGHT_LOCK:
+        NIGHT_PENDING.update({int(k): v for k, v in (data.get("night") or {}).items()})
+    log(
+        f"[pending] restored english_task={len(PENDING_ANSWER)} vocab_review={len(VOCAB_REVIEW_PENDING)} "
+        f"night={len(NIGHT_PENDING)}"
+    )
 
 # (chat_id, media_group_id) -> {"paths": [Path], "caption": str, "timer": Timer}
 # Telegram delivers a multi-photo album as separate messages that share one
@@ -793,6 +819,9 @@ def handle_callback_query(query: dict) -> None:
     if not chat_id or (settings.telegram_allowed_chat_ids and chat_id not in settings.telegram_allowed_chat_ids):
         log(f"[telegram] rejected callback chat_id={chat_id}")
         answer()
+        return
+    if data.startswith(NIGHT_CALLBACK_PREFIX):
+        handle_night_callback(chat_id, message_id, data, answer)
         return
     if not settings.category_rag_enabled or not data.startswith("cat"):
         answer()
@@ -1834,7 +1863,11 @@ Get your word list as a file to import into Anki (File > Import)."""
 
 
 def help_text() -> str:
-    return HELP_TEXT + (DICTIONARY_HELP_TEXT if settings.dictionary_enabled else "")
+    return (
+        HELP_TEXT
+        + (DICTIONARY_HELP_TEXT if settings.dictionary_enabled else "")
+        + (NIGHT_HELP_TEXT if settings.night_ritual_enabled else "")
+    )
 
 
 # /vocab review sessions waiting for a typed answer, kept apart from
@@ -2340,6 +2373,8 @@ def setup_bot_commands() -> None:
             {"command": "w", "description": "Look up a word (added to your word list)"},
             {"command": "vocab", "description": "Show your word list"},
         ]
+    if settings.night_ritual_enabled:
+        commands.insert(1, {"command": "night", "description": "Night ritual: start, history, reports"})
     telegram("setMyCommands", {"commands": commands}, timeout=20)
 
 
@@ -2416,6 +2451,10 @@ def handle_message(message: dict) -> None:
             log(f"[category] sweep error: {exc}")
 
     try:
+        if night_command(chat_id, text):
+            return
+        if handle_night_reply(chat_id, message):
+            return
         if handle_vocab_review_answer(chat_id, message):
             return
         if handle_bare_word_lookup(chat_id, message):
@@ -2541,6 +2580,379 @@ def handle_message(message: dict) -> None:
     log(f"[telegram] chat_id={chat_id} text_chars={len(text)}")
     worker = threading.Thread(target=handle_text_message, args=(chat_id, text), daemon=True)
     worker.start()
+
+
+# --- Night ritual (bot2) -----------------------------------------------------
+# One owner, one open night at a time: chat_id -> {"date": "YYYY-MM-DD",
+# "step": "check" | "wins" | "better" | "adjust" | "first"}. Saved with the
+# other open tasks so a restart mid-ritual picks up at the same question.
+NIGHT_PENDING: dict[int, dict] = {}
+NIGHT_LOCK = threading.Lock()
+# serializes answers so two quick messages can't both claim the same step
+NIGHT_ANSWER_LOCK = threading.Lock()
+NIGHT_CALLBACK_PREFIX = "night_first:"
+NIGHT_HELP_TEXT = """
+Night ritual (22:30, Sun-Fri):
+/night            Recent nights and the latest entry
+/night start      Start (or pick up) tonight's four questions now
+/night 7d         The last 7 nights in full
+/night 2026-09-28 One night
+/night week       Last week's report · /night month  last month's
+"""
+
+
+def night_store() -> NightStore:
+    return NightStore(settings.night_ritual_dir)
+
+
+def _night_tz() -> ZoneInfo:
+    return ZoneInfo(settings.night_ritual_timezone)
+
+
+def _night_now() -> datetime:
+    return datetime.now(_night_tz())
+
+
+def _night_ritual_days() -> set[int]:
+    return parse_ritual_days(settings.night_ritual_days)
+
+
+def is_night_owner(chat_id: int) -> bool:
+    return settings.night_ritual_enabled and settings.night_ritual_owner == chat_id
+
+
+def _set_night_pending(chat_id: int, item: dict | None) -> None:
+    with NIGHT_LOCK:
+        if item is None:
+            NIGHT_PENDING.pop(chat_id, None)
+        else:
+            NIGHT_PENDING[chat_id] = item
+    save_pending_state()
+
+
+def _peek_night_pending(chat_id: int) -> dict | None:
+    with NIGHT_LOCK:
+        item = NIGHT_PENDING.get(chat_id)
+        return dict(item) if item else None
+
+
+def _send_night_question(chat_id: int, step: str) -> None:
+    send_html(chat_id, render_question(step))
+
+
+def _send_first_check(chat_id: int, previous: dict) -> None:
+    data = NIGHT_CALLBACK_PREFIX + "{}:" + previous["date"]
+    markup = {
+        "inline_keyboard": [
+            [{"text": "✅ Done", "callback_data": data.format("y")}, {"text": "❌ Not yet", "callback_data": data.format("n")}]
+        ]
+    }
+    telegram(
+        "sendMessage",
+        {"chat_id": chat_id, "text": render_first_check(previous), "parse_mode": "HTML", "reply_markup": markup},
+    )
+
+
+def start_night(chat_id: int, *, manual: bool) -> bool:
+    """Open tonight's ritual (or pick it up where it stopped). Returns False
+    when tonight is already done."""
+    store = night_store()
+    owner = str(chat_id)
+    today = _night_now().date()
+    entry = store.load(owner, today)
+    if entry and entry.get("status") == "done":
+        if manual:
+            send_message(chat_id, "Tonight's wind-down is already done. /night shows it.")
+        return False
+    if entry is None:
+        entry = new_entry(today, _night_now().isoformat())
+    entry["status"] = "open"
+    store.save(owner, entry)
+    previous = None if entry.get("checked_previous") else store.previous_to_check(owner, today)
+    if previous is not None:
+        _set_night_pending(chat_id, {"date": today.isoformat(), "step": "check"})
+        _send_first_check(chat_id, previous)
+    else:
+        step = next_step(entry) or "first"
+        _set_night_pending(chat_id, {"date": today.isoformat(), "step": step})
+        _send_night_question(chat_id, step)
+    log(f"[night] started date={today} manual={manual}")
+    return True
+
+
+def handle_night_callback(chat_id: int, message_id: int | None, data: str, answer) -> None:
+    if not is_night_owner(chat_id):
+        answer()
+        return
+    try:
+        _, flag, day_text = data.split(":", 2)
+        previous_day = date.fromisoformat(day_text)
+    except ValueError:
+        answer()
+        return
+    store = night_store()
+    owner = str(chat_id)
+    previous = store.load(owner, previous_day)
+    if previous is None:
+        answer()
+        return
+    done = flag == "y"
+    previous["first_done"] = done
+    store.save(owner, previous)
+    answer("Noted")
+    if message_id:
+        _edit_card(chat_id, message_id, render_first_check_answered(previous, done))
+    pending = _peek_night_pending(chat_id)
+    if not pending or pending.get("step") != "check":
+        return
+    tonight = store.load(owner, date.fromisoformat(pending["date"])) or new_entry(
+        date.fromisoformat(pending["date"]), _night_now().isoformat()
+    )
+    tonight["checked_previous"] = True
+    store.save(owner, tonight)
+    step = next_step(tonight) or "first"
+    _set_night_pending(chat_id, {"date": pending["date"], "step": step})
+    _send_night_question(chat_id, step)
+
+
+def _night_answer(chat_id: int, text: str) -> None:
+    with NIGHT_ANSWER_LOCK:
+        pending = _peek_night_pending(chat_id)
+        if not pending or pending.get("step") in (None, "check"):
+            return
+        store = night_store()
+        owner = str(chat_id)
+        day = date.fromisoformat(pending["date"])
+        entry = store.load(owner, day) or new_entry(day, _night_now().isoformat())
+        entry.setdefault("answers", {})[pending["step"]] = text.strip()
+        following = next_step(entry)
+        if following is not None:
+            store.save(owner, entry)
+            _set_night_pending(chat_id, {"date": pending["date"], "step": following})
+            _send_night_question(chat_id, following)
+            return
+        entry["status"] = "done"
+        entry["completed_at"] = _night_now().isoformat()
+        store.save(owner, entry)
+        _set_night_pending(chat_id, None)
+    closing = closing_line(llm, entry)
+    entry["closing"] = closing
+    store.save(owner, entry)
+    send_html(chat_id, render_closing(entry, closing))
+    log(f"[night] done date={entry['date']}")
+
+
+def handle_night_reply(chat_id: int, message: dict) -> bool:
+    """Text or voice while tonight's ritual is open is the answer to the
+    current question. Commands pass through untouched."""
+    if not is_night_owner(chat_id):
+        return False
+    pending = _peek_night_pending(chat_id)
+    if not pending:
+        return False
+    voice = message.get("voice") or message.get("audio")
+    text = (message.get("text") or "").strip()
+    if not voice and not text:
+        return False
+    if text.startswith("/"):
+        return False
+    if pending.get("step") == "check":
+        send_message(chat_id, "Tap ✅ or ❌ on the card above first.")
+        return True
+    if not voice:
+        threading.Thread(target=_night_answer, args=(chat_id, text), daemon=True).start()
+        return True
+    file_id = voice.get("file_id")
+    if not file_id:
+        return False
+    file_info = telegram_file_info(file_id)
+    suffix = extension_from_file_path(file_info.get("file_path", ""), voice.get("mime_type"), ".ogg")
+    target = unique_path(settings.inbox_path / "audio" / "telegram", f"{timestamp()}-night{suffix}")
+    downloaded_path, _ = download_telegram_file(file_id, target)
+
+    def transcribe_and_answer() -> None:
+        try:
+            transcript = transcriber.transcribe(downloaded_path)
+        except Exception as exc:  # noqa: BLE001
+            log(f"[night] transcription error: {exc}")
+            send_message(chat_id, "Couldn't transcribe that voice message -- try again, or type it.")
+            return
+        finally:
+            downloaded_path.unlink(missing_ok=True)  # the diary keeps the text, not the recording
+        if not transcript.strip():
+            send_message(chat_id, "Didn't catch any words in that one -- try again, or type it.")
+            return
+        _night_answer(chat_id, transcript)
+
+    threading.Thread(target=transcribe_and_answer, daemon=True).start()
+    return True
+
+
+def close_stale_night(now: datetime) -> None:
+    """At midnight an unfinished night is saved as it is: partial if some
+    questions were answered, missed if none."""
+    owner_id = settings.night_ritual_owner
+    pending = _peek_night_pending(owner_id) if owner_id else None
+    if not pending or date.fromisoformat(pending["date"]) >= now.date():
+        return
+    store = night_store()
+    day = date.fromisoformat(pending["date"])
+    entry = store.load(str(owner_id), day) or new_entry(day, now.isoformat())
+    entry["status"] = close_status(entry)
+    store.save(str(owner_id), entry)
+    _set_night_pending(owner_id, None)
+    log(f"[night] closed date={day} status={entry['status']}")
+
+
+def night_command(chat_id: int, text: str) -> bool:
+    if text != "/night" and not text.startswith("/night "):
+        return False
+    if not is_night_owner(chat_id):
+        send_message(chat_id, "The night ritual isn't set up for this chat.")
+        return True
+    arg = text[len("/night"):].strip().lower()
+    store = night_store()
+    owner = str(chat_id)
+    today = _night_now().date()
+    ritual_days = _night_ritual_days()
+    if arg == "start":
+        start_night(chat_id, manual=True)
+        return True
+    if arg in ("week", "month"):
+        send_message(chat_id, f"Putting together the {arg} report…")
+
+        def report() -> None:
+            html, _ = build_report(llm, store, owner, arg, today, ritual_days)
+            send_html(chat_id, html)
+
+        threading.Thread(target=report, daemon=True).start()
+        return True
+    days_back = 7
+    detail_days: list[date]
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", arg):
+        try:
+            detail_days = [date.fromisoformat(arg)]
+        except ValueError:
+            send_message(chat_id, "Use /night YYYY-MM-DD, e.g. /night 2026-09-28.")
+            return True
+    elif re.fullmatch(r"\d{1,2}d", arg):
+        days_back = max(1, min(31, int(arg[:-1])))
+        detail_days = [today - timedelta(days=n) for n in range(days_back)]
+    elif arg:
+        send_message(chat_id, NIGHT_HELP_TEXT.strip())
+        return True
+    else:
+        detail_days = []
+    days = [today - timedelta(days=n) for n in range(days_back - 1, -1, -1)]
+    entries = {d: e for d in days + detail_days if (e := store.load(owner, d))}
+    if detail_days:
+        detail = [entries[d] for d in detail_days if d in entries]
+    else:
+        latest = [entries[d] for d in sorted(entries, reverse=True) if any((entries[d].get("answers") or {}).values())]
+        detail = latest[:1]
+    send_html(chat_id, render_history(entries, days, ritual_days, today, detail=detail))
+    return True
+
+
+def _hhmm(text: str):
+    hour, minute = validate_time(text).split(":")
+    return dt_time(int(hour), int(minute))
+
+
+def _night_state_path() -> Path:
+    return settings.night_ritual_dir / "state.json"
+
+
+def _load_night_state() -> dict:
+    try:
+        return json.loads(_night_state_path().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _save_night_state(state: dict) -> None:
+    path = _night_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
+
+
+def night_tick(now: datetime, state: dict) -> None:
+    """One pass of the night-ritual schedule. Each step fires once a day
+    (tracked in state) and only inside its window, so a restart never
+    replays an old reminder or a stale morning card."""
+    owner_id = settings.night_ritual_owner
+    owner = str(owner_id)
+    today = now.date()
+    iso = today.isoformat()
+    clock = now.time()
+    ritual_days = _night_ritual_days()
+    store = night_store()
+
+    close_stale_night(now)
+
+    reminders = [_hhmm(t) for t in settings.night_ritual_reminder_times.split(",") if t.strip()]
+    last_start = reminders[-1] if reminders else dt_time(23, 59)
+    start = _hhmm(settings.night_ritual_start_time)
+    if today.weekday() in ritual_days and start <= clock < last_start and state.get("started") != iso:
+        state["started"] = iso
+        pending = _peek_night_pending(owner_id)
+        if not (pending and pending.get("date") == iso):
+            start_night(owner_id, manual=False)
+
+    for index, at in enumerate(reminders):
+        key = f"reminder{index}"
+        end = reminders[index + 1] if index + 1 < len(reminders) else dt_time(23, 59, 59)
+        if at <= clock <= end and state.get(key) != iso:
+            state[key] = iso
+            pending = _peek_night_pending(owner_id)
+            if pending and pending.get("date") == iso:
+                send_html(owner_id, render_reminder(pending.get("step"), last=index == len(reminders) - 1))
+
+    morning = _hhmm(settings.night_ritual_morning_time)
+    if morning <= clock < dt_time(12, 0) and state.get("morning") != iso:
+        state["morning"] = iso
+        yesterday = store.load(owner, today - timedelta(days=1))
+        first = ((yesterday or {}).get("answers") or {}).get("first")
+        if first:
+            send_html(owner_id, render_morning(first))
+
+    kinds = reports_due(today)
+    prepare_text = settings.night_ritual_prepare_time.strip()
+    if kinds and prepare_text and _hhmm(prepare_text) <= clock < _hhmm(settings.night_ritual_report_time) \
+            and state.get("prepared") != iso:
+        state["prepared"] = iso
+        state["reports"] = {kind: build_report(llm, store, owner, kind, today, ritual_days)[0] for kind in kinds}
+        state["reports_date"] = iso
+        log(f"[night] prepared reports={kinds}")
+
+    report_at = _hhmm(settings.night_ritual_report_time)
+    if kinds and report_at <= clock < dt_time(12, 0) and state.get("reported") != iso:
+        state["reported"] = iso
+        prepared = state.get("reports") if state.get("reports_date") == iso else {}
+        for kind in kinds:
+            html = (prepared or {}).get(kind) or build_report(llm, store, owner, kind, today, ritual_days)[0]
+            send_html(owner_id, html)
+        log(f"[night] sent reports={kinds} ({'prepared' if prepared else 'live'})")
+        state.pop("reports", None)
+
+
+def _night_ritual_loop() -> None:
+    while RUNNING:
+        try:
+            state = _load_night_state()
+            before = json.dumps(state, sort_keys=True)
+            try:
+                night_tick(_night_now(), state)
+            finally:
+                if json.dumps(state, sort_keys=True) != before:
+                    _save_night_state(state)
+            alerter.resolve("night-ritual", "The night ritual's schedule works again.")
+        except Exception:
+            log(f"[night] loop error: {traceback.format_exc()}")
+            alerter.alert("night-ritual", "The night ritual's schedule hit an error.", traceback.format_exc())
+        time.sleep(30)
 
 
 def _english_bot_send_message(owner: str, text: str) -> None:
@@ -2685,6 +3097,13 @@ def main() -> int:
     log(f"[skills] loaded={[skill.name for skill in skill_router.skills]}")
     log(f"[agents] loaded={[agent.name for agent in agent_registry.agents]}")
     restore_pending_state()
+
+    if settings.night_ritual_enabled and settings.night_ritual_owner:
+        threading.Thread(target=_night_ritual_loop, daemon=True).start()
+        log(
+            f"[night] scheduler started timezone={settings.night_ritual_timezone} "
+            f"start={settings.night_ritual_start_time} days={settings.night_ritual_days}"
+        )
 
     if settings.english_bot_enabled:
         english_bot_thread = threading.Thread(target=_english_bot_scheduler_loop, daemon=True)

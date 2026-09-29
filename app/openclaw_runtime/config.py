@@ -151,6 +151,19 @@ class Settings:
     alert_chat_ids: set[int]
     alert_cooldown_minutes: int
     alert_gateway_outage_minutes: int
+    # Night ritual (openclaw_runtime.night_ritual): a four-question wind-down
+    # journal for one owner, with reminders, a morning "first thing" card and
+    # weekly/monthly reports. Times are local to night_ritual_timezone.
+    night_ritual_enabled: bool = False
+    night_ritual_owner: int | None = None
+    night_ritual_timezone: str = "Europe/London"
+    night_ritual_days: str = "sun,mon,tue,wed,thu,fri"
+    night_ritual_start_time: str = "22:30"
+    night_ritual_reminder_times: str = "23:00,23:30"
+    night_ritual_morning_time: str = "07:05"
+    night_ritual_report_time: str = "07:30"
+    night_ritual_prepare_time: str = "04:00"
+    night_ritual_dir: Path = Path("/workspace/.openclaw/night")
 
 
 def load_settings() -> Settings:
@@ -287,4 +300,18 @@ def load_settings() -> Settings:
         pending_state_path=Path(
             os.environ.get("OPENCLAW_PENDING_STATE_PATH", "/workspace/.openclaw/pending_answers.json")
         ),
+        night_ritual_enabled=env_bool("OPENCLAW_NIGHT_RITUAL_ENABLED", False),
+        night_ritual_owner=int(os.environ["OPENCLAW_NIGHT_RITUAL_OWNER"])
+        if os.environ.get("OPENCLAW_NIGHT_RITUAL_OWNER", "").strip()
+        else None,
+        night_ritual_timezone=os.environ.get(
+            "OPENCLAW_NIGHT_RITUAL_TIMEZONE", os.environ.get("OPENCLAW_CRON_TIMEZONE", "Europe/London")
+        ),
+        night_ritual_days=os.environ.get("OPENCLAW_NIGHT_RITUAL_DAYS", "sun,mon,tue,wed,thu,fri"),
+        night_ritual_start_time=os.environ.get("OPENCLAW_NIGHT_RITUAL_TIME", "22:30"),
+        night_ritual_reminder_times=os.environ.get("OPENCLAW_NIGHT_RITUAL_REMINDERS", "23:00,23:30"),
+        night_ritual_morning_time=os.environ.get("OPENCLAW_NIGHT_RITUAL_MORNING_TIME", "07:05"),
+        night_ritual_report_time=os.environ.get("OPENCLAW_NIGHT_RITUAL_REPORT_TIME", "07:30"),
+        night_ritual_prepare_time=os.environ.get("OPENCLAW_NIGHT_RITUAL_PREPARE_TIME", "04:00"),
+        night_ritual_dir=Path(os.environ.get("OPENCLAW_NIGHT_RITUAL_DIR", "/workspace/.openclaw/night")),
     )
