@@ -103,3 +103,26 @@ class WatchdogWeeklySummaryTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MaintenanceLinesTest(unittest.TestCase):
+    def test_backup_e2e_and_cleanup(self) -> None:
+        import json
+        import tempfile
+
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".cache").mkdir()
+            self.assertEqual(watchdog.maintenance_lines(root, now), ["Last backup: none yet"])
+            (root / ".cache/openclaw-backup-status.json").write_text(
+                json.dumps({"at": now - 3 * 86400, "ok": True, "bytes": 2 * 2**30}))
+            (root / ".cache/openclaw-e2e-status.json").write_text(
+                json.dumps({"ok": False, "bot": "b", "passed": 9, "total": 10}))
+            status = root / "profiles/p/workspace/.openclaw/housekeeping.json"
+            status.parent.mkdir(parents=True)
+            status.write_text(json.dumps({"at": now - 86400, "bytes": 5 * 2**20}))
+            lines = watchdog.maintenance_lines(root, now)
+        self.assertIn("(over 2 days ago!), 2.0 GiB", lines[0])
+        self.assertEqual(lines[1], "E2E: 9/10 on b -- FAILED")
+        self.assertEqual(lines[2], "Cleanup freed: 5 MiB")

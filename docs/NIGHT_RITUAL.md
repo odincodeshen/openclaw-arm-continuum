@@ -21,7 +21,9 @@ At `OPENCLAW_NIGHT_RITUAL_TIME` (default 22:30) on
 4. 【晚安儀式 4/4】 **Mental Shutdown** -- the first thing for tomorrow.
 
 Each answer is text or voice (voice is transcribed by the local Whisper
-service and the recording deleted; only the text is kept). There is no
+service and the recording deleted; only the text is kept). A long spoken
+answer is tidied by the local model into the few words the card needs, in
+the language you spoke; the full transcript is kept alongside it. There is no
 skip. After the fourth answer a 【今日結案】 card lists the night's answers
 and ends with one or two warm sentences from the local model -- no advice,
 no analysis.
@@ -57,7 +59,7 @@ card repeats last night's first thing. No ritual last night, no card.
 /night 2026-09-28  one night
 /night start       start or pick up tonight
 /night move 2026-09-29 2026-09-28   re-date a night (the target must be empty)
-/night week        last week's report now · /night month  last month's
+/night week        last week's report now · /night month  last month's · /night year
 ```
 
 ## Reports
@@ -65,6 +67,8 @@ card repeats last night's first thing. No ritual last night, no card.
 - **Weekly** (【晚安週報】), Monday at `OPENCLAW_NIGHT_RITUAL_REPORT_TIME`
   (default 07:30): the seven days up to Sunday.
 - **Monthly** (【晚安月報】), on the 1st: the previous month.
+- **Yearly** (【晚安年報】), on 1 January: the previous year, with each
+  month's share of nights done.
 
 Each shows nights done / partly done, a **Trend** block (the current streak
 of done nights -- a skipped Saturday doesn't break it -- and the share of

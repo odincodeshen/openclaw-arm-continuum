@@ -173,6 +173,10 @@ class Settings:
     tts_enabled: bool = False
     tts_base_url: str = "http://openclaw-tts:8766"
     tts_timeout: int = 60
+    # Daily cleanup of short-lived files (openclaw_runtime.housekeeping), at
+    # housekeeping_time in cron_timezone. Empty time = off.
+    housekeeping_time: str = "03:30"
+    audio_retention_days: int = 14
 
 
 def load_settings() -> Settings:
@@ -327,4 +331,6 @@ def load_settings() -> Settings:
         tts_enabled=env_bool("OPENCLAW_TTS_ENABLED", False),
         tts_base_url=os.environ.get("OPENCLAW_TTS_BASE_URL", "http://openclaw-tts:8766"),
         tts_timeout=env_int("OPENCLAW_TTS_TIMEOUT", 60),
+        housekeeping_time=os.environ.get("OPENCLAW_HOUSEKEEPING_TIME", "03:30").strip(),
+        audio_retention_days=env_int("OPENCLAW_AUDIO_RETENTION_DAYS", 14),
     )

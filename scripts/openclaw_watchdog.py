@@ -183,7 +183,43 @@ def summary_due(now: time.struct_time, state: dict) -> str | None:
     return key
 
 
-def render_summary(containers: dict[str, dict], state: dict, disk: str, gpu: str) -> str:
+def _read_json(path: Path) -> dict:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def maintenance_lines(root: Path = ROOT, now: float | None = None) -> list[str]:
+    """Backup, weekly e2e and cleanup results for the weekly summary."""
+    now = now or time.time()
+    lines = []
+    backup = _read_json(root / ".cache" / "openclaw-backup-status.json")
+    if backup:
+        when = time.strftime("%a %d %b %H:%M", time.localtime(backup["at"]))
+        if backup.get("ok"):
+            stale = " (over 2 days ago!)" if now - backup["at"] > 2 * 86400 else ""
+            lines.append(f"Last backup: {when}{stale}, {backup.get('bytes', 0) / 2**30:.1f} GiB")
+        else:
+            lines.append(f"Last backup FAILED {when}: {backup.get('error', '')}")
+    else:
+        lines.append("Last backup: none yet")
+    e2e = _read_json(root / ".cache" / "openclaw-e2e-status.json")
+    if e2e:
+        lines.append(f"E2E: {e2e.get('passed', 0)}/{e2e.get('total', 0)} on {e2e.get('bot', '?')}"
+                     + ("" if e2e.get("ok") else " -- FAILED"))
+    freed = sum(
+        _read_json(path).get("bytes", 0)
+        for path in (root / "profiles").glob("*/workspace/.openclaw/housekeeping.json")
+        if now - _read_json(path).get("at", 0) < 8 * 86400
+    )
+    if freed:
+        lines.append(f"Cleanup freed: {freed / 2**20:.0f} MiB")
+    return lines
+
+
+def render_summary(containers: dict[str, dict], state: dict, disk: str, gpu: str,
+                   extra: list[str] | None = None) -> str:
     running = sorted(name for name, info in containers.items() if info["status"] == "running")
     not_running = sorted(
         name for name, info in containers.items() if info["status"] not in ("running", "exited", "created")
@@ -207,6 +243,7 @@ def render_summary(containers: dict[str, dict], state: dict, disk: str, gpu: str
     lines.append(f"Disk: {disk}")
     if gpu:
         lines.append(f"GPU: {gpu}")
+    lines += extra or []
     return "\n".join(lines)
 
 
@@ -230,7 +267,7 @@ def main() -> int:
     messages, state = evaluate(previous, containers, boot_id(), time.time())
     week_key = summary_due(time.localtime(), state)
     if week_key:
-        messages.append(render_summary(containers, state, disk_status(ROOT), gpu_status()))
+        messages.append(render_summary(containers, state, disk_status(ROOT), gpu_status(), maintenance_lines()))
         state["summary_week"] = week_key
         state["week"] = {}
     host = os.uname().nodename if hasattr(os, "uname") else "host"

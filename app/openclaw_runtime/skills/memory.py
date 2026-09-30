@@ -1,4 +1,6 @@
+import hashlib
 import re
+from collections import OrderedDict
 import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
@@ -579,6 +581,20 @@ class MemoryWriteSkill:
         return text.strip()
 
 
+# The passages behind recent /rag answers, keyed by a hash of the answer
+# text, so the Telegram gateway can show them under a "Show sources" button.
+RECENT_RAG_SOURCES: "OrderedDict[str, list[dict]]" = OrderedDict()
+RECENT_RAG_SOURCES_MAX = 200
+
+
+def answer_key(answer: str) -> str:
+    return hashlib.sha1(answer.encode("utf-8")).hexdigest()[:12]
+
+
+def sources_for_answer(answer: str) -> list[dict]:
+    return list(RECENT_RAG_SOURCES.get(answer_key(answer), []))
+
+
 class RagRetrieveSkill:
     name = "rag_retrieve"
 
@@ -788,6 +804,16 @@ class RagRetrieveSkill:
         sources = self._collect_sources(labelled_hits)
         if sources:
             answer = f"{answer}\n\nSources: {', '.join(sources)}"
+        passages = [
+            {"source": self._source_name(hit.get("payload") or {}) or label,
+             "text": str((hit.get("payload") or {}).get("text") or "").strip()}
+            for label, hits in labelled_hits
+            for hit in hits
+            if str((hit.get("payload") or {}).get("text") or "").strip()
+        ]
+        RECENT_RAG_SOURCES[answer_key(answer)] = passages[:8]
+        while len(RECENT_RAG_SOURCES) > RECENT_RAG_SOURCES_MAX:
+            RECENT_RAG_SOURCES.popitem(last=False)
         return answer
 
     @staticmethod

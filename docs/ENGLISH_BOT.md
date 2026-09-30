@@ -62,6 +62,12 @@ with Telegram HTML:
 When the word list is enabled and saved words are due, the task card ends
 with a **Word review** block. See `docs/DICTIONARY.md`.
 
+With pronunciation on (`OPENCLAW_TTS_ENABLED`), Monday and Friday also send
+a 【語塊發音】 card with 🔊 UK / US for each chunk and its example (not
+Saturday -- hearing them would give the cloze away). On Sunday, a learner
+who looked up at least two words that week is offered a button quiz on them
+(`/vocab quiz`).
+
 ## Replying
 
 - A day's task stays open until you send `/Done`, so you can try as many

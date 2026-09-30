@@ -81,6 +81,20 @@ class ModuleTest(unittest.TestCase):
         self.assertEqual(nr.closing_line(llm, {"answers": {"wins": "x"}}), "Well done.")
         self.assertIn("English only", llm.prompts[0])
 
+    def test_condense_voice_answer(self) -> None:
+        short = "Fixed the bug."
+        self.assertEqual(nr.condense_voice_answer(FakeLlm(), "wins", short), short)
+        long = "um so today I I fixed that really annoying bug in the watchdog and then " * 3
+        llm = FakeLlm(reply="Fixed the watchdog bug")
+        self.assertEqual(nr.condense_voice_answer(llm, "wins", long), "Fixed the watchdog bug")
+        self.assertIn("keeping the speaker's own language", llm.prompts[0])
+
+        class Broken:
+            def chat(self, *a, **k):
+                raise RuntimeError("down")
+
+        self.assertEqual(nr.condense_voice_answer(Broken(), "wins", long), " ".join(long.split()))
+
     def test_report_periods(self) -> None:
         self.assertEqual(nr.report_period("week", date(2026, 10, 5)), (date(2026, 9, 28), date(2026, 10, 4)))
         self.assertEqual(nr.report_period("month", date(2026, 10, 1)), (date(2026, 9, 1), date(2026, 9, 30)))
@@ -120,6 +134,23 @@ class ModuleTest(unittest.TestCase):
         self.assertIn("Nights done: 83% (last week 50%) ↑", html)
         self.assertIn("First things done: 100% (last week 0%) ↑", html)
         self.assertIn("- Streak: 2 nights in a row", markdown)
+
+    def test_year_report_with_monthly_rates(self) -> None:
+        days = nr.parse_ritual_days("sun,mon,tue,wed,thu,fri,sat")
+        full = {"wins": "w", "better": "b", "adjust": "a", "first": "f"}
+        for d in ("2026-01-01", "2026-01-02", "2026-12-31"):
+            self.store.save("o", {"date": d, "status": "done", "answers": full})
+        self.assertEqual(nr.reports_due(date(2027, 1, 1)), ["month", "year"])
+        self.assertEqual(nr.report_period("year", date(2027, 1, 1)), (date(2026, 1, 1), date(2026, 12, 31)))
+        html, markdown = nr.build_report(FakeLlm(), self.store, "o", "year", date(2027, 1, 1), days)
+        assert_valid_telegram_html(self, html)
+        self.assertTrue(html.startswith("<b>【晚安年報】</b>· 2026"))
+        self.assertIn("Jan 6% · Feb 0%", html)  # 2 of 31 January nights
+        self.assertIn("Dec 3%", html)
+        self.assertIn("3 of 365 nights", html)
+        saved = Path(self.tmp.name) / "o" / "reports" / "year-2026.md"
+        self.assertTrue(saved.exists())
+        self.assertIn("# Night ritual — 2026", markdown)
 
     def test_empty_month_skips_the_model(self) -> None:
         llm = FakeLlm()
@@ -214,6 +245,18 @@ class GatewayNightTest(unittest.TestCase):
         self._tick(7, 5, state, day=30)
         self.assertIn("finish the spec", self.sent[-1])
         self.assertIn("【今天的第一件事】", self.sent[-1])
+
+    def test_a_long_voice_answer_is_tidied_and_the_transcript_kept(self) -> None:
+        spoken = "well " * 30 + "I finished the spec"
+        gateway.night_command(OWNER, "/night start")
+        self.llm.reply = "Finished the spec"
+        with patch.object(gateway, "telegram_file_info", lambda f: {"file_path": "v.oga"}), \
+                patch.object(gateway, "download_telegram_file", lambda f, target: (target, 1)), \
+                patch.object(gateway.transcriber, "transcribe", lambda path: spoken):
+            self.assertTrue(gateway.handle_night_reply(OWNER, {"voice": {"file_id": "f"}}))
+        entry = self.store.load(str(OWNER), TUE)
+        self.assertEqual(entry["answers"]["wins"], "Finished the spec")
+        self.assertEqual(entry["spoken"]["wins"], " ".join(spoken.split()))
 
     def test_reminders_then_partial_at_midnight(self) -> None:
         state: dict = {}

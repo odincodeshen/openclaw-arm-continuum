@@ -11,7 +11,10 @@ and meant for a bot running the daily English coach.
 /vocab                                 your word list, newest first
 /vocab rm resilient                    remove a word (or tap Remove words… under /vocab)
 /vocab review                          review the saved words due today
-/vocab export                          your word list as an Anki import file
+/vocab export                          your word list as an Anki deck (.apkg, with UK / US audio)
+/vocab export tsv                      ...or as a plain Anki import file
+/vocab quiz                            a button quiz on this week's lookups
+/say resilient                         pronunciation practice (/say alone picks a word)
 ```
 
 You don't need `/w`: sending just the word (or `word | sentence`) looks it
@@ -28,8 +31,9 @@ several things are waiting for a reply, a bare word goes to:
 `/w` always works, including while a daily English task is still open:
 commands are never treated as the task's answer.
 
-`/vocab export` sends the whole list as a tab-separated `.txt` file ready for
-Anki's File > Import: the front is the word and its phonetic, the back the
+`/vocab export tsv` (and `/vocab export` when pronunciation is off -- see
+below for the `.apkg` with audio) sends the whole list as a tab-separated
+`.txt` file ready for Anki's File > Import: the front is the word and its phonetic, the back the
 meaning and the saved sentence (in italics), and each note is tagged
 `openclaw_lookup` (a word you looked up) or `openclaw_chunk` (a weekly chunk
 moved in on Sunday). The file's header lines set the separator, HTML and the
@@ -89,6 +93,24 @@ further out; a wrong answer sends it back to box 0, due tomorrow:
 
 Each record keeps `review_box`, `next_review`, `last_review_at`,
 `correct_count` and `wrong_count`.
+
+## Anki deck, quiz and pronunciation practice
+
+- **`/vocab export`** sends an Anki package (`.apkg`) when pronunciation is
+  on: each note has the word, phonetic, meaning, sentence and UK / US audio
+  (MP3, so every Anki app plays it), in an "OpenClaw words" deck, tagged
+  `openclaw_lookup` or `openclaw_chunk`. Note ids come from the word, so
+  importing a newer export updates the same cards. New words take about a
+  second each for their audio. `/vocab export tsv` keeps the plain file.
+- **`/vocab quiz`**: up to 5 questions on the words you looked up in the
+  last 7 days -- the meaning is shown, you tap the word among four taken from
+  your own list. Offered automatically on Sundays. It doesn't change review
+  dates.
+- **`/say <word>`**: record a voice message saying it; speech recognition
+  checks what it heard (every word, in order; longer words may be one letter
+  off, since that's the recognizer's spelling, not you). It's a clarity
+  check, not a phonetic score. **Try again** and 🔊 are on the result.
+- On the `/vocab` card, **🔊 Pronounce…** shows a button per word.
 
 ## Pronunciation (🔊)
 

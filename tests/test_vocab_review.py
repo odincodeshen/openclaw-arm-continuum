@@ -307,5 +307,63 @@ class GatewayReviewRoutingTest(unittest.TestCase):
         self.assertEqual(sent, ["<b>card</b>"])
 
 
+class WordQuizTest(unittest.TestCase):
+    ENTRIES = [
+        {"word": "resilient", "display_word": "resilient", "meaning": "有彈性的", "added_at": "2026-09-28T10:00:00+00:00"},
+        {"word": "chill out", "display_word": "chill out", "meaning": "放鬆", "added_at": "2026-09-27T10:00:00+00:00"},
+        {"word": "old", "display_word": "old", "meaning": "舊的", "added_at": "2026-08-01T10:00:00+00:00"},
+        {"word": "move on", "display_word": "move on", "meaning": "繼續", "source": "weekly_chunk",
+         "added_at": "2026-09-28T10:00:00+00:00"},
+    ]
+
+    def test_questions_use_recent_lookups_and_own_words_as_options(self) -> None:
+        from openclaw_runtime.vocabulary import build_quiz
+
+        questions = build_quiz(self.ENTRIES, since_iso="2026-09-22", seed=1)
+        self.assertEqual(sorted(q["word"] for q in questions), ["chill out", "resilient"])
+        for q in questions:
+            self.assertEqual(q["options"][q["answer"]], q["word"])
+            self.assertEqual(len(q["options"]), 4)
+            self.assertEqual(len(set(q["options"])), 4)
+        self.assertEqual(build_quiz(self.ENTRIES[:1], since_iso="", seed=1), [])
+
+    def test_quiz_flow_with_buttons(self) -> None:
+        calls, html = [], []
+        settings = dataclasses.replace(gateway.settings, dictionary_enabled=True)
+
+        def tap(data):
+            gateway.handle_callback_query({"id": "q", "data": data, "message": {"message_id": 7, "chat": {"id": 5}}})
+
+        with patch.object(gateway, "settings", settings), \
+                patch.object(gateway, "telegram", lambda m, p=None, timeout=60: calls.append((m, p or {})) or {}), \
+                patch.object(gateway, "send_html", lambda c, h: html.append(h)), \
+                patch.object(gateway, "list_word_list", lambda *a: list(self.ENTRIES)), \
+                patch.object(gateway, "build_quiz", lambda entries, since_iso, seed: [
+                    {"word": "resilient", "meaning": "有彈性的", "options": ["old", "resilient"], "answer": 1},
+                    {"word": "chill out", "meaning": "放鬆", "options": ["chill out", "old"], "answer": 0}]):
+            gateway.handle_vocabulary_command(5, "/vocab quiz")
+            first = [p for m, p in calls if m == "sendMessage"][-1]
+            self.assertIn("【本週小測驗】</b>· 1/2", first["text"])
+            tap("vq:0:1")
+            tap("vq:0:1")  # a second tap on the old card is ignored
+            tap("vq:1:1")
+        self.assertIn("1 of 2 right", html[-1])
+        self.assertIn("Worth another look: chill out", html[-1])
+        self.assertNotIn(5, gateway.QUIZ_PENDING)
+        edited = [p for m, p in calls if m == "editMessageText"]
+        self.assertIn("❌ old — it's <b>chill out</b>", edited[-1]["text"])
+
+    def test_sunday_offer_only_with_recent_words(self) -> None:
+        calls = []
+        now_entries = [dict(e, added_at="2999-01-01") for e in self.ENTRIES[:2]]
+        with patch.object(gateway, "telegram", lambda m, p=None, timeout=60: calls.append((m, p or {})) or {}), \
+                patch.object(gateway, "list_word_list", lambda q, c, owner: now_entries if owner == "5" else []):
+            gateway.offer_weekly_quiz(["5", "6"])
+        sent = [p for m, p in calls if m == "sendMessage"]
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0]["chat_id"], 5)
+        self.assertEqual(sent[0]["reply_markup"]["inline_keyboard"][0][0]["callback_data"], "vq:start")
+
+
 if __name__ == "__main__":
     unittest.main()

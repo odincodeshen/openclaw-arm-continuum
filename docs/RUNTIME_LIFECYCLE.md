@@ -111,7 +111,43 @@ Once a week -- Monday from 08:00 host time (`OPENCLAW_WATCHDOG_SUMMARY_DAY`,
 0 = Monday, and `OPENCLAW_WATCHDOG_SUMMARY_HOUR`) -- the same run also sends
 a **weekly health summary**: containers running, any not healthy or failing
 their health check, crash restarts and alerts over the week, host reboots,
-disk use, and the GPU (from `nvidia-smi`, when there is one).
+disk use, and the GPU (from `nvidia-smi`, when there is one) -- plus the
+last backup, the last weekly e2e run and how much the daily cleanup freed.
+
+## Backup, cleanup and the weekly e2e run
+
+Everything personal -- memory, knowledge, categories, the English bot's
+progress and word lists, the night-ritual journal -- exists only on this
+host, so `scripts/openclaw_maintenance.py` (host, standard library only)
+keeps copies:
+
+- `backup` (nightly, 03:15): a Qdrant snapshot of every collection, and
+  `files.tar.gz` with each profile's workspace (minus what can be rebuilt:
+  the dictionary, the English bot's weekly audio, voice messages, staging),
+  `profiles/*/.env` and the Gateway state, into
+  `OPENCLAW_BACKUP_DIR/<YYYY-MM-DD_HHMM>/` (default `~/openclaw-backups`,
+  made private -- the `.env` files hold bot tokens). The newest
+  `OPENCLAW_BACKUP_KEEP` (default 14) are kept; other folders there are
+  never touched. To restore a collection, upload its `.snapshot` through
+  Qdrant's snapshot API; unpack the archive over the repo for the files.
+- `e2e` (weekly, Monday 03:40): runs `scripts/e2e_run.py` inside a bot's
+  Telegram container (`--bot`, or `OPENCLAW_E2E_BOT`, default
+  `lc9-dgx2-apa`) and keeps the report in `.cache/e2e-latest.md`.
+
+Both alert on Telegram when they fail. Crontab:
+
+```text
+15 3 * * * cd /path/to/repo && /usr/bin/python3 scripts/openclaw_maintenance.py backup >> .cache/openclaw-maintenance.log 2>&1
+40 3 * * 1 cd /path/to/repo && /usr/bin/python3 scripts/openclaw_maintenance.py e2e >> .cache/openclaw-maintenance.log 2>&1
+```
+
+Cleanup runs inside each bot's Telegram container (the files belong to
+it), daily at `OPENCLAW_HOUSEKEEPING_TIME` (default 03:30; empty = off):
+voice messages older than `OPENCLAW_AUDIO_RETENTION_DAYS` (14), sent export
+files and never-filed staging uploads older than 7 days, and the English
+bot's weekly audio except the newest two weeks. Indexed documents, memory
+and the journal are never touched. The pronunciation service drops cached
+clips unused for `OPENCLAW_TTS_CACHE_DAYS` (180).
 
 ## Boot modes
 

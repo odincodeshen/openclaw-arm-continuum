@@ -312,6 +312,35 @@ def closing_line(llm, entry: dict) -> str:
     return text or FALLBACK_CLOSING
 
 
+CONDENSE_MIN_WORDS = 25
+_STEP_SHAPE = {
+    "wins": "1-3 short items, one per line",
+    "better": "one short sentence",
+    "adjust": "one short sentence",
+    "first": "one short line naming the task",
+}
+
+
+def condense_voice_answer(llm, step: str, transcript: str) -> str:
+    """A spoken answer tidied into the few words the card needs, in the
+    speaker's own language; short or unusable ones come back unchanged."""
+    text = " ".join(transcript.split())
+    if len(text.split()) < CONDENSE_MIN_WORDS and len(text) < 80:
+        return text
+    prompt = (
+        "This is a spoken answer to a journal question, transcribed by speech recognition. Rewrite it as "
+        f"{_STEP_SHAPE.get(step, 'one short sentence')}, keeping the speaker's own language (do not "
+        "translate), their meaning and any concrete details. Drop filler words and repetition. Reply with "
+        "the rewritten answer only.\n\n"
+        f"Question: {QUESTIONS[step][1]}\nSpoken answer: {text}"
+    )
+    try:
+        condensed = (llm.chat(prompt, max_tokens=160) or "").strip().strip('"“”')
+    except Exception:  # noqa: BLE001 - the transcript itself is still a fine answer
+        return text
+    return condensed or text
+
+
 REPORT_SCHEMA = {
     "type": "object",
     "properties": {
@@ -335,12 +364,13 @@ class ReportSummary:
 
 def summarize_period(llm, entries: list[dict], period_name: str) -> ReportSummary:
     notes = []
+    cap = 120 if len(entries) > 60 else 600  # a year's worth has to fit the model's context
     for entry in entries:
         answers = entry.get("answers") or {}
         if any(answers.values()):
             notes.append(
-                f"{entry['date']}: wins={answers.get('wins', '')} | better={answers.get('better', '')} | "
-                f"adjust={answers.get('adjust', '')}"
+                f"{entry['date']}: wins={answers.get('wins', '')[:cap]} | better={answers.get('better', '')[:cap]} | "
+                f"adjust={answers.get('adjust', '')[:cap]}"
             )
     if not notes:
         return ReportSummary([], "", "", "")
@@ -447,7 +477,7 @@ def _trend_line(label: str, now: float | None, before: float | None, previous_na
 
 
 def trend_lines(trend: Trend, kind: str) -> list[str]:
-    previous_name = "last week" if kind == "week" else "last month"
+    previous_name = {"week": "last week", "month": "last month", "year": "last year"}[kind]
     lines = [f"Streak: {trend.streak} night{'s' if trend.streak != 1 else ''} in a row"]
     for line in (
         _trend_line("Nights done", trend.done_rate, trend.previous_done_rate, previous_name),
@@ -464,12 +494,14 @@ def _period_label(start: date, end: date) -> str:
 
 def render_report(kind: str, start: date, end: date, stats: PeriodStats, summary: ReportSummary,
                   trend: Trend | None = None) -> str:
-    """kind: "week" or "month"."""
-    zh = "晚安週報" if kind == "week" else "晚安月報"
-    label = _period_label(start, end) if kind == "week" else start.strftime("%B %Y")
+    """kind: "week", "month" or "year"."""
+    zh = {"week": "晚安週報", "month": "晚安月報", "year": "晚安年報"}[kind]
+    label = {"week": _period_label(start, end), "month": start.strftime("%B %Y"), "year": str(start.year)}[kind]
     lines = [_title(zh, label), bold("Done")]
     if kind == "week":
         lines.append(" ".join(f"{d.strftime('%a')} {STATUS_MARKS[s]}" for d, s in stats.statuses) or "—")
+    if kind == "year":
+        lines += monthly_rates(stats)
     done_text = f"{stats.done} of {stats.nights} nights"
     if stats.partial:
         done_text += f" · {stats.partial} partly"
@@ -492,11 +524,25 @@ def render_report(kind: str, start: date, end: date, stats: PeriodStats, summary
     return "\n".join(lines)
 
 
+def monthly_rates(stats: PeriodStats) -> list[str]:
+    """ "Jan 80% · Feb 75% · Mar 90%" -- two lines of six months."""
+    months: dict[int, list[str]] = {}
+    for day, status in stats.statuses:
+        months.setdefault(day.month, []).append(status)
+    parts = [
+        f"{date(2000, month, 1).strftime('%b')} {round(100 * sum(s == 'done' for s in found) / len(found))}%"
+        for month, found in sorted(months.items())
+    ]
+    return [" · ".join(parts[i : i + 6]) for i in range(0, len(parts), 6)]
+
+
 def render_report_markdown(kind: str, start: date, end: date, stats: PeriodStats, summary: ReportSummary,
                            entries: list[dict], trend: Trend | None = None) -> str:
-    title = "Night ritual — week of " + _period_label(start, end) if kind == "week" else (
-        "Night ritual — " + start.strftime("%B %Y")
-    )
+    title = {
+        "week": "Night ritual — week of " + _period_label(start, end),
+        "month": "Night ritual — " + start.strftime("%B %Y"),
+        "year": f"Night ritual — {start.year}",
+    }[kind]
     lines = [f"# {title}", "", f"- Done: {stats.done} of {stats.nights} nights"
              + (f" ({stats.partial} partly)" if stats.partial else "")]
     if stats.first_written:
@@ -504,6 +550,8 @@ def render_report_markdown(kind: str, start: date, end: date, stats: PeriodStats
                      f"{stats.first_not_done} not yet")
     if trend is not None:
         lines += [f"- {line}" for line in trend_lines(trend, kind)]
+    if kind == "year":
+        lines += [f"- Months: {line}" for line in monthly_rates(stats)]
     if summary.highlights:
         lines += ["", "## Highlights", ""] + [f"- {item}" for item in summary.highlights]
     if summary.growing:
@@ -529,9 +577,11 @@ def render_report_markdown(kind: str, start: date, end: date, stats: PeriodStats
 def report_period(kind: str, report_day: date) -> tuple[date, date]:
     """The period a report sent on report_day covers: the seven days up to
     yesterday for "week" (sent Monday: Monday to Sunday), the previous
-    calendar month for "month"."""
+    calendar month for "month", the previous calendar year for "year"."""
     if kind == "week":
         return report_day - timedelta(days=7), report_day - timedelta(days=1)
+    if kind == "year":
+        return date(report_day.year - 1, 1, 1), date(report_day.year - 1, 12, 31)
     last = report_day.replace(day=1) - timedelta(days=1)
     return last.replace(day=1), last
 
@@ -542,6 +592,8 @@ def reports_due(report_day: date) -> list[str]:
         kinds.append("week")
     if report_day.day == 1:
         kinds.append("month")
+    if report_day.month == 1 and report_day.day == 1:
+        kinds.append("year")
     return kinds
 
 
@@ -558,9 +610,10 @@ def build_report(llm, store: NightStore, owner: str, kind: str, report_day: date
         {date.fromisoformat(e["date"]): e for e in previous_entries}, previous_start, previous_end, ritual_days, report_day
     )
     trend = compute_trend(stats, previous, current_streak(store, owner, end, ritual_days))
-    summary = summarize_period(llm, entries, "week" if kind == "week" else "month")
+    summary = summarize_period(llm, entries, kind)
     html = render_report(kind, start, end, stats, summary, trend)
     markdown = render_report_markdown(kind, start, end, stats, summary, entries, trend)
-    name = f"week-{start.isoformat()}" if kind == "week" else f"month-{start.strftime('%Y-%m')}"
+    name = {"week": f"week-{start.isoformat()}", "month": f"month-{start.strftime('%Y-%m')}",
+            "year": f"year-{start.year}"}[kind]
     store.write_report(owner, name, markdown)
     return html, markdown

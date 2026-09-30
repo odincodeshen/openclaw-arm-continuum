@@ -33,6 +33,14 @@ card: tap one of the existing categories, tap **+ New category** (the bot
 asks for the name and opens the reply box), or just type a name. The
 buttons disappear once the file is filed, cancelled or expired.
 
+A moment after the card appears, the local model's guess moves to the top
+as **⭐ #name (suggested)** -- from the file's opening text and the file
+names already in each category (with no readable text, e.g. most PDFs, from
+the file name alone). And if the same file (same bytes) is already saved in
+a category or the knowledge base, the card says where and offers **Skip —
+keep the saved copy**. Uploading with a `#category` caption into a category
+that already holds the same file skips it too.
+
 **Type just the name** (e.g. `trip`), not `#trip` and not `#trip <note>`.
 The two-step reply has no note field -- a reply that starts with `#`/`＃` is
 parsed leniently (the `#` is stripped, and the category is the first word) so
@@ -151,6 +159,12 @@ documents (the rest are counted as "…and N more"):
 ```
 /cron add weekly sun 07:05 知識｜本週新增 :: /rag digest week
 ```
+
+Buttons under a `/rag` answer: **📄 Show sources** (the passages the answer
+was built from, a few lines each), **↪ Follow-up** (asks for your next
+question and keeps the first one's `#category` / `source:` scope), and
+**💾 Save answer** (the answer as a small Markdown document, filed with the
+category picker).
 
 Every `/rag` answer ends with a `Sources:` line naming the source documents
 the answer drew from. The name shown is the uploader's original filename when

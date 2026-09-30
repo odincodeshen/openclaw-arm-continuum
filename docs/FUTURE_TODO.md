@@ -179,7 +179,11 @@ v1.2 baseline. What has actually shipped since then:
   waiting for a category survive restarts; a weekly watchdog health summary.
 
 - **After v1.22 (unreleased).** 🔊 UK / US pronunciation on word lookups and
-  self-check answers, from a local Kokoro TTS service (`openclaw-tts`).
+  self-check answers, from a local Kokoro TTS service (`openclaw-tts`). Then:
+  nightly backups, daily cleanup and a weekly e2e run (all in the watchdog
+  summary); Anki decks with audio, `/say` practice, a weekly word quiz and
+  more 🔊; upload category suggestions and duplicate detection; buttons
+  under `/rag` answers; tidied spoken night answers and a yearly report.
 
 Still open, re-baselined against v1.22:
 

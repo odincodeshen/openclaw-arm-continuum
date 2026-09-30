@@ -85,15 +85,24 @@ from openclaw_runtime.http_client import post_multipart_file, request_json
 from openclaw_runtime.llm_client import VLLM_NOT_READY_MESSAGE
 from openclaw_runtime.alerts import Alerter
 from openclaw_runtime.dictionary import LocalDictionary
-from openclaw_runtime.message_cards import RULE, esc, html_to_plain, split_html_message
-from openclaw_runtime.skills.memory import MemoryWriteSkill
+from openclaw_runtime.message_cards import RULE, bold, esc, html_to_plain, split_html_message
+from openclaw_runtime.skills.memory import MemoryWriteSkill, sources_for_answer
 from openclaw_runtime.tts_client import TtsClient
-from openclaw_runtime.skills.english_bot import read_this_week_payload, record_gist_choice, render_gist_card
+from openclaw_runtime.anki_package import AnkiNote, write_apkg
+from openclaw_runtime.upload_hints import find_duplicate, preview_text, suggest_category
+from openclaw_runtime.housekeeping import run_cleanup, write_status
+from openclaw_runtime.skills.english_bot import (
+    read_this_week_chunks,
+    read_this_week_payload,
+    record_gist_choice,
+    render_gist_card,
+)
 from openclaw_runtime.night_ritual import (
     NightStore,
     build_report,
     close_status,
     closing_line,
+    condense_voice_answer,
     new_entry,
     next_step,
     parse_ritual_days,
@@ -129,7 +138,13 @@ from openclaw_runtime.vocabulary import (
     remove_from_word_list,
     render_anki_tsv,
     render_lookup_card,
+    build_quiz,
+    pronunciation_matches,
+    render_quiz_question,
+    render_quiz_summary,
     render_review_quiz,
+    render_say_prompt,
+    render_say_result,
     render_review_reminder,
     render_self_check_question,
     render_self_check_summary,
@@ -764,31 +779,78 @@ CATEGORY_BUTTON_PREFIX = "cat:"
 NEW_CATEGORY_TITLE = "檔案｜新分類"
 
 
-def category_picker_markup() -> dict:
+def category_picker_markup(suggested: str | None = None, duplicate: bool = False) -> dict:
     """Inline keyboard for a file waiting for its category: one button per
     existing category (two per row), then New category and Cancel. A slug
     too long for Telegram's 64-byte callback_data is left out -- typing its
-    name still works."""
-    buttons = [
-        {"text": f"#{entry['display']}", "callback_data": CATEGORY_BUTTON_PREFIX + entry["slug"]}
-        for entry in registry_entries(settings)
+    name still works. A suggested category (display name) comes first with
+    a star; a duplicate upload gets a Skip button."""
+    entries = [
+        entry for entry in registry_entries(settings)
         if len((CATEGORY_BUTTON_PREFIX + entry["slug"]).encode("utf-8")) <= 64
     ]
-    rows = [buttons[i : i + 2] for i in range(0, len(buttons), 2)]
+    rows = []
+    if suggested:
+        match = next((e for e in entries if e["display"] == suggested), None)
+        if match:
+            entries.remove(match)
+            rows.append([{"text": f"⭐ #{match['display']} (suggested)",
+                          "callback_data": CATEGORY_BUTTON_PREFIX + match["slug"]}])
+    buttons = [{"text": f"#{entry['display']}", "callback_data": CATEGORY_BUTTON_PREFIX + entry["slug"]}
+               for entry in entries]
+    rows += [buttons[i : i + 2] for i in range(0, len(buttons), 2)]
+    if duplicate:
+        rows.append([{"text": "Skip — keep the saved copy", "callback_data": "cat_dupskip"}])
     rows.append(
         [{"text": "+ New category", "callback_data": "cat_new"}, {"text": "Cancel", "callback_data": "cat_cancel"}]
     )
     return {"inline_keyboard": rows}
 
 
-def send_category_picker(chat_id: int, html: str) -> None:
+def duplicate_places() -> dict[str, Path]:
+    places = {f"#{entry['display']}": category_dir(entry["slug"]) for entry in registry_entries(settings)}
+    places["the knowledge base"] = settings.inbox_path / "knowledge"
+    return places
+
+
+def _suggest_for_picker(chat_id: int, message_id: int, staged: Path, name: str, duplicate: bool) -> None:
+    """Background: ask the model which category fits, then move it to the
+    top of the picker. Skipped when the picker has already been answered."""
+    categories = {
+        entry["display"]: [p.name for p in _category_documents(category_dir(entry["slug"]))][:5]
+        for entry in registry_entries(settings)
+    }
+    choice = suggest_category(llm, name, preview_text(staged), categories)
+    if not choice:
+        return
+    with PENDING_CATEGORY_LOCK:
+        pending = PENDING_CATEGORY.get(chat_id)
+        still_open = pending is not None and message_id in pending.get("prompt_ids", [])
+    if not still_open:
+        return
+    try:
+        telegram(
+            "editMessageReplyMarkup",
+            {"chat_id": chat_id, "message_id": message_id,
+             "reply_markup": category_picker_markup(suggested=choice, duplicate=duplicate)},
+            timeout=20,
+        )
+        log(f"[category] suggested chat_id={chat_id} category={choice}")
+    except Exception as exc:  # noqa: BLE001
+        log(f"[category] could not show suggestion: {exc}")
+
+
+def send_category_picker(chat_id: int, html: str, *, staged: Path | None = None, name: str = "",
+                         duplicate: bool = False) -> None:
     """Ask for a category with buttons. The message id is kept on the
     pending batch so its buttons can be taken away once the batch is
-    filed, cancelled or expired."""
+    filed, cancelled or expired. For a document (staged), a suggested
+    category is added a moment later."""
     try:
         result = telegram(
             "sendMessage",
-            {"chat_id": chat_id, "text": html, "parse_mode": "HTML", "reply_markup": category_picker_markup()},
+            {"chat_id": chat_id, "text": html, "parse_mode": "HTML",
+             "reply_markup": category_picker_markup(duplicate=duplicate)},
         )
     except Exception as exc:  # noqa: BLE001 - the typed reply still works without buttons
         log(f"[category] picker send failed chat_id={chat_id}: {exc}")
@@ -801,6 +863,10 @@ def send_category_picker(chat_id: int, html: str) -> None:
             if pending is not None:
                 pending.setdefault("prompt_ids", []).append(int(message_id))
         save_pending_state()
+        if staged is not None:
+            threading.Thread(
+                target=_suggest_for_picker, args=(chat_id, int(message_id), staged, name, duplicate), daemon=True
+            ).start()
 
 
 def close_category_pickers(chat_id: int, pending: dict) -> None:
@@ -854,6 +920,15 @@ def handle_callback_query(query: dict) -> None:
     if data.startswith(NIGHT_SCHEDULE_PREFIX):
         handle_night_schedule_callback(chat_id, message_id, data, answer)
         return
+    if data.startswith("vq:") and settings.dictionary_enabled:
+        handle_quiz_callback(chat_id, message_id, data, answer)
+        return
+    if data.startswith("say:") and settings.dictionary_enabled:
+        handle_say_callback(chat_id, data, answer)
+        return
+    if data.startswith("rag:"):
+        handle_rag_callback(chat_id, message_id, data, answer)
+        return
     if data.startswith(TTS_PREFIX):
         handle_tts_callback(chat_id, data, answer)
         return
@@ -899,6 +974,18 @@ def handle_callback_query(query: dict) -> None:
             )
         except Exception as exc:  # noqa: BLE001
             log(f"[category] new-category prompt failed chat_id={chat_id}: {exc}")
+        return
+
+    if data == "cat_dupskip":
+        dropped = pop_pending_category(chat_id)
+        if dropped:
+            close_category_pickers(chat_id, dropped)
+            for item in dropped.get("items", []):
+                Path(item["path"]).unlink(missing_ok=True)
+        answer("Skipped")
+        if message_id:
+            _edit_card(chat_id, message_id, f"<b>檔案｜已略過</b>\n{RULE}\n{names}\n\n"
+                       "Already saved -- this copy wasn't stored again.")
         return
 
     if data == "cat_cancel":
@@ -1231,6 +1318,12 @@ def _ingest_caption_category(
         send_message(chat_id, f"That category name will not work: {exc}")
         return
     entry = upsert_registry_entry(settings, display)
+    if kind == "document":
+        duplicate = find_duplicate(source_path, {f"#{entry['display']}": category_dir(entry["slug"])})
+        if duplicate:
+            source_path.unlink(missing_ok=True)
+            send_message(chat_id, f"This file is already in \"{entry['display']}\" ({duplicate[1]}) -- not saved again.")
+            return
     send_message(chat_id, f"Filing this into category \"{entry['display']}\".")
     worker = threading.Thread(
         target=_run_category_ingest,
@@ -1725,11 +1818,18 @@ def handle_document_message(chat_id: int, message: dict, caption: str) -> bool:
             set_pending_category(
                 chat_id, {"path": str(staged), "kind": "document", "note": "", "original_name": original_name}
             )
+            duplicate = find_duplicate(staged, duplicate_places())
+            dup_note = (
+                f"\n<i>Already saved in {esc(duplicate[0])} ({esc(duplicate[1])}).</i>" if duplicate else ""
+            )
             send_category_picker(
                 chat_id,
-                f"<b>檔案｜選擇分類</b>\n{RULE}\n{esc(original_name or staged.name)}\n\n"
+                f"<b>檔案｜選擇分類</b>\n{RULE}\n{esc(original_name or staged.name)}{dup_note}\n\n"
                 "Tap a category, or type a new name.\n"
                 "/cancel files it into the general knowledge base.",
+                staged=staged,
+                name=original_name or staged.name,
+                duplicate=duplicate is not None,
             )
             log(f"[category] pending document chat_id={chat_id} staged={staged.name}")
             return True
@@ -1939,8 +2039,17 @@ Show your word list, newest first. /vocab rm <word> removes a word.
 Review the saved words that are due today (spaced repetition): up to 5
 questions, answered in one typed message.
 
+/vocab quiz
+A quick button quiz on the words you looked up this week (also offered on
+Sundays).
+
+/say <word>
+Pronunciation practice: record yourself saying it; speech recognition
+checks what it heard (no word = one from your list).
+
 /vocab export
-Get your word list as a file to import into Anki (File > Import)."""
+Get your word list as an Anki deck (.apkg) with UK / US audio when
+pronunciation is on; /vocab export tsv for a plain Anki import file."""
 
 
 def help_text() -> str:
@@ -2239,10 +2348,234 @@ def handle_bare_word_lookup(chat_id: int, message: dict) -> bool:
     return True
 
 
-def _export_word_list(chat_id: int) -> None:
+# /say sessions: chat_id -> {"word": str, "expires_at": float}. The next voice
+# message is the attempt (short-lived, so it never swallows a daily-task reply
+# much later).
+SAY_PENDING: dict[int, dict] = {}
+SAY_LOCK = threading.Lock()
+SAY_TTL_SECONDS = 10 * 60
+
+
+def start_say(chat_id: int, word: str) -> None:
+    word = " ".join(word.split())
+    if not word:
+        entries = list_word_list(qdrant, settings.tracker_collection, str(chat_id))[:20]
+        if not entries:
+            send_message(chat_id, "Usage: /say <word> -- or look words up first and /say picks one of them.")
+            return
+        import random
+
+        word = (random.choice(entries).get("display_word") or "").strip()
+    with SAY_LOCK:
+        SAY_PENDING[chat_id] = {"word": word, "expires_at": time.time() + SAY_TTL_SECONDS}
+    rows = pronunciation_rows(word)
+    if rows:
+        send_card_with_buttons(chat_id, render_say_prompt(word), rows)
+    else:
+        send_html(chat_id, render_say_prompt(word))
+
+
+def _check_say(chat_id: int, word: str, audio_path: Path) -> None:
+    try:
+        heard = transcriber.transcribe(audio_path)
+    except Exception as exc:  # noqa: BLE001
+        log(f"[vocab] /say transcription failed: {exc}")
+        send_message(chat_id, "Couldn't check that recording -- try /say again.")
+        return
+    finally:
+        audio_path.unlink(missing_ok=True)
+    ok = pronunciation_matches(word, heard)
+    key = _tts_key(word)
+    rows = [[{"text": "Try again", "callback_data": f"say:{key}"}]] + pronunciation_rows(word)
+    send_card_with_buttons(chat_id, render_say_result(word, heard, ok), rows)
+    log(f"[vocab] /say chat_id={chat_id} ok={ok}")
+
+
+def handle_say_reply(chat_id: int, message: dict) -> bool:
+    """While a /say is open, the next voice message is the attempt."""
+    voice = message.get("voice") or message.get("audio")
+    if not voice:
+        return False
+    with SAY_LOCK:
+        pending = SAY_PENDING.get(chat_id)
+        if pending is None:
+            return False
+        SAY_PENDING.pop(chat_id, None)
+    if time.time() > pending["expires_at"]:
+        return False
+    file_id = voice.get("file_id")
+    if not file_id:
+        return False
+    file_info = telegram_file_info(file_id)
+    suffix = extension_from_file_path(file_info.get("file_path", ""), voice.get("mime_type"), ".ogg")
+    target = unique_path(settings.inbox_path / "audio" / "telegram", f"{timestamp()}-say{suffix}")
+    path, _ = download_telegram_file(file_id, target)
+    threading.Thread(target=_check_say, args=(chat_id, pending["word"], path), daemon=True).start()
+    return True
+
+
+def handle_say_callback(chat_id: int, data: str, answer) -> None:
+    key = data[len("say:"):]
+    with TTS_TEXTS_LOCK:
+        word = TTS_TEXTS.get(key)
+    if word is None:
+        _load_tts_texts()
+        with TTS_TEXTS_LOCK:
+            word = TTS_TEXTS.get(key)
+    if not word:
+        answer("This button has expired -- send /say <word>.")
+        return
+    answer()
+    start_say(chat_id, word)
+
+
+# Button quizzes on recent words: chat_id -> {"questions", "index", "results"}.
+QUIZ_PENDING: dict[int, dict] = {}
+QUIZ_LOCK = threading.Lock()
+
+
+def start_quiz(chat_id: int) -> bool:
+    entries = list_word_list(qdrant, settings.tracker_collection, str(chat_id))
+    since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    questions = build_quiz(entries, since_iso=since, seed=int(time.time()))
+    if not questions:
+        send_message(chat_id, "A quiz needs at least two saved words -- look some up with /w first.")
+        return False
+    with QUIZ_LOCK:
+        QUIZ_PENDING[chat_id] = {"questions": questions, "index": 0, "results": []}
+    _send_quiz_question(chat_id)
+    return True
+
+
+def _send_quiz_question(chat_id: int) -> None:
+    with QUIZ_LOCK:
+        session = QUIZ_PENDING.get(chat_id)
+        if not session:
+            return
+        index, questions = session["index"], session["questions"]
+    question = questions[index]
+    buttons = [{"text": option, "callback_data": f"vq:{index}:{n}"} for n, option in enumerate(question["options"])]
+    send_card_with_buttons(chat_id, render_quiz_question(index + 1, len(questions), question),
+                           [buttons[i : i + 2] for i in range(0, len(buttons), 2)])
+
+
+def handle_quiz_callback(chat_id: int, message_id: int | None, data: str, answer) -> None:
+    if data == "vq:start":
+        answer()
+        if message_id:
+            close_category_pickers(chat_id, {"prompt_ids": [message_id]})
+        start_quiz(chat_id)
+        return
+    try:
+        _, index_text, choice_text = data.split(":")
+        index, choice = int(index_text), int(choice_text)
+    except ValueError:
+        answer()
+        return
+    with QUIZ_LOCK:
+        session = QUIZ_PENDING.get(chat_id)
+        if not session or session["index"] != index:
+            session = None
+        else:
+            question = session["questions"][index]
+            right = choice == question["answer"]
+            session["results"].append((question["word"], right))
+            session["index"] += 1
+            finished = session["index"] >= len(session["questions"])
+            results = list(session["results"])
+            if finished:
+                QUIZ_PENDING.pop(chat_id, None)
+    if session is None:
+        answer("This quiz has ended -- send /vocab quiz for a new one.")
+        return
+    answer("Right!" if right else f"It's {question['word']}")
+    if message_id:
+        _edit_card(chat_id, message_id, render_quiz_question(index + 1, len(session["questions"]), question, choice))
+    if finished:
+        send_html(chat_id, render_quiz_summary(results))
+    else:
+        _send_quiz_question(chat_id)
+
+
+def offer_weekly_quiz(owners: list[str]) -> None:
+    """Sunday: invite each learner to a quiz on the words they looked up."""
+    since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    for owner in owners:
+        try:
+            entries = list_word_list(qdrant, settings.tracker_collection, owner)
+        except Exception as exc:  # noqa: BLE001
+            log(f"[vocab] quiz offer skipped owner={owner}: {exc}")
+            continue
+        recent = [e for e in entries if e.get("source") != "weekly_chunk" and (e.get("added_at") or "") >= since]
+        if len(recent) < 2:
+            continue
+        send_card_with_buttons(
+            int(owner),
+            f"<b>【本週小測驗】</b>\n{RULE}\nYou looked up {len(recent)} words this week -- "
+            "a quick quiz on them? Tap the answers, no typing.",
+            [[{"text": "Start quiz", "callback_data": "vq:start"}]],
+        )
+
+
+ANKI_MAX_WORDS = 500
+
+
+def build_anki_notes(entries: list[dict], speak=None) -> list[AnkiNote]:
+    """Word-list entries as Anki notes; speak(text, accent) -> MP3 bytes adds
+    UK / US audio (a word whose audio fails is kept without it)."""
+    notes = []
+    for entry in entries[:ANKI_MAX_WORDS]:
+        word = entry.get("display_word") or entry.get("word") or ""
+        if not word:
+            continue
+        audio = {}
+        for accent in ("uk", "us"):
+            if speak is None:
+                continue
+            try:
+                audio[accent] = speak(word, accent)
+            except Exception as exc:  # noqa: BLE001
+                log(f"[vocab] anki audio failed word={word!r} accent={accent}: {exc}")
+        notes.append(AnkiNote(
+            word=word,
+            phonetic=entry.get("phonetic") or "",
+            meaning=esc(entry.get("meaning") or "").replace("\n", "<br>"),
+            sentence=esc(entry.get("context_sentence") or ""),
+            audio_uk=audio.get("uk"),
+            audio_us=audio.get("us"),
+            tags=["openclaw_chunk" if entry.get("source") == "weekly_chunk" else "openclaw_lookup"],
+        ))
+    return notes
+
+
+def _export_anki_package(chat_id: int, entries: list[dict]) -> None:
+    send_message(chat_id, f"Making your Anki deck with UK / US audio for {min(len(entries), ANKI_MAX_WORDS)} "
+                          "words -- new words take about a second each.")
+    try:
+        notes = build_anki_notes(entries, speak=lambda text, accent: tts.speak(text, accent, "mp3"))
+        directory = settings.inbox_path.parent / ".openclaw" / "exports"
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"openclaw-words-{chat_id}-{_vocab_today().isoformat()}.apkg"
+        count = write_apkg(path, "OpenClaw words", notes)
+        send_document_file(
+            chat_id,
+            path,
+            f"{count} words with UK / US audio. Open this file with Anki (or File > Import) -- it goes into "
+            "the \"OpenClaw words\" deck; importing a newer one updates the same cards.",
+        )
+        log(f"[vocab] exported apkg chat_id={chat_id} words={count}")
+    except Exception as exc:  # noqa: BLE001
+        log(f"[vocab] apkg export failed chat_id={chat_id}: {exc}")
+        send_message(chat_id, f"Couldn't build the Anki deck: {exc} -- /vocab export tsv still works.")
+
+
+def _export_word_list(chat_id: int, fmt: str = "") -> None:
     entries = list_word_list(qdrant, settings.tracker_collection, str(chat_id))
     if not entries:
         send_message(chat_id, "Your word list is empty -- nothing to export yet.")
+        return
+    if fmt != "tsv" and settings.tts_enabled:
+        threading.Thread(target=_export_anki_package, args=(chat_id, entries), daemon=True).start()
         return
     directory = settings.inbox_path.parent / ".openclaw" / "exports"
     directory.mkdir(parents=True, exist_ok=True)
@@ -2283,6 +2616,9 @@ def handle_vocabulary_command(chat_id: int, text: str) -> bool:
     if not settings.dictionary_enabled:
         return False
     lowered = text.lower()
+    if lowered == "/say" or lowered.startswith("/say "):
+        start_say(chat_id, text[4:].strip())
+        return True
     if lowered == "/w" or lowered.startswith("/w "):
         word, sentence = parse_lookup_command(text)
         if not word:
@@ -2301,8 +2637,11 @@ def handle_vocabulary_command(chat_id: int, text: str) -> bool:
         if len(parts) >= 2 and parts[1].lower() == "review":
             _start_vocab_review(chat_id)
             return True
+        if len(parts) >= 2 and parts[1].lower() == "quiz":
+            start_quiz(chat_id)
+            return True
         if len(parts) >= 2 and parts[1].lower() == "export":
-            _export_word_list(chat_id)
+            _export_word_list(chat_id, parts[2].strip().lower() if len(parts) == 3 else "")
             return True
         if len(parts) >= 2 and parts[1].lower() == "rm":
             word = parts[2] if len(parts) == 3 else ""
@@ -2329,7 +2668,9 @@ def menu_items() -> list[tuple[str, str]]:
     if settings.night_ritual_enabled:
         items += [("Start tonight", "/night start"), ("Night history", "/night")]
     if settings.dictionary_enabled:
-        items += [("Word list", "/vocab"), ("Word review", "/vocab review"), ("Anki export", "/vocab export")]
+        items += [("Word list", "/vocab"), ("Word review", "/vocab review"), ("Word quiz", "/vocab quiz"),
+                  ("Say a word", "/say"),
+                  ("Anki export", "/vocab export")]
     items += [("Memory", "/mem list"), ("Upcoming", "/mem upcoming")]
     if settings.category_rag_enabled:
         items.append(("Categories", "/cat list"))
@@ -2355,7 +2696,8 @@ def handle_menu_callback(chat_id: int, data: str, answer) -> None:
 WORD_BUTTON_PREFIX = "vw:rm:"
 
 
-def _word_list_view(chat_id: int, editing: bool) -> tuple[str, list[list[dict]]]:
+def _word_list_view(chat_id: int, editing: bool | str) -> tuple[str, list[list[dict]]]:
+    """editing: False (the list), True (✕ buttons) or "say" (🔊 buttons)."""
     owner = str(chat_id)
     entries = list_word_list(qdrant, settings.tracker_collection, owner)
     due = count_due_words(qdrant, settings.tracker_collection, owner, _vocab_today()) if entries else 0
@@ -2363,7 +2705,19 @@ def _word_list_view(chat_id: int, editing: bool) -> tuple[str, list[list[dict]]]
     if not entries:
         return html, []
     if not editing:
-        return html, [[{"text": "Remove words…", "callback_data": "vw:edit"}]]
+        first = [{"text": "Remove words…", "callback_data": "vw:edit"}]
+        if settings.tts_enabled:
+            first.append({"text": "🔊 Pronounce…", "callback_data": "vw:say"})
+        return html, [first]
+    if editing == "say":
+        buttons = [
+            {"text": f"🔊 {word}", "callback_data": f"{TTS_PREFIX}{_tts_key(word)}:uk"}
+            for entry in entries[:LIST_LIMIT]
+            if (word := entry.get("display_word") or entry.get("word", ""))
+        ]
+        rows = [buttons[i : i + 3] for i in range(0, len(buttons), 3)]
+        rows.append([{"text": "Done", "callback_data": "vw:done"}])
+        return html, rows
     buttons = []
     for entry in entries[:LIST_LIMIT]:
         word = entry.get("display_word") or entry.get("word", "")
@@ -2393,7 +2747,7 @@ def handle_word_list_callback(chat_id: int, message_id: int | None, data: str, a
         editing = True
     else:
         answer()
-        editing = data == "vw:edit"
+        editing = {"vw:edit": True, "vw:say": "say"}.get(data, False)
     if not message_id:
         return
     html, rows = _word_list_view(chat_id, editing=editing)
@@ -2749,6 +3103,7 @@ def setup_bot_commands() -> None:
         commands[1:1] = [
             {"command": "w", "description": "Look up a word (added to your word list)"},
             {"command": "vocab", "description": "Show your word list"},
+            {"command": "say", "description": "Pronunciation practice: say a word"},
         ]
     commands.insert(0, {"command": "menu", "description": "Buttons for the common commands"})
     if settings.night_ritual_enabled:
@@ -2786,6 +3141,106 @@ def ack_message(text: str) -> str:
     return ACK_MESSAGES.get(agent.name, DEFAULT_ACK_MESSAGE)
 
 
+# /rag answers the buttons refer to: key -> {"question", "answer", "chat_id"}.
+RAG_ANSWERS: "OrderedDict[str, dict]" = OrderedDict()
+RAG_ANSWERS_MAX = 200
+# chat_id -> {"question", "answer", "expires_at"} while a follow-up is awaited.
+RAG_FOLLOWUP: dict[int, dict] = {}
+RAG_LOCK = threading.Lock()
+RAG_FOLLOWUP_TTL = 10 * 60
+_RAG_SCOPE = re.compile(r"^((?:(?:source|tag|since|before):\S+\s+|[#＃](?:\[[^\]]+\]|\S+)\s+)*)")
+
+
+def rag_answer_rows(chat_id: int, question: str, answer: str) -> list[list[dict]]:
+    """Buttons under a /rag answer: its passages, a follow-up, and (with
+    categories on) saving the answer as a document."""
+    if not question.startswith(("/rag ", "rag:")) or question.strip().lower().startswith("/rag digest"):
+        return []
+    key = hashlib.sha1(f"{chat_id}:{question}:{answer}".encode("utf-8")).hexdigest()[:12]
+    with RAG_LOCK:
+        RAG_ANSWERS[key] = {"question": question, "answer": answer}
+        while len(RAG_ANSWERS) > RAG_ANSWERS_MAX:
+            RAG_ANSWERS.popitem(last=False)
+    row = []
+    if sources_for_answer(answer):
+        row.append({"text": "📄 Show sources", "callback_data": f"rag:src:{key}"})
+    row.append({"text": "↪ Follow-up", "callback_data": f"rag:ask:{key}"})
+    if settings.category_rag_enabled:
+        row.append({"text": "💾 Save answer", "callback_data": f"rag:save:{key}"})
+    return [row]
+
+
+def send_plain_with_buttons(chat_id: int, text: str, rows: list[list[dict]]) -> None:
+    try:
+        telegram("sendMessage", {"chat_id": chat_id, "text": text, "reply_markup": {"inline_keyboard": rows}})
+    except Exception as exc:  # noqa: BLE001
+        log(f"[telegram] answer with buttons failed: {exc}")
+        send_message(chat_id, text)
+
+
+def follow_up_query(question: str, text: str) -> str:
+    """Keep the first question's scope (#category, source:, tag:...) and name
+    it, so retrieval and the model both see what the follow-up refers to."""
+    body = question.split(" ", 1)[1] if " " in question else ""
+    scope = _RAG_SCOPE.match(body).group(1) if body else ""
+    previous = body[len(scope):].strip()
+    return f"/rag {scope}{text.strip()} (follow-up to: {previous})"
+
+
+def handle_rag_callback(chat_id: int, message_id: int | None, data: str, answer) -> None:
+    _, action, key = (data.split(":", 2) + ["", ""])[:3]
+    with RAG_LOCK:
+        record = RAG_ANSWERS.get(key)
+    if record is None:
+        answer("This answer has expired -- ask again with /rag.")
+        return
+    if action == "src":
+        answer()
+        passages = sources_for_answer(record["answer"])
+        if not passages:
+            send_message(chat_id, "The passages for this answer are no longer kept -- ask again with /rag.")
+            return
+        blocks = [f"{bold(p['source'])}\n{esc(p['text'][:400] + ('…' if len(p['text']) > 400 else ''))}" for p in passages[:5]]
+        send_html(chat_id, f"<b>【來源】</b>· Sources\n{RULE}\n" + "\n\n".join(blocks))
+        return
+    if action == "ask":
+        answer()
+        with RAG_LOCK:
+            RAG_FOLLOWUP[chat_id] = {**record, "expires_at": time.time() + RAG_FOLLOWUP_TTL}
+        telegram("sendMessage", {
+            "chat_id": chat_id,
+            "text": "Type your follow-up question.",
+            "reply_markup": {"force_reply": True, "input_field_placeholder": "Follow-up question"},
+        })
+        return
+    if action == "save" and settings.category_rag_enabled:
+        answer()
+        question_text = record["question"].split(" ", 1)[1] if " " in record["question"] else record["question"]
+        staged = unique_path(category_staging_dir(), f"{timestamp()}-rag-answer.md")
+        staged.parent.mkdir(parents=True, exist_ok=True)
+        staged.write_text(f"# {question_text}\n\n{record['answer']}\n", encoding="utf-8")
+        set_pending_category(chat_id, {"path": str(staged), "kind": "document", "note": "",
+                                       "original_name": f"rag answer: {question_text[:60]}.md"})
+        send_category_picker(chat_id, f"<b>檔案｜選擇分類</b>\n{RULE}\nSave this answer into which category?\n\n"
+                                      "Tap a category, or type a new name.")
+        return
+    answer()
+
+
+def handle_rag_followup(chat_id: int, message: dict) -> bool:
+    text = (message.get("text") or "").strip()
+    if not text or text.startswith("/"):
+        return False
+    with RAG_LOCK:
+        pending = RAG_FOLLOWUP.pop(chat_id, None)
+    if not pending or time.time() > pending["expires_at"]:
+        return False
+    threading.Thread(
+        target=handle_text_message, args=(chat_id, follow_up_query(pending["question"], text)), daemon=True
+    ).start()
+    return True
+
+
 def handle_text_message(chat_id: int, text: str) -> None:
     global ACTIVE_REQUESTS
     with ACTIVE_LOCK:
@@ -2803,7 +3258,12 @@ def handle_text_message(chat_id: int, text: str) -> None:
             else:
                 send_message(chat_id, f"The OpenClaw runtime could not respond right now: {exc}")
             return
-        send_message(chat_id, dispatch.answer or "The OpenClaw runtime returned an empty reply.")
+        answer = dispatch.answer or "The OpenClaw runtime returned an empty reply."
+        rows = rag_answer_rows(chat_id, text, answer) if dispatch.agent_name == "rag_agent" else []
+        if rows and len(answer) <= settings.max_reply_chars:
+            send_plain_with_buttons(chat_id, answer, rows)
+        else:
+            send_message(chat_id, answer)
         log(
             f"[runtime] done chat_id={chat_id} task_id={dispatch.task_id} agent={dispatch.agent_name} "
             f"duration_ms={dispatch.duration_ms} answer_chars={len(dispatch.answer or '')}"
@@ -2836,6 +3296,10 @@ def handle_message(message: dict) -> None:
         if night_command(chat_id, text):
             return
         if handle_night_reply(chat_id, message):
+            return
+        if handle_rag_followup(chat_id, message):
+            return
+        if settings.dictionary_enabled and handle_say_reply(chat_id, message):
             return
         if handle_vocab_review_answer(chat_id, message):
             return
@@ -2980,7 +3444,7 @@ Night ritual (22:30, Sun-Fri):
 /night start      Start (or pick up) tonight's four questions now
 /night 7d         The last 7 nights in full
 /night 2026-09-28 One night
-/night week       Last week's report · /night month  last month's
+/night week       Last week's report · /night month  last month's · /night year
 /night move 2026-09-29 2026-09-28   Re-date a night (e.g. one you wrote about yesterday)
 """
 
@@ -3099,7 +3563,7 @@ def handle_night_callback(chat_id: int, message_id: int | None, data: str, answe
     _send_night_question(chat_id, step)
 
 
-def _night_answer(chat_id: int, text: str) -> None:
+def _night_answer(chat_id: int, text: str, spoken: str = "") -> None:
     with NIGHT_ANSWER_LOCK:
         pending = _peek_night_pending(chat_id)
         if not pending or pending.get("step") in (None, "check"):
@@ -3109,6 +3573,8 @@ def _night_answer(chat_id: int, text: str) -> None:
         day = date.fromisoformat(pending["date"])
         entry = store.load(owner, day) or new_entry(day, _night_now().isoformat())
         entry.setdefault("answers", {})[pending["step"]] = text.strip()
+        if spoken:
+            entry.setdefault("spoken", {})[pending["step"]] = spoken.strip()
         following = next_step(entry)
         if following is not None:
             store.save(owner, entry)
@@ -3216,7 +3682,10 @@ def handle_night_reply(chat_id: int, message: dict) -> bool:
         if not transcript.strip():
             send_message(chat_id, "Didn't catch any words in that one -- try again, or type it.")
             return
-        _night_answer(chat_id, transcript)
+        step = (_peek_night_pending(chat_id) or {}).get("step", "")
+        condensed = condense_voice_answer(llm, step, transcript) if step in ("wins", "better", "adjust", "first") \
+            else transcript
+        _night_answer(chat_id, condensed, spoken=transcript if condensed != transcript.strip() else "")
 
     threading.Thread(target=transcribe_and_answer, daemon=True).start()
     return True
@@ -3271,7 +3740,7 @@ def night_command(chat_id: int, text: str) -> bool:
         send_message(chat_id, f"Moved the night of {source.isoformat()} to {target.isoformat()}.")
         log(f"[night] moved {source} -> {target}")
         return True
-    if arg in ("week", "month"):
+    if arg in ("week", "month", "year"):
         send_message(chat_id, f"Putting together the {arg} report…")
 
         def report() -> None:
@@ -3391,6 +3860,38 @@ def night_tick(now: datetime, state: dict) -> None:
         state.pop("reports", None)
 
 
+def housekeeping_due(now: datetime, last_date: str) -> bool:
+    if not settings.housekeeping_time:
+        return False
+    return now.time() >= _hhmm(settings.housekeeping_time) and last_date != now.date().isoformat()
+
+
+def _housekeeping_loop() -> None:
+    """Once a day: delete this bot's short-lived files (see housekeeping.py)."""
+    workspace = settings.inbox_path.parent
+    tz = ZoneInfo(settings.cron_timezone or "UTC")
+    last = ""
+    try:
+        last = json.loads((workspace / ".openclaw" / "housekeeping.json").read_text(encoding="utf-8")).get("date", "")
+    except (OSError, json.JSONDecodeError):
+        pass
+    while RUNNING:
+        now = datetime.now(tz)
+        if housekeeping_due(now, last):
+            last = now.date().isoformat()
+            try:
+                result = run_cleanup(workspace, audio_days=settings.audio_retention_days)
+                write_status(workspace, result)
+                status_path = workspace / ".openclaw" / "housekeeping.json"
+                data = json.loads(status_path.read_text(encoding="utf-8"))
+                data["date"] = last
+                status_path.write_text(json.dumps(data), encoding="utf-8")
+                log(f"[housekeeping] removed files={result.files} bytes={result.bytes} {result.by_area}")
+            except Exception:
+                log(f"[housekeeping] error: {traceback.format_exc()}")
+        time.sleep(600)
+
+
 def _night_ritual_loop() -> None:
     while RUNNING:
         try:
@@ -3440,6 +3941,37 @@ def _english_bot_set_pending_answer(owner: str, item: dict) -> None:
     set_pending_answer(int(owner), item)
     if item.get("kind") == "eng_mon":
         _send_gist_card(int(owner), int(item.get("week_number") or 0))
+    if item.get("kind") in ("eng_mon", "eng_fri"):
+        _send_chunk_pronunciation(int(owner), int(item.get("week_number") or 0))
+
+
+def _send_chunk_pronunciation(chat_id: int, week_number: int) -> None:
+    """🔊 for this week's chunks and their examples (Monday and Friday --
+    not Saturday, where hearing them would give the cloze away)."""
+    if not settings.tts_enabled:
+        return
+    try:
+        chunks = read_this_week_chunks(qdrant, settings.tracker_collection, week_number)
+    except Exception as exc:  # noqa: BLE001
+        log(f"[tts] chunk pronunciation skipped: {exc}")
+        return
+    rows = []
+    for chunk in chunks:
+        phrase = (chunk.get("phrase") or "").strip()
+        if not phrase:
+            continue
+        key = _tts_key(phrase)
+        rows.append([{"text": f"🔊 UK · {phrase}", "callback_data": f"{TTS_PREFIX}{key}:uk"},
+                     {"text": "🔊 US", "callback_data": f"{TTS_PREFIX}{key}:us"}])
+        example = (chunk.get("context_sentence") or "").strip()
+        if example:
+            key = _tts_key(example)
+            rows.append([{"text": "🔊 UK example", "callback_data": f"{TTS_PREFIX}{key}:uk"},
+                         {"text": "🔊 US example", "callback_data": f"{TTS_PREFIX}{key}:us"}])
+    if rows:
+        send_card_with_buttons(
+            chat_id, f"<b>【語塊發音】</b>· Week {week_number}\n{RULE}\nHear this week's chunks and examples.", rows
+        )
 
 
 def _send_gist_card(chat_id: int, week_number: int) -> None:
@@ -3563,6 +4095,8 @@ def _english_bot_scheduler_loop() -> None:
                 write_english_bot_state(settings.english_bot_state_path, state)
                 source = "prepared" if prepared is not None else "live"
                 log(f"[english_bot] pushed day={day_code} owners={owners} ({source})")
+                if day_code == "sun" and settings.dictionary_enabled:
+                    offer_weekly_quiz(owners)
                 alerter.resolve("english-scheduler", "The English bot pushed today's task.")
             if should_sweep_today(now, settings.english_bot_sweep_time, state):
                 swept = run_todays_sweep(qdrant, settings.tracker_collection, owners)
@@ -3595,6 +4129,8 @@ def main() -> int:
     log(f"[skills] loaded={[skill.name for skill in skill_router.skills]}")
     log(f"[agents] loaded={[agent.name for agent in agent_registry.agents]}")
     restore_pending_state()
+
+    threading.Thread(target=_housekeeping_loop, daemon=True).start()
 
     if settings.night_ritual_enabled and settings.night_ritual_owner:
         threading.Thread(target=_night_ritual_loop, daemon=True).start()

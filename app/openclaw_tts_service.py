@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Local text-to-speech for pronunciation audio (Kokoro-82M on CPU).
 
-POST /speak {"text": "...", "accent": "uk" | "us"} -> audio/ogg (Opus, mono,
-48 kHz) -- ready to send as a Telegram voice message.
+POST /speak {"text": "...", "accent": "uk" | "us", "format": "ogg" | "mp3"}
+-> audio/ogg (Opus, mono, 48 kHz, ready to send as a Telegram voice message)
+or audio/mpeg (MP3, for Anki decks -- every Anki app plays MP3).
 GET /health -> {"ok": true, "loaded": [...]}.
 
 Runs on CPU so the GPU stays with the main model. Every clip is cached on
@@ -16,6 +17,7 @@ import json
 import os
 import sys
 import threading
+import time
 import traceback
 import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -25,6 +27,7 @@ HOST = os.environ.get("OPENCLAW_TTS_HOST", "0.0.0.0")
 PORT = int(os.environ.get("OPENCLAW_TTS_PORT", "8766"))
 CACHE_DIR = Path(os.environ.get("OPENCLAW_TTS_CACHE_DIR", "/cache/tts"))
 MAX_TEXT_CHARS = int(os.environ.get("OPENCLAW_TTS_MAX_CHARS", "300"))
+CACHE_DAYS = int(os.environ.get("OPENCLAW_TTS_CACHE_DAYS", "180"))
 SAMPLE_RATE = 24000  # Kokoro's output rate
 
 # accent -> (Kokoro lang_code, voice)
@@ -39,6 +42,9 @@ _lock = threading.Lock()  # one synthesis at a time: torch on a small CPU budget
 
 class BadRequest(ValueError):
     pass
+
+
+FORMATS = {"ogg": "audio/ogg", "mp3": "audio/mpeg"}
 
 
 def parse_request(body: bytes) -> tuple[str, str]:
@@ -57,14 +63,25 @@ def parse_request(body: bytes) -> tuple[str, str]:
     return text, accent
 
 
-def cache_path(text: str, accent: str) -> Path:
+def parse_format(body: bytes) -> str:
+    try:
+        fmt = str(json.loads(body or b"{}").get("format") or "ogg").lower()
+    except json.JSONDecodeError:
+        fmt = "ogg"
+    if fmt not in FORMATS:
+        raise BadRequest(f"format must be one of {sorted(FORMATS)}")
+    return fmt
+
+
+def cache_path(text: str, accent: str, fmt: str = "ogg") -> Path:
     voice = VOICES[accent][1]
     digest = hashlib.sha256(f"{voice}\n{text}".encode("utf-8")).hexdigest()[:32]
-    return CACHE_DIR / accent / f"{digest}.ogg"
+    return CACHE_DIR / accent / f"{digest}.{fmt}"
 
 
-def pcm_to_ogg(pcm16: bytes, rate: int = SAMPLE_RATE) -> bytes:
-    """16-bit mono PCM -> Ogg/Opus bytes (Telegram voice-message format)."""
+def pcm_to_ogg(pcm16: bytes, rate: int = SAMPLE_RATE, fmt: str = "ogg") -> bytes:
+    """16-bit mono PCM -> Ogg/Opus bytes (Telegram voice-message format), or
+    MP3 with fmt="mp3"."""
     import av
 
     wav = io.BytesIO()
@@ -76,10 +93,16 @@ def pcm_to_ogg(pcm16: bytes, rate: int = SAMPLE_RATE) -> bytes:
     wav.seek(0)
     out_buffer = io.BytesIO()
     source = av.open(wav, format="wav")
-    output = av.open(out_buffer, "w", format="ogg")
-    stream = output.add_stream("libopus", rate=48000)
-    stream.layout = "mono"
-    resampler = av.AudioResampler(format="s16", layout="mono", rate=48000)
+    if fmt == "mp3":
+        output = av.open(out_buffer, "w", format="mp3")
+        stream = output.add_stream("libmp3lame", rate=rate)
+        stream.layout = "mono"
+        resampler = av.AudioResampler(format="s16p", layout="mono", rate=rate)
+    else:
+        output = av.open(out_buffer, "w", format="ogg")
+        stream = output.add_stream("libopus", rate=48000)
+        stream.layout = "mono"
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=48000)
     for frame in source.decode(audio=0):
         for item in resampler.resample(frame):
             for packet in stream.encode(item):
@@ -102,7 +125,7 @@ def _pipeline(accent: str):
     return _pipelines[accent]
 
 
-def synthesize(text: str, accent: str) -> bytes:
+def synthesize(text: str, accent: str, fmt: str = "ogg") -> bytes:
     import numpy as np
 
     with _lock:
@@ -112,19 +135,42 @@ def synthesize(text: str, accent: str) -> bytes:
         raise RuntimeError("no audio produced")
     audio = np.concatenate(chunks)
     pcm = (np.clip(audio, -1.0, 1.0) * 32767).astype("<i2").tobytes()
-    return pcm_to_ogg(pcm)
+    return pcm_to_ogg(pcm, fmt=fmt)
 
 
-def speak(text: str, accent: str) -> bytes:
-    path = cache_path(text, accent)
+def speak(text: str, accent: str, fmt: str = "ogg") -> bytes:
+    path = cache_path(text, accent, fmt)
     if path.exists():
+        os.utime(path)  # recently used clips stay in the cache
         return path.read_bytes()
-    audio = synthesize(text, accent)
+    audio = synthesize(text, accent, fmt)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_bytes(audio)
     tmp.replace(path)
     return audio
+
+
+def prune_cache(now: float | None = None) -> int:
+    """Drop clips not used for CACHE_DAYS; returns how many."""
+    now = now or time.time()
+    removed = 0
+    for path in [p for fmt in FORMATS for p in CACHE_DIR.rglob(f"*.{fmt}")] if CACHE_DIR.is_dir() else []:
+        if now - path.stat().st_mtime > CACHE_DAYS * 86400:
+            path.unlink(missing_ok=True)
+            removed += 1
+    return removed
+
+
+def _prune_daily() -> None:
+    while True:
+        try:
+            removed = prune_cache()
+            if removed:
+                print(f"[tts] pruned {removed} cached clip(s)", flush=True)
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
+        time.sleep(86400)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -148,8 +194,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         length = int(self.headers.get("Content-Length") or 0)
         try:
-            text, accent = parse_request(self.rfile.read(length))
-            audio = speak(text, accent)
+            body = self.rfile.read(length)
+            text, accent = parse_request(body)
+            fmt = parse_format(body)
+            audio = speak(text, accent, fmt)
         except BadRequest as exc:
             self._json(400, {"error": str(exc)})
             return
@@ -158,7 +206,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(500, {"error": str(exc)})
             return
         self.send_response(200)
-        self.send_header("Content-Type", "audio/ogg")
+        self.send_header("Content-Type", FORMATS[fmt])
         self.send_header("Content-Length", str(len(audio)))
         self.end_headers()
         self.wfile.write(audio)
@@ -174,6 +222,7 @@ def main() -> int:
                 _pipeline(accent)
             except Exception:  # noqa: BLE001 - loads on first request instead
                 traceback.print_exc()
+    threading.Thread(target=_prune_daily, daemon=True).start()
     print(f"[tts] listening on {HOST}:{PORT} voices={ {k: v[1] for k, v in VOICES.items()} }", flush=True)
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
     return 0

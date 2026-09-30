@@ -379,6 +379,104 @@ def render_lookup_card(result: LookupResult, sentence: str, lookup_count: int) -
     return "\n".join(lines)
 
 
+def _say_tokens(text: str) -> list[str]:
+    return [t for t in re.sub(r"[^a-z0-9' ]", " ", (text or "").lower().replace("’", "'")).split() if t]
+
+
+def _close_enough(heard: str, expected: str) -> bool:
+    if heard == expected:
+        return True
+    if len(expected) < 5 or abs(len(heard) - len(expected)) > 1:
+        return False
+    if len(heard) == len(expected):
+        return sum(a != b for a, b in zip(heard, expected)) <= 1
+    shorter, longer = (heard, expected) if len(heard) < len(expected) else (expected, heard)
+    return any(longer[:i] + longer[i + 1 :] == shorter for i in range(len(longer)))
+
+
+def pronunciation_matches(expected: str, heard: str) -> bool:
+    """Did speech recognition hear the word or phrase? Every word of it must
+    appear, in order, anywhere in what was heard; longer words may be one
+    letter off (recognition spelling, not the speaker)."""
+    want, got = _say_tokens(expected), _say_tokens(heard)
+    if not want:
+        return False
+    position = 0
+    for token in want:
+        while position < len(got) and not _close_enough(got[position], token):
+            position += 1
+        if position == len(got):
+            return False
+        position += 1
+    return True
+
+
+def render_say_prompt(word: str) -> str:
+    return "\n".join([
+        "<b>【發音練習】</b>· Say it",
+        RULE,
+        f"Record a voice message saying: {bold(word)}",
+        "",
+        italic("Tap 🔊 to hear it first. Speech recognition checks what it heard."),
+    ])
+
+
+def render_say_result(word: str, heard: str, ok: bool) -> str:
+    lines = ["<b>【發音練習】</b>· Result", RULE]
+    lines.append(f"{'✅ Clear' if ok else '❌ Not quite'} — {bold(word)}")
+    lines.append(f"Heard: “{esc(heard.strip() or '(nothing)')}”")
+    if not ok:
+        lines += ["", "Listen once more, then try again -- stress the right syllable and finish the last sound."]
+    return "\n".join(lines)
+
+
+QUIZ_SIZE = 5
+
+
+def build_quiz(entries: list[dict], *, since_iso: str, seed: int, size: int = QUIZ_SIZE) -> list[dict]:
+    """Multiple-choice questions on words looked up since since_iso: the
+    meaning is shown, the options are the word and up to three others from
+    the learner's own list. Falls back to the newest words when fewer than
+    two were looked up recently. [] if the list has fewer than two words."""
+    import random
+
+    looked_up = [e for e in entries if (e.get("display_word") or e.get("word")) and e.get("meaning")]
+    if len(looked_up) < 2:
+        return []
+    recent = [e for e in looked_up if e.get("source") != "weekly_chunk" and (e.get("added_at") or "") >= since_iso]
+    pool = recent if len(recent) >= 2 else looked_up[:size]
+    rng = random.Random(seed)
+    picked = rng.sample(pool, min(size, len(pool)))
+    words = [e.get("display_word") or e.get("word") for e in looked_up]
+    questions = []
+    for entry in picked:
+        word = entry.get("display_word") or entry.get("word")
+        others = [w for w in dict.fromkeys(words) if w.lower() != word.lower()]
+        options = rng.sample(others, min(3, len(others))) + [word]
+        rng.shuffle(options)
+        meaning = " ".join((entry.get("meaning") or "").split())
+        questions.append({"word": word, "meaning": meaning[:160], "options": options, "answer": options.index(word)})
+    return questions
+
+
+def render_quiz_question(index: int, total: int, question: dict, chosen: int | None = None) -> str:
+    lines = [f"<b>【本週小測驗】</b>· {index}/{total}", RULE, "Which word means:", bold(question["meaning"])]
+    if chosen is not None:
+        right = chosen == question["answer"]
+        lines += ["", f"{'✅' if right else '❌'} {esc(question['options'][chosen])}"
+                  + ("" if right else f" — it's {bold(question['word'])}")]
+    return "\n".join(lines)
+
+
+def render_quiz_summary(results: list[tuple[str, bool]]) -> str:
+    right = sum(1 for _, ok in results if ok)
+    lines = ["<b>【本週小測驗】</b>· Done", RULE, f"{right} of {len(results)} right"]
+    missed = [word for word, ok in results if not ok]
+    if missed:
+        lines += ["", "Worth another look: " + ", ".join(esc(w) for w in missed)]
+    return "\n".join(lines)
+
+
 def render_word_list(entries: list[dict], due_count: int = 0) -> str:
     if not entries:
         return "Your word list is empty. Look a word up with /w <word> and it's added automatically."
