@@ -1,7 +1,7 @@
 # Future TODO List
 
 This document tracks candidate work items for `openclaw-arm-continuum`.
-Current release: **v1.22**.
+Current release: **v1.23**.
 
 The runtime is intentionally stable and text-first. The items below are
 future-facing and should be implemented incrementally without breaking the
@@ -178,14 +178,14 @@ v1.2 baseline. What has actually shipped since then:
   `/night move`; `/cat merge` keeps PDFs and drops duplicates; uploads
   waiting for a category survive restarts; a weekly watchdog health summary.
 
-- **After v1.22 (unreleased).** 🔊 UK / US pronunciation on word lookups and
+- **v1.23 — pronunciation, backups, more buttons.** 🔊 UK / US pronunciation on word lookups and
   self-check answers, from a local Kokoro TTS service (`openclaw-tts`). Then:
   nightly backups, daily cleanup and a weekly e2e run (all in the watchdog
   summary); Anki decks with audio, `/say` practice, a weekly word quiz and
   more 🔊; upload category suggestions and duplicate detection; buttons
   under `/rag` answers; tidied spoken night answers and a yearly report.
 
-Still open, re-baselined against v1.22:
+Still open, re-baselined against v1.23:
 
 **Platform / runtime**
 
