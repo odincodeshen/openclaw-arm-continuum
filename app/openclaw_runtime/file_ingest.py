@@ -1,10 +1,12 @@
 import hashlib
 import json
+import tempfile
 import re
 import time
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from openclaw_runtime.categories import (
     category_collection_name,
@@ -31,11 +33,38 @@ class IngestResult:
     reason: str = ""
 
 
+# A PDF page with fewer characters than this in its text layer is treated as
+# a scanned image and, when a page reader is set, read from its rendering.
+SCANNED_PAGE_MIN_CHARS = 20
+
+
+def render_pdf_page(path: Path, index: int, target: Path, scale: float = 2.0) -> Path:
+    """Render one PDF page (0-based) to a PNG -- about 144 dpi at scale 2."""
+    import pypdfium2
+
+    pdf = pypdfium2.PdfDocument(str(path))
+    try:
+        page = pdf[index]
+        page.render(scale=scale).to_pil().save(target, format="PNG")
+    finally:
+        pdf.close()
+    return target
+
+
 class InboxIngestor:
-    def __init__(self, settings: Settings, embeddings: EmbeddingClient, qdrant: QdrantClient) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        embeddings: EmbeddingClient,
+        qdrant: QdrantClient,
+        page_reader: Callable[[Path], str] | None = None,
+    ) -> None:
+        """page_reader(png) -> text reads a scanned PDF page (the vision
+        model's verbatim transcription); None leaves such pages empty."""
         self.settings = settings
         self.embeddings = embeddings
         self.qdrant = qdrant
+        self.page_reader = page_reader
         self.state = self._load_state()
         self._ensured_collections: set[str] = set()
 
@@ -284,15 +313,43 @@ class InboxIngestor:
 
         reader = PdfReader(str(path))
         lines = [f"# {path.name}", "", f"Source PDF: {path}", ""]
+        read_pages = 0
         for index, page in enumerate(reader.pages, 1):
             try:
                 page_text = page.extract_text() or ""
             except Exception as exc:
                 page_text = f"[PDF page extraction failed: {exc}]"
-            lines.append(f"## Page {index}")
+            heading = f"## Page {index}"
+            if (
+                len(page_text.strip()) < SCANNED_PAGE_MIN_CHARS
+                and self.page_reader is not None
+                and read_pages < self.settings.pdf_ocr_max_pages
+            ):
+                read_pages += 1
+                scanned = self._read_scanned_page(path, index - 1)
+                if scanned:
+                    page_text, heading = scanned, f"## Page {index} (read from the page image)"
+            lines.append(heading)
             lines.append(page_text.strip())
             lines.append("")
         return "\n".join(lines)
+
+    def _read_scanned_page(self, path: Path, index: int) -> str:
+        """Text of a scanned page, cached by file content and page so that
+        re-indexing the same file never reads it again."""
+        cache = self.settings.watcher_state_path.parent / "pdf_ocr" / f"{self._safe_fingerprint(path)[:24]}-{index}.txt"
+        if cache.exists():
+            return cache.read_text(encoding="utf-8")
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                image = render_pdf_page(path, index, Path(tmp) / "page.png")
+                text = (self.page_reader(image) or "").strip()
+        except Exception as exc:  # noqa: BLE001 - one unreadable page shouldn't stop the file
+            print(f"[watcher] scanned page {index + 1} of {path.name} not read: {exc}", flush=True)
+            return ""
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(text, encoding="utf-8")
+        return text
 
     def _stat_signature(self, path: Path) -> list[int]:
         stat = path.stat()

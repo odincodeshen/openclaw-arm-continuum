@@ -57,6 +57,25 @@ def check_ingest_health(results, alerter: Alerter) -> None:
         alerter.resolve("watcher-ingest", "The memory watcher is indexing files again.")
 
 
+def scanned_page_reader(settings):
+    """The vision model reading a rendered PDF page, for scanned PDFs -- or
+    None when vision is off or OPENCLAW_PDF_OCR_MAX_PAGES is 0."""
+    if not settings.vision_enabled or settings.pdf_ocr_max_pages <= 0:
+        return None
+    try:
+        import pypdfium2  # noqa: F401 - rendering is needed before anything is read
+
+        from openclaw_runtime.model_catalog import load_model_registry
+        from openclaw_runtime.model_client_factory import ModelClientFactory
+        from openclaw_runtime.vision_client import VisionClient
+
+        vision = VisionClient(ModelClientFactory(settings, load_model_registry(settings)).get_or_default("vision"))
+    except Exception as exc:  # noqa: BLE001
+        log(f"[watcher] scanned-PDF reading off: {exc}")
+        return None
+    return lambda image: vision.transcribe_image(image, max_tokens=settings.image_ocr_max_tokens)
+
+
 def main() -> int:
     settings = load_settings()
     if not settings.memory_enabled:
@@ -69,7 +88,7 @@ def main() -> int:
     embeddings = EmbeddingClient(settings)
     qdrant = QdrantClient(settings)
     qdrant.ensure_collections()
-    ingestor = InboxIngestor(settings, embeddings, qdrant)
+    ingestor = InboxIngestor(settings, embeddings, qdrant, page_reader=scanned_page_reader(settings))
     log(f"[watcher] inbox={settings.inbox_path} poll={settings.watcher_poll_seconds}s")
     logged_skips: set[tuple[str, str]] = set()
     alerter = Alerter(settings, log=log)

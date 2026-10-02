@@ -211,10 +211,42 @@ for a category created by mistake whose content is already elsewhere; use
 
 ## How photos are indexed
 
-A photo has no text, so the `vision` model is asked to produce a detailed
-description plus a verbatim transcription of any visible text. That text is
-what gets embedded; the original image is kept alongside it in
-`inbox/categories/<slug>/media/` and referenced in the chunk payload.
+An image is read by the `vision` model in two separate calls, and both are
+embedded (the original image is kept in `inbox/categories/<slug>/media/`
+and referenced in the chunk payload):
+
+1. **Text (verbatim)** -- every visible piece of text, character by
+   character, in its own language and script: English, Traditional and
+   Simplified Chinese stay as they are (never translated or converted),
+   reading order and line breaks kept, table rows as `a | b | c`. This call
+   leaves out the bot's persona and reply-language instructions so nothing
+   nudges the model to translate. Up to `OPENCLAW_IMAGE_OCR_MAX_TOKENS`
+   (default 4096) of text; a transcription cut off at that limit gets one
+   continuation call, and is marked if it's still cut off.
+2. **Description** -- at most 80 words on what the image is (screenshot,
+   ticket, receipt, document page, slide, whiteboard, handwriting, photo)
+   and what it shows beyond its text, written in the same language and
+   script as the image's text (the bot's reply language when it has none).
+
+Checked live on a UK train-ticket screenshot (complete, where the old
+single-call description had been cut off mid-line), a Traditional Chinese
+receipt and a Simplified Chinese rail ticket (both exact, script kept);
+about 10-15 s per image on the GB10.
+
+Right after an image is indexed the bot replies with a **【圖片文字】** card:
+where it went, the text it read in collapsed blocks (tap to expand; long
+text is split across several), and the description -- so a misread can be
+spotted against the picture straight away.
+
+**Photos not filed into a category** -- `/cancel`, the picker expiring, or
+a bot without categories -- go to the general knowledge base the same way
+(`inbox/knowledge/telegram/`), so every photo is searchable with plain
+`/rag`. `OPENCLAW_INDEX_CHAT_PHOTOS=false` turns that off.
+
+**Scanned PDFs** -- a PDF page with no text layer is rendered (pypdfium2,
+about 144 dpi) and read by the same verbatim call in the memory watcher, up
+to `OPENCLAW_PDF_OCR_MAX_PAGES` (default 40) pages per file. Results are
+cached by file content and page, so re-indexing never reads a page twice.
 
 Image indexing quality depends entirely on this model. Configure it in
 `models.json` (a model with role `vision` — see `app/models.example.json`),

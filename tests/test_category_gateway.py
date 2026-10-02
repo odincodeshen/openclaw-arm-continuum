@@ -361,8 +361,12 @@ class CategoryIngestTest(CategoryGatewayTestBase):
         img.write_bytes(b"\xff\xd8\xff\xd9")
 
         class FakeVision:
-            def describe_image(self, path, instruction=None, *, max_tokens=None):
-                return "A server rack with three switches. Labels: SW1, SW2, SW3."
+            def transcribe_image(self, path, *, max_tokens=4096):
+                return "SW1 | SW2 | SW3\n機櫃 B-07"
+
+            def describe_for_index(self, path, *, fallback_language="", note="", max_tokens=400):
+                self.note = note
+                return "A server rack with three switches."
 
         self._orig_vision = gateway.vision
         gateway.vision = FakeVision()
@@ -373,7 +377,8 @@ class CategoryIngestTest(CategoryGatewayTestBase):
 
         self.assertTrue(doc.name.endswith(".md"))
         body = doc.read_text(encoding="utf-8")
-        self.assertIn("A server rack", body)
+        self.assertIn("## Text (verbatim)\n\nSW1 | SW2 | SW3\n機櫃 B-07\n\n## Description\n\nA server rack", body)
+        self.assertEqual(gateway.vision.note, "機櫃照")
         sidecar_data = doc.with_name(doc.name + ".meta.json").read_text(encoding="utf-8")
         self.assertIn("image_path", sidecar_data)
         self.assertTrue((self.inbox / "categories" / entry["slug"] / "media" / "rack.jpg").exists())

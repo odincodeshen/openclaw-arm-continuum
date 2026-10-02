@@ -122,7 +122,7 @@ from openclaw_runtime.skill_router import SkillRouter
 from openclaw_runtime.source_ingest import save_google_doc
 from openclaw_runtime.task_history import TaskHistory
 from openclaw_runtime.transcription_client import TranscriptionClient
-from openclaw_runtime.vision_client import DEFAULT_DESCRIBE_INSTRUCTION, VisionClient, VisionError
+from openclaw_runtime.vision_client import VisionClient, VisionError
 from openclaw_runtime.vocabulary import (
     LIST_LIMIT,
     LOOKUP_USAGE,
@@ -703,40 +703,95 @@ def ingest_text_into_category(
     return target
 
 
-def ingest_image_into_category(
-    chat_id: int, image_path: Path, entry: dict, note: str = "", original_name: str = ""
-) -> Path:
-    """Describe an image with the vision model and index that text under a category."""
-    directory = category_dir(entry["slug"])
-    stored_image = unique_path(directory / "media", image_path.name)
-    shutil.copy2(str(image_path), str(stored_image))
+def image_index_text(image_path: Path, note: str = "") -> tuple[str, str]:
+    """(verbatim text, short description) for indexing an image. The text
+    keeps the image's own language and script; the description is written
+    in that language (the bot's reply language when there is no text)."""
+    text = vision.transcribe_image(image_path, max_tokens=settings.image_ocr_max_tokens)
+    try:
+        description = vision.describe_for_index(image_path, fallback_language=settings.reply_language, note=note)
+    except VisionError as exc:  # the text alone is still worth indexing
+        log(f"[vision] description failed {image_path.name}: {exc}")
+        description = ""
+    return text, description
 
-    instruction = DEFAULT_DESCRIBE_INSTRUCTION
-    if note:
-        instruction = f"{instruction}\n\nThe uploader added this note, use it as context: {note}"
-    description = vision.describe_image(
-        stored_image, instruction, max_tokens=settings.category_image_max_tokens
-    )
 
-    doc = unique_path(directory, f"{stored_image.stem}.md")
+IMAGE_TEXT_BLOCK_CHARS = 3000
+
+
+def render_image_text_card(name: str, place: str, text: str, description: str) -> str:
+    """What was read from an image, right after it's indexed, so it can be
+    checked against the picture. Long text is split into several collapsed
+    blocks (Telegram's message limit), each a separate part when sent."""
+    header = f"<b>【圖片文字】</b>· {esc(name)} → {esc(place)}\n{RULE}"
+    if not text:
+        blocks = ["<i>No text found in the image.</i>"]
+    else:
+        pieces, current = [], ""
+        for line in text.splitlines():
+            if current and len(current) + len(line) + 1 > IMAGE_TEXT_BLOCK_CHARS:
+                pieces.append(current)
+                current = ""
+            current = f"{current}\n{line}" if current else line[:IMAGE_TEXT_BLOCK_CHARS]
+        pieces.append(current)
+        blocks = [f"<blockquote expandable>{esc(piece)}</blockquote>" for piece in pieces]
+    parts = [header, *blocks]
+    if description:
+        parts.append(f"<i>{esc(description)}</i>")
+    return "\n\n".join(parts)
+
+
+def send_image_text_card(chat_id: int | None, name: str, place: str, text: str, description: str) -> None:
+    if not chat_id:
+        return
+    try:
+        send_html(chat_id, render_image_text_card(name, place, text, description))
+    except Exception as exc:  # noqa: BLE001 - the image is indexed either way
+        log(f"[vision] could not send the image text card: {exc}")
+
+
+def write_image_doc(doc: Path, image_path: Path, title: str, header: list[str], note: str = "",
+                    chat_id: int | None = None, name: str = "", place: str = "") -> Path:
+    text, description = image_index_text(image_path, note)
+    send_image_text_card(chat_id, name or title, place, text, description)
     doc.write_text(
         "\n".join(
             [
-                f"# {image_path.name}",
+                f"# {title}",
                 "",
-                f"Category: {entry['display']}",
+                *header,
                 "Source: telegram image",
-                f"Image: {stored_image}",
+                f"Image: {image_path}",
                 f"Indexed: {datetime.now(timezone.utc).replace(microsecond=0).isoformat()}",
                 f"Note: {note}" if note else "",
                 "",
+                "## Text (verbatim)",
+                "",
+                text or "(no text in the image)",
+                "",
                 "## Description",
                 "",
-                description,
+                description or "(no description)",
                 "",
             ]
         ),
         encoding="utf-8",
+    )
+    return doc
+
+
+def ingest_image_into_category(
+    chat_id: int, image_path: Path, entry: dict, note: str = "", original_name: str = ""
+) -> Path:
+    """Read an image's text and describe it with the vision model, and index
+    that under a category."""
+    directory = category_dir(entry["slug"])
+    stored_image = unique_path(directory / "media", image_path.name)
+    shutil.copy2(str(image_path), str(stored_image))
+    doc = write_image_doc(
+        unique_path(directory, f"{stored_image.stem}.md"), stored_image, image_path.name,
+        [f"Category: {entry['display']}"], note,
+        chat_id=chat_id, name=original_name or image_path.name, place=f"#{entry['display']}",
     )
     _write_meta_sidecar(
         doc,
@@ -749,6 +804,29 @@ def ingest_image_into_category(
             "original_file_name": original_name or image_path.name,
         },
     )
+    return doc
+
+
+def index_image_to_knowledge(
+    image_path: Path, note: str = "", original_name: str = "", chat_id: int | None = None
+) -> Path | None:
+    """A photo that isn't filed into a category still becomes searchable:
+    its text and description go to the general knowledge base."""
+    if not settings.index_chat_photos or not settings.vision_enabled:
+        return None
+    directory = settings.inbox_path / "knowledge" / "telegram"
+    stored_image = unique_path(directory / "media", image_path.name)
+    stored_image.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        shutil.copy2(str(image_path), str(stored_image))
+        doc = write_image_doc(unique_path(directory, f"{stored_image.stem}.md"), stored_image, image_path.name,
+                              ["Category: (knowledge base)"], note,
+                              chat_id=chat_id, name=original_name or image_path.name, place="knowledge base")
+    except (OSError, VisionError) as exc:
+        log(f"[vision] knowledge indexing failed {image_path.name}: {exc}")
+        return None
+    write_upload_meta(doc, original_name or image_path.name)
+    log(f"[vision] photo -> knowledge {doc.name}")
     return doc
 
 
@@ -992,11 +1070,11 @@ def handle_callback_query(query: dict) -> None:
         dropped = pop_pending_category(chat_id)
         if dropped:
             close_category_pickers(chat_id, dropped)
-            sweep_pending_items_to_default(dropped)
+            sweep_pending_items_to_default(dropped, chat_id)
         answer("Cancelled")
         if message_id:
             _edit_card(chat_id, message_id, f"<b>檔案｜已取消</b>\n{RULE}\n{names}\n\n"
-                       "Any waiting document goes to the general knowledge base.")
+                       "Anything waiting goes to the general knowledge base.")
         return
 
     slug = data[len(CATEGORY_BUTTON_PREFIX):]
@@ -1010,9 +1088,16 @@ def handle_callback_query(query: dict) -> None:
         _edit_card(chat_id, message_id, f"<b>檔案｜已分類</b>\n{RULE}\n{names} → #{esc(entry['display'])}")
 
 
-def sweep_pending_items_to_default(pending: dict) -> None:
+def sweep_pending_items_to_default(pending: dict, chat_id: int | None = None) -> None:
     """Send a dropped/expired batch's staged documents to the general knowledge inbox."""
     for item in pending.get("items", []):
+        if item.get("kind") == "image":
+            threading.Thread(
+                target=index_image_to_knowledge,
+                args=(Path(item["path"]), item.get("note", ""), item.get("original_name", ""), chat_id),
+                daemon=True,
+            ).start()
+            continue
         if item.get("kind") != "document":
             continue
         staged = Path(item["path"])
@@ -1040,7 +1125,7 @@ def sweep_expired_pending() -> None:
     for chat_id, pending in expired:
         close_category_pickers(chat_id, pending)
         had_doc = any(item.get("kind") == "document" for item in pending.get("items", []))
-        sweep_pending_items_to_default(pending)
+        sweep_pending_items_to_default(pending, chat_id)
         if had_doc:
             send_message(
                 chat_id,
@@ -1337,6 +1422,9 @@ def _route_image_to_category(
     chat_id: int, image_path: Path, category_name: str | None, note: str, original_name: str = ""
 ) -> None:
     if not settings.category_rag_enabled:
+        threading.Thread(
+            target=index_image_to_knowledge, args=(image_path, note, original_name, chat_id), daemon=True
+        ).start()
         return
     if category_name:
         _ingest_caption_category(chat_id, image_path, "image", category_name, note, original_name)
@@ -1348,7 +1436,7 @@ def _route_image_to_category(
     send_category_picker(
         chat_id,
         f"<b>圖片｜選擇分類</b>\n{RULE}\nTo also index this image for retrieval, tap a category "
-        "or type a new name (/cancel skips it). The analysis above is sent regardless.",
+        "or type a new name (/cancel keeps it in the general knowledge base). The analysis above is sent regardless.",
     )
 
 
@@ -1411,7 +1499,7 @@ def _flush_media_group(chat_id: int, media_group_id: str) -> None:
         chat_id,
         f"<b>圖片｜選擇分類</b>\n{RULE}\nTo also index "
         f"{'this image' if len(paths) == 1 else f'these {len(paths)} images'} for retrieval, tap a "
-        "category or type a new name (/cancel skips it). The analysis above is sent regardless.",
+        "category or type a new name (/cancel keeps it in the general knowledge base). The analysis above is sent regardless.",
     )
     log(f"[category] media group pending chat_id={chat_id} group={media_group_id} count={len(paths)}")
 
@@ -3391,8 +3479,8 @@ def handle_message(message: dict) -> None:
             dropped = pop_pending_category(chat_id)
             if dropped:
                 close_category_pickers(chat_id, dropped)
-                sweep_pending_items_to_default(dropped)
-                send_message(chat_id, "Okay, cancelled. Any waiting document goes to the general knowledge base.")
+                sweep_pending_items_to_default(dropped, chat_id)
+                send_message(chat_id, "Okay, cancelled. Anything waiting goes to the general knowledge base.")
             else:
                 send_message(chat_id, "Nothing was waiting for a category.")
             return

@@ -175,6 +175,15 @@ class Settings:
     tts_timeout: int = 60
     # Daily cleanup of short-lived files (openclaw_runtime.housekeeping), at
     # housekeeping_time in cron_timezone. Empty time = off.
+    # Images: verbatim text (own language and script) + a short description
+    # in that language. Up to image_ocr_max_tokens of text per image (one
+    # continuation if cut off). Photos not filed into a category go to the
+    # knowledge base when index_chat_photos is on.
+    image_ocr_max_tokens: int = 4096
+    index_chat_photos: bool = True
+    # Scanned PDFs: pages with no text layer are read by the vision model,
+    # up to this many pages per file (0 = off).
+    pdf_ocr_max_pages: int = 40
     housekeeping_time: str = "03:30"
     audio_retention_days: int = 14
 
@@ -331,6 +340,9 @@ def load_settings() -> Settings:
         tts_enabled=env_bool("OPENCLAW_TTS_ENABLED", False),
         tts_base_url=os.environ.get("OPENCLAW_TTS_BASE_URL", "http://openclaw-tts:8766"),
         tts_timeout=env_int("OPENCLAW_TTS_TIMEOUT", 60),
+        image_ocr_max_tokens=env_int("OPENCLAW_IMAGE_OCR_MAX_TOKENS", 4096),
+        index_chat_photos=env_bool("OPENCLAW_INDEX_CHAT_PHOTOS", True),
+        pdf_ocr_max_pages=env_int("OPENCLAW_PDF_OCR_MAX_PAGES", 40),
         housekeeping_time=os.environ.get("OPENCLAW_HOUSEKEEPING_TIME", "03:30").strip(),
         audio_retention_days=env_int("OPENCLAW_AUDIO_RETENTION_DAYS", 14),
     )

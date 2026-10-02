@@ -145,6 +145,32 @@ class LlmClient:
             raise ValueError("model returned an empty structured response")
         return clean_model_content(content)
 
+    def read_image(self, image_path: Path, prompt: str, *, system: str, max_tokens: int) -> tuple[str, str]:
+        """An image call without the persona's system prompt or reply-language
+        instruction -- for work where the model must keep the image's own
+        language, like transcribing its text. Returns (text, finish_reason)."""
+        mime_type = mimetypes.guess_type(str(image_path))[0] or "image/jpeg"
+        image_b64 = base64.b64encode(image_path.read_bytes()).decode("ascii")
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{image_b64}"}},
+                    ],
+                },
+            ],
+            "temperature": 0.0,
+            "max_tokens": max_tokens,
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
+        choice = self._chat_completion(payload)["choices"][0]
+        content = clean_model_content((choice.get("message") or {}).get("content") or "")
+        return content, str(choice.get("finish_reason") or "")
+
     def chat_with_image(self, image_path: Path, prompt: str, *, max_tokens: int | None = None) -> str:
         mime_type = mimetypes.guess_type(str(image_path))[0] or "image/jpeg"
         image_b64 = base64.b64encode(image_path.read_bytes()).decode("ascii")
