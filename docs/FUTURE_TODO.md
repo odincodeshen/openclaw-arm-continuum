@@ -1,7 +1,7 @@
 # Future TODO List
 
 This document tracks candidate work items for `openclaw-arm-continuum`.
-Current release: **v1.23**.
+Current release: **v1.24**.
 
 The runtime is intentionally stable and text-first. The items below are
 future-facing and should be implemented incrementally without breaking the
@@ -185,7 +185,13 @@ v1.2 baseline. What has actually shipped since then:
   more 🔊; upload category suggestions and duplicate detection; buttons
   under `/rag` answers; tidied spoken night answers and a yearly report.
 
-Still open, re-baselined against v1.23:
+- **v1.24 — text in images.** A separate verbatim transcription per image
+  (no translation or script conversion, continuation when cut off),
+  descriptions in the image's own language, uncategorised photos indexed
+  into the knowledge base, scanned PDF pages read by the vision model, and
+  a 【圖片文字】 card after each image so the reading can be checked.
+
+Still open, re-baselined against v1.24:
 
 **Platform / runtime**
 
@@ -215,9 +221,11 @@ Still open, re-baselined against v1.23:
 
 **Memory and knowledge**
 
-- OCR extractor for Category RAG -- **not started**
-  (`ingest_image_into_category` takes an extractor list, today only
-  `vlm_description`).
+- Image text (OCR) -- **done in v1.24** with the vision model itself: a
+  separate verbatim transcription call per image (own language/script, long
+  limit, continuation), photos outside categories indexed into the
+  knowledge base, and scanned PDF pages read in the memory watcher. A
+  dedicated OCR engine (below) only if that proves insufficient.
 - Personal memory deepening -- structured `/mem`, reminders, archival, and
   tag/date/category scoping are done; v1.17 added the `/mem upcoming` and
   `/rag digest` daily reports, `/rag source:<text>` now narrows a query
@@ -577,6 +585,11 @@ extractor behind an env toggle:
   the payload for debugging.
 - Only worth doing if "photos of documents" turns out to be a common
   input. Until then, a stronger `OPENCLAW_VLM_MODEL` is the better lever.
+- Status after v1.23: the vision model's separate verbatim pass (see
+  `docs/CATEGORY_RAG.md`, "How photos are indexed") was exact on English,
+  Traditional and Simplified Chinese test images and on a scanned PDF page,
+  so no OCR engine was added. Revisit for dense tables, very small print or
+  many-page scans where ~10 s per page is too slow.
 
 ## Future: dedicated VLM (only if the main model needs it)
 
