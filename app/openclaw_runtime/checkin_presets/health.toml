@@ -1,0 +1,60 @@
+# Movement, sleep and energy: three quick questions each evening, with weekly
+# and monthly summaries. Copy to the bot's checkins folder (see
+# weekgoals.toml), set OPENCLAW_CHECKIN_OWNER, then /checkins reload.
+# A personal log, not medical advice: the summaries describe, they don't diagnose.
+
+[checkin]
+id = "health"
+title = "運動健康"
+unit = "day"
+subject = "Today's health log"
+history_title = "健康紀錄"
+voice_context = "a movement, sleep and energy question"
+
+[schedule]
+days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+start = "21:00"
+reminders = ["22:00"]
+deadline = "00:00"
+reminder_title = "健康提醒"
+last_call_note = "Replies count until midnight; after that today is saved as it is."
+
+[[question]]
+id = "move"
+label = "Movement"
+prompt = "What exercise or movement did you do today, and for how long? ('rest day' is fine)"
+short = "Move"
+
+[[question]]
+id = "sleep"
+label = "Sleep"
+prompt = "How did you sleep last night? Hours, and quality from 1 (poor) to 5 (great)."
+short = "Sleep"
+shape = "hours and a 1-5 rating, e.g. '7h, 4'"
+
+[[question]]
+id = "energy"
+label = "Energy"
+prompt = "Your energy today from 1 to 5, and anything worth noting (food, pain, stress)?"
+short = "Energy"
+
+[closing]
+title = "今日健康"
+model_line = ""
+
+[reports]
+prepare = "04:00"
+heading = "Health log"
+subject = "daily movement, sleep and energy notes"
+week = { day = "mon", time = "07:30", title = "健康週報" }
+month = { time = "07:30", title = "健康月報" }
+
+[[reports.section]]
+name = "Movement"
+from = ["move"]
+ask = "one or two sentences: how many days had exercise, what kinds, and the total time where given."
+
+[[reports.section]]
+name = "Sleep and energy"
+from = ["sleep", "energy"]
+ask = "one or two sentences on sleep hours, sleep quality and energy, and any link between them. Describe only; no medical advice."

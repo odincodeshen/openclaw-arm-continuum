@@ -1,0 +1,64 @@
+# Reading notes: in the evening, one idea worth keeping from what you read.
+# Copy to the bot's checkins folder (see weekgoals.toml), set
+# OPENCLAW_CHECKIN_OWNER, then /checkins reload. Answers stay on the host and
+# are not indexed; for a book or article you want searchable, also send it
+# to the bot (/rag).
+
+[checkin]
+id = "reading"
+title = "閱讀筆記"
+unit = "day"
+subject = "Today's reading note"
+history_title = "閱讀紀錄"
+voice_context = "a reading-notes question"
+
+[schedule]
+days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+start = "21:30"
+reminders = ["22:30"]
+deadline = "00:00"
+reminder_title = "閱讀提醒"
+last_call_note = "Replies count until midnight. 'Nothing today' is a fine answer."
+
+[[question]]
+id = "what"
+label = "Read today"
+prompt = "What did you read today? (title, and roughly how much; 'nothing today' is fine)"
+short = "Read"
+
+[[question]]
+id = "idea"
+label = "Idea worth keeping"
+prompt = "What's one idea from it worth keeping, in your own words?"
+hint = "Text or voice"
+short = "Idea"
+
+[[question]]
+id = "use"
+label = "Try it"
+prompt = "Where could you use or test that idea? ('not yet' is fine)"
+short = "Use"
+shape = "one short line naming where or how to try it"
+
+[closing]
+title = "今日閱讀"
+schedule_button = "use"
+model_line = ""
+
+[reports]
+prepare = "04:00"
+heading = "Reading notes"
+subject = "evening reading notes"
+week = { day = "sun", time = "09:00", title = "閱讀週報" }
+month = { time = "09:00", title = "閱讀月報" }
+
+[[reports.section]]
+name = "Ideas worth keeping"
+from = ["idea"]
+items = true
+ask = "the 3-5 strongest ideas noted, each a short line in the reader's words."
+
+[[reports.section]]
+name = "What was read"
+from = ["what"]
+ask = "one sentence listing the titles read; say 'Nothing recorded' if none."

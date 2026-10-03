@@ -668,6 +668,16 @@ def _rate(part: int, whole: int) -> float | None:
     return part / whole if whole else None
 
 
+def follow_up_lookback(spec: CheckinSpec, day: date) -> int:
+    """How far back the follow-up looks for the previous entry: to the
+    previous check-in day, and at least 3 days (a daily check-in still finds
+    Friday's entry on Monday; a weekly one finds last week's)."""
+    for back in range(1, 8):
+        if (day - timedelta(days=back)).weekday() in spec.days:
+            return max(3, back)
+    return 3
+
+
 def current_streak(spec: CheckinSpec, store: CheckinStore, owner: str, end: date, max_days: int = 400) -> int:
     """Done days in a row, counting back from end over check-in days only."""
     streak = 0

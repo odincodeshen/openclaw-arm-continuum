@@ -41,9 +41,10 @@ Copy-paste ready Telegram examples are in [`examples/`](examples/).
 - Optional night ritual: a four-question wind-down journal at 22:30 with a
   morning "first thing" card and weekly/monthly reports, kept only on the
   host (`docs/NIGHT_RITUAL.md`).
-- Check-ins: guided question flows (the night ritual, a work log, ...) defined
-  in TOML -- schedule, reminders, follow-up buttons, reports -- with no code
-  per flow (`docs/CHECKINS.md`).
+- Check-ins: guided question flows defined in TOML -- schedule, reminders,
+  follow-up buttons, reports -- with no code per flow. Templates for a night
+  ritual, work log, weekly goals, reading notes, health and mood logs;
+  `/checkins reload` picks up a new file without a restart (`docs/CHECKINS.md`).
 - Optional video summary relay for bare YouTube links
   (`docs/VIDEO_SUMMARY_RELAY.md`).
 - English use-case guide and copy-paste ready Telegram examples.
@@ -239,6 +240,7 @@ Main commands:
 /vocab    word list and spaced-repetition review (English-learning bot only)
 /night    night ritual: start, history, reports (when enabled, see docs/NIGHT_RITUAL.md)
 /worklog  (and any check-in's own command) see docs/CHECKINS.md
+/checkins this bot's check-ins; /checkins reload re-reads the files
 /menu     buttons for the common commands
 ```
 

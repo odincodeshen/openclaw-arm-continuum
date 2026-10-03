@@ -15,20 +15,53 @@ code.
 
 ## Turning one on
 
-1. Copy a preset from `app/openclaw_runtime/checkin_presets/`
-   (`night.toml`, `worklog.toml`) into the bot's check-in folder,
+1. Copy a template from `app/openclaw_runtime/checkin_presets/` (see
+   "Templates" below) into the bot's check-in folder,
    `profiles/<bot>/workspace/checkins/`. Inside the container that is
    `OPENCLAW_CHECKIN_DIR`, default `/workspace/checkins`.
 2. Set the owner's Telegram chat ID in the bot's `.env` under the variable
    the file names in `owner_env` (default `OPENCLAW_CHECKIN_OWNER`). Chat
    IDs never go in the TOML file, so check-in files can be shared.
-3. Restart the bot (`bin/openclawctl --profile <bot> restart`). The log
-   shows `[<id>] scheduler started ...`, and `/<command>` appears in the
-   command menu and `/help`.
+3. Send `/checkins reload` to the bot, or restart it. `/<command>` then
+   appears in the command menu and `/help`.
 
-A file that doesn't parse is logged (`[checkin] skipped: ...`) and ignored.
-One typo never stops the bot. A check-in whose owner variable is unset is
-skipped too.
+`/checkins` lists the bot's check-ins and any file it skipped, with the
+reason. A file is skipped, never fatal, when:
+
+- it doesn't parse;
+- its owner variable is unset;
+- its command is already a bot command (`/mem`, `/rag`, ...).
+
+One typo never stops the bot. `/checkins reload` re-reads the folder
+without a restart. An open check-in, its answers and pending buttons carry
+on, because they are kept per id on disk.
+
+## Templates
+
+| File | Command | When | Questions | Reports |
+| --- | --- | --- | --- | --- |
+| `night.toml` | `/night` | Sun-Fri 22:30 | wins, did better, adjust, first thing tomorrow | week, month, year |
+| `worklog.toml` | `/worklog` | Mon-Fri 18:00 | done, blockers, first thing tomorrow | Friday week-to-date, month |
+| `weekgoals.toml` | `/weekgoals` | Monday 08:30 | main goal, also this week, what could get in the way, first step | month |
+| `reading.toml` | `/reading` | daily 21:30 | what you read, one idea worth keeping, where to try it | week (Sun), month |
+| `health.toml` | `/health` | daily 21:00 | movement, sleep (hours, 1-5), energy (1-5) | week (Mon), month |
+| `mood.toml` | `/mood` | daily 21:45 | mood (1-5), what shaped it, one small thing for yourself tomorrow | week (Mon), month |
+
+Each has a follow-up, a closing card and an optional model line set to
+suit it:
+
+- **`weekgoals`:** asks every Monday whether last week's main goal was
+  reached. The follow-up looks back to the previous check-in day, a week
+  here.
+- **`reading`:** the closing card has an "Add to tomorrow's schedule" button
+  for where to try the idea.
+- **`mood`:** the same button, for the small thing for yourself.
+
+Change the days, times or questions in your copy. Each file is the whole
+definition.
+
+`health` and `mood` are personal logs. Their report sections describe and
+never give medical advice.
 
 The night ritual is also built in: `OPENCLAW_NIGHT_RITUAL_ENABLED=true`
 runs the `night.toml` preset with the `OPENCLAW_NIGHT_RITUAL_*` days and

@@ -72,7 +72,7 @@ OpenClaw Arm Continuum 利用這個特性，把個人 AI 助理拆成幾個可�
 - 每日報告指令（搭配 `/cron`）：`/mem upcoming`（未來幾天到期的項目）、`/rag digest`（昨天新增的知識，每項一句話；`/rag digest week` 為最近七天）。
 - 選用的英文學習 bot：每天一個聽說練習任務並評估語音回覆，另有查字與間隔重複複習（見 `docs/ENGLISH_BOT.md`、`docs/DICTIONARY.md`）。
 - 選用的晚安儀式：每晚 22:30 四個問題的收工日記，隔天早上提醒「第一件事」，另有週報與月報，資料只留在本機（見 `docs/NIGHT_RITUAL.md`）。
-- 引導式問答（check-in）：晚安儀式、收工紀錄等流程都用 TOML 設定檔描述（題目、排程、提醒、按鈕、報告），新增流程不用寫程式（見 `docs/CHECKINS.md`）。
+- 引導式問答（check-in）：流程都用 TOML 設定檔描述（題目、排程、提醒、按鈕、報告），新增流程不用寫程式。內附晚安儀式、收工紀錄、每週目標、閱讀筆記、運動健康、心情紀錄範本；`/checkins reload` 不用重啟就能載入新檔案（見 `docs/CHECKINS.md`）。
 - 可在 GB10（vLLM）或純 CPU 的 Radxa Orion O6（llama.cpp）上執行（見 `docs/O6_SETUP.md`）。
 - 選用的影片摘要轉送：直接傳 YouTube 連結（見 `docs/VIDEO_SUMMARY_RELAY.md`）。
 - 英文 onboarding 文件與可直接貼進 Telegram 的範例指令。
@@ -206,6 +206,7 @@ curl -I http://127.0.0.1:18789/
 /vocab    生字本與間隔重複複習（僅英文學習 bot）
 /night    晚安儀式：開始、紀錄、報告（啟用時，見 docs/NIGHT_RITUAL.md）
 /worklog  收工紀錄等引導式問答各自的指令（見 docs/CHECKINS.md）
+/checkins 列出這個 bot 的引導式問答；/checkins reload 重新讀取設定檔
 /menu     常用指令的按鈕選單
 ```
 

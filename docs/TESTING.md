@@ -100,6 +100,7 @@ one layer that fails if it breaks.
 | Weekly `/rag digest week` (7 days up to yesterday, weekly jobs prepared off-peak on their day), Monday clip as a voice message (Opus), `/vocab export` (Anki TSV), host container watchdog (crash restart / restarting / unhealthy / reboot; manual restart and stopped containers stay quiet) | `test_daily_reports`, `test_cron_worker`, `test_send_audio::SendVoiceAndDocumentTest`, `test_vocabulary::AnkiExportTest`, `test_watchdog` | — | Opus clip encoded in `openclaw-whisper`; bot2/bot3 jobs switched to Sunday; watchdog run live against the host's containers |
 | Check-ins from TOML: spec validation (ids, references, times, days, bad files skipped), presets parse, deadline and report periods, a full work-log week through the gateway (questions, closing card without a model line, schedule button, next-day follow-up and morning card, week-to-date report made at send time, sent once), weekends skipped, `/worklog` history and help, command menu, owner checks, the night ritual unchanged through the generic runtime; `/mem list done since:7d`; `persona=False` model calls | `test_checkins`, `test_night_ritual`, `test_memory_write::MemListSinceTest`, `test_llm_client` | — | night ritual live on DGX bot2 via the runtime; worklog live on the O6 |
 | O6 / CPU-only readiness: prompts trimmed to the model's context window (middle of the longest part, then max_tokens), `context_tokens` per catalog endpoint, photos not queued without a vision model, `openclawctl` with no model services, `compose.o6.yaml` + O6 persona example, e2e `--container` | `test_context_fit`, `test_image_text::NoVisionModelTest`, `test_openclawctl` | — | `scripts/o6_validate.py` 7/7 on the GB10 and on the O6 (ERNIE + Qwen2-VL); e2e 10/10 on the O6 |
+| O6 performance and check-in templates: `/rag` budget (passages focused on the question, best-first within `OPENCLAW_RAG_CONTEXT_TOKENS`, named files first, at least one kept, duplicates once, Chinese matching, Sources only for what was read); every template parses with Chinese titles and English prompts; follow-up look-back reaches last week for a weekly check-in; `/checkins` lists and reports skipped files, `/checkins reload` adds and removes without a restart, built-in commands can't be taken | `test_rag_budget`, `test_checkins::PresetLibraryTest`, `::FollowUpLookbackTest`, `::CheckinsCommandTest` | — | `scripts/perf_probe.py` on the O6 (`/rag` ~100 s -> ~26 s); `scripts/rag_budget_eval.py` on DGX bot2's documents (1500/400 kept as many answers as no limit) |
 | Image text: separate verbatim transcription (no persona/reply-language instruction, continuation when cut off, NO_TEXT), description in the image's language, uncategorised and cancelled photos into the knowledge base, scanned PDF pages rendered and read with a per-page cache and page limit | `test_image_text`, `test_category_gateway::CategoryIngestTest` | — | UK ticket screenshot complete (was cut off), Traditional receipt and Simplified rail ticket exact with script kept, scanned lease PDF read exactly via the watcher (~10 s/page) |
 | Nightly backup (Qdrant snapshots + workspace archive, rebuildable files skipped, own folders pruned), daily cleanup inside each bot, weekly e2e via `openclaw_maintenance.py`, summary lines; Anki `.apkg` with UK/US MP3; `/say`; `/vocab quiz` + Sunday offer; 🔊 on `/vocab` and Monday/Friday chunks; upload category suggestion + duplicate skip; `/rag` Show sources / Follow-up / Save answer; spoken night answers tidied; yearly night report | `test_maintenance`, `test_housekeeping`, `test_watchdog`, `test_tts`, `test_vocab_review::WordQuizTest`, `test_upload_hints`, `test_rag_buttons`, `test_night_ritual` | — | backup run live (31 collections, 9 s); e2e 10/10 via the script; .apkg imported into the real Anki library (notes, media, re-import updates) |
 | Pronunciation: `openclaw-tts` request checks and per-voice cache, 🔊 UK/US word + sentence buttons on lookups and self-check answers, voice message sent and temp file removed, expired button / service down | `test_tts` | — | Kokoro samples compared with Piper on bot4; UK `bf_emma`, US `af_heart` |
@@ -152,3 +153,29 @@ First run 2026-09-29 on bot2: 10/10 passed.
 
 Still planned: running it from a GB10 self-hosted runner on `v*` tags, and
 the VLM image and intent-router quality checks.
+
+## Performance -- `scripts/perf_probe.py` and `scripts/rag_budget_eval.py`
+
+Both run inside a bot's Telegram container, like the e2e.
+
+- **`perf_probe.py`** times a bot's typical requests on throwaway
+  collections: short chat, a second chat turn, `/rag`, `/rag #category` and
+  a check-in closing line. For each it reports:
+  - prompt size;
+  - tokens reused from llama.cpp's prompt cache;
+  - time reading the prompt and writing the answer;
+  - whether the `/rag` answers still contain the fact asked about.
+
+  `--rag-context-tokens` / `--rag-passage-tokens` try a `/rag` budget for one
+  run only.
+- **`rag_budget_eval.py`** only reads. It checks a `/rag` budget on the bot's
+  own documents:
+  1. it samples passages and has the model write a question and fact for each;
+  2. it compares answers with and without the budget.
+
+  Only counts are printed (questions with `--show`).
+
+```bash
+docker exec -i openclaw-telegram-<bot> python3 - --rounds 2 < scripts/perf_probe.py
+docker exec -i openclaw-telegram-<bot> python3 - --budgets 1200/300,1500/400 < scripts/rag_budget_eval.py
+```

@@ -105,6 +105,7 @@ from openclaw_runtime.checkins import (
 )
 from openclaw_runtime.checkins import build_report as ck_build_report
 from openclaw_runtime.checkins import close_status as ck_close_status
+from openclaw_runtime.checkins import follow_up_lookback as ck_follow_up_lookback
 from openclaw_runtime.checkins import closing_line as ck_closing_line
 from openclaw_runtime.checkins import condense_voice_answer as ck_condense_voice_answer
 from openclaw_runtime.checkins import deadline_passed as ck_deadline_passed
@@ -3220,6 +3221,9 @@ def setup_bot_commands() -> None:
     for position, runtime in enumerate(active_checkins(), start=1):
         commands.insert(position, {"command": runtime.spec.command,
                                    "description": f"{runtime.spec.id.replace('_', ' ').capitalize()}: start, history, reports"})
+    if active_checkins():
+        commands.insert(len(active_checkins()) + 1,
+                        {"command": "checkins", "description": "List this bot's check-ins; /checkins reload"})
     telegram("setMyCommands", {"commands": commands}, timeout=20)
 
 
@@ -3405,6 +3409,8 @@ def handle_message(message: dict) -> None:
         return
 
     try:
+        if checkins_command(chat_id, text):
+            return
         for runtime in active_checkins():
             if runtime.command(chat_id, text) or runtime.handle_reply(chat_id, message):
                 return
@@ -3575,6 +3581,8 @@ class CheckinRuntime:
         self.state_path_fn = state_path_fn
         self.follow_prefix = follow_prefix
         self.schedule_prefix = schedule_prefix
+        self.stopped = threading.Event()  # set by /checkins reload to end this loop
+        self.thread: threading.Thread | None = None
 
     @property
     def spec(self) -> CheckinSpec:
@@ -3631,7 +3639,7 @@ class CheckinRuntime:
         store.save(owner, entry)
         previous = None
         if spec.follow_up and not entry.get("checked_previous"):
-            previous = store.previous_to_check(owner, today)
+            previous = store.previous_to_check(owner, today, ck_follow_up_lookback(spec, today))
         if previous is not None:
             self.set_pending(chat_id, {"date": today.isoformat(), "step": "check"})
             self.send_follow_up(chat_id, previous)
@@ -3985,7 +3993,7 @@ class CheckinRuntime:
                     state.pop("reports", None)
 
     def loop(self) -> None:
-        while RUNNING:
+        while RUNNING and not self.stopped.is_set():
             try:
                 state = self.load_state()
                 before = json.dumps(state, sort_keys=True)
@@ -3999,7 +4007,7 @@ class CheckinRuntime:
                 log(f"{self.tag} loop error: {traceback.format_exc()}")
                 alerter.alert(f"checkin-{self.spec.id}", f"The {self.spec.id} check-in's schedule hit an error.",
                               traceback.format_exc())
-            time.sleep(30)
+            self.stopped.wait(30)
 
 
 # --- the night ritual: the built-in preset + OPENCLAW_NIGHT_RITUAL_* -----------
@@ -4095,6 +4103,12 @@ def night_tick(now: datetime, state: dict) -> None:
 
 # --- check-ins from TOML files --------------------------------------------------
 CHECKIN_RUNTIMES: list[CheckinRuntime] = []
+CHECKIN_PROBLEMS: list[str] = []  # files skipped by the last load, for /checkins
+# Commands a check-in file can't take over.
+RESERVED_COMMANDS = {
+    "help", "menu", "start", "mem", "rag", "doc", "cat", "search", "cron", "new", "reset", "keep", "history",
+    "agents", "tasks", "review", "w", "vocab", "say", "checkins",
+}
 
 
 def _checkin_owner(spec: CheckinSpec) -> int | None:
@@ -4125,18 +4139,90 @@ def load_checkin_runtimes() -> list[CheckinRuntime]:
     ritual already covers (id "night" while OPENCLAW_NIGHT_RITUAL_ENABLED)
     is skipped; a bad file is logged, never fatal."""
     specs, problems = ck_load_specs(settings.checkin_dir)
-    for problem in problems:
-        log(f"[checkin] skipped: {problem}")
     runtimes = []
     for spec in specs:
         if spec.id == "night" and settings.night_ritual_enabled:
-            log("[checkin] night.toml ignored: the built-in night ritual is on (OPENCLAW_NIGHT_RITUAL_ENABLED)")
+            problems.append("night.toml: ignored, the built-in night ritual is on (OPENCLAW_NIGHT_RITUAL_ENABLED)")
+            continue
+        if spec.command in RESERVED_COMMANDS or (settings.night_ritual_enabled and spec.command == "night"):
+            problems.append(f"{spec.id}: /{spec.command} is already a bot command; set another command")
             continue
         if _checkin_owner(spec) is None:
-            log(f"[checkin] {spec.id} skipped: {spec.owner_env} is not set")
+            problems.append(f"{spec.id}: {spec.owner_env} is not set in the bot's .env")
             continue
         runtimes.append(checkin_runtime(spec))
+    for problem in problems:
+        log(f"[checkin] skipped: {problem}")
+    CHECKIN_PROBLEMS[:] = problems
     return runtimes
+
+
+def start_checkin_loop(runtime: CheckinRuntime) -> None:
+    spec = runtime.spec
+    if runtime.owner_fn() is None:
+        return
+    runtime.thread = threading.Thread(target=runtime.loop, daemon=True)
+    runtime.thread.start()
+    log(f"[{spec.id}] scheduler started start={spec.start} days={sorted(spec.days)} command=/{spec.command}")
+
+
+def reload_checkins() -> tuple[list[str], list[str]]:
+    """Re-read the check-in folder: stop the file-based check-ins' loops and
+    start the ones now there. Answers, open check-ins and pending buttons
+    live in files and per-id state, so a check-in that is still there carries
+    on where it was. Returns (ids before, ids after)."""
+    before = [rt.spec.id for rt in CHECKIN_RUNTIMES]
+    fresh = load_checkin_runtimes()
+    for runtime in CHECKIN_RUNTIMES:
+        runtime.stopped.set()
+    for runtime in CHECKIN_RUNTIMES:  # let a tick in progress finish before the new loop starts
+        if runtime.thread and runtime.thread is not threading.current_thread():
+            runtime.thread.join(timeout=60)
+    CHECKIN_RUNTIMES[:] = fresh
+    for runtime in fresh:
+        start_checkin_loop(runtime)
+    try:
+        setup_bot_commands()
+    except Exception as exc:  # noqa: BLE001 - the menu is cosmetic; the check-ins already run
+        log(f"[checkin] command menu not updated: {exc}")
+    return before, [rt.spec.id for rt in fresh]
+
+
+def checkins_overview() -> str:
+    lines = ["Check-ins on this bot"]
+    runtimes = active_checkins()
+    if not runtimes:
+        lines.append("None yet.")
+    for runtime in runtimes:
+        spec = runtime.spec
+        days = ",".join(code.capitalize() for i, code in enumerate(WEEKDAY_CODES) if i in spec.days)
+        source = "built in" if runtime is NIGHT_RUNTIME else f"{spec.id}.toml"
+        lines.append(f"/{spec.command} -- {spec.title}, {days} {spec.start} ({source})")
+    if CHECKIN_PROBLEMS:
+        lines += ["", "Skipped:"] + [f"- {problem}" for problem in CHECKIN_PROBLEMS]
+    lines += ["", f"Files: {settings.checkin_dir} · templates: docs/CHECKINS.md",
+              "/checkins reload -- re-read the files without restarting the bot"]
+    return "\n".join(lines)
+
+
+def checkins_command(chat_id: int, text: str) -> bool:
+    words = text.split()
+    if not words or words[0].lower() != "/checkins":
+        return False
+    if len(words) > 1 and words[1].lower() == "reload":
+        before, after = reload_checkins()
+        added = [i for i in after if i not in before]
+        removed = [i for i in before if i not in after]
+        summary = []
+        if added:
+            summary.append("added " + ", ".join(added))
+        if removed:
+            summary.append("removed " + ", ".join(removed))
+        send_message(chat_id, f"Reloaded ({'; '.join(summary) or 'no check-ins added or removed'}).\n\n"
+                              + checkins_overview())
+        return True
+    send_message(chat_id, checkins_overview())
+    return True
 
 
 def active_checkins() -> list[CheckinRuntime]:
@@ -4144,7 +4230,10 @@ def active_checkins() -> list[CheckinRuntime]:
 
 
 def checkin_help_text() -> str:
-    return "".join(rt.help_text() for rt in active_checkins())
+    text = "".join(rt.help_text() for rt in active_checkins())
+    if text:
+        text += "\n/checkins        This bot's check-ins · /checkins reload re-reads the files\n"
+    return text
 
 
 def housekeeping_due(now: datetime, last_date: str) -> bool:
@@ -4404,11 +4493,7 @@ def main() -> int:
     threading.Thread(target=_housekeeping_loop, daemon=True).start()
 
     for runtime in active_checkins():
-        spec = runtime.spec
-        if runtime.owner_fn() is None:
-            continue
-        threading.Thread(target=runtime.loop, daemon=True).start()
-        log(f"[{spec.id}] scheduler started start={spec.start} days={sorted(spec.days)} command=/{spec.command}")
+        start_checkin_loop(runtime)
 
     if settings.english_bot_enabled:
         english_bot_thread = threading.Thread(target=_english_bot_scheduler_loop, daemon=True)

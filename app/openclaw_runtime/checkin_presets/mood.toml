@@ -1,0 +1,65 @@
+# Mood log: how the day felt, what shaped it, and one small kind thing for
+# tomorrow. Copy to the bot's checkins folder (see weekgoals.toml), set
+# OPENCLAW_CHECKIN_OWNER, then /checkins reload. A private journal, not a
+# clinical tool.
+
+[checkin]
+id = "mood"
+title = "心情紀錄"
+unit = "day"
+subject = "Today's mood log"
+history_title = "心情紀錄"
+voice_context = "a mood-journal question"
+
+[schedule]
+days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+start = "21:45"
+reminders = ["22:45"]
+deadline = "00:00"
+reminder_title = "心情提醒"
+last_call_note = "Replies count until midnight; one word is enough."
+
+[[question]]
+id = "mood"
+label = "Mood"
+prompt = "How was today, from 1 (rough) to 5 (great), in a word or two?"
+short = "Mood"
+shape = "a 1-5 rating and a word or two"
+
+[[question]]
+id = "why"
+label = "What shaped it"
+prompt = "What shaped your mood most today?"
+hint = "Text or voice"
+short = "Why"
+
+[[question]]
+id = "care"
+label = "Tomorrow, for you"
+prompt = "One small thing you'll do for yourself tomorrow?"
+short = "Care"
+shape = "one short line naming the action"
+
+[closing]
+title = "今日心情"
+schedule_button = "care"
+model_line = "Write one short, kind sentence in English acknowledging the day described below. No advice, no lists."
+fallback = "Thanks for checking in. Rest well."
+
+[reports]
+prepare = "04:00"
+heading = "Mood log"
+subject = "evening mood notes"
+week = { day = "mon", time = "07:30", title = "心情週報" }
+month = { time = "07:30", title = "心情月報" }
+
+[[reports.section]]
+name = "The week's mood"
+from = ["mood"]
+ask = "one or two sentences describing how mood moved across the period, using the ratings given."
+
+[[reports.section]]
+name = "What lifted or weighed"
+from = ["why"]
+items = true
+ask = "the 2-4 things that most often lifted or weighed on mood, each a short line. Describe only; no advice."

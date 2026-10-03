@@ -199,6 +199,18 @@ v1.2 baseline. What has actually shipped since then:
   TOML (`docs/CHECKINS.md`), with a work-log preset; `/mem list ... since:7d`;
   model calls whose language the code decides run without the persona prompt.
 
+- **After v1.25 (unreleased).** O6 performance:
+  - a `/rag` budget (`OPENCLAW_RAG_CONTEXT_TOKENS` / `_PASSAGE_TOKENS`, O6
+    example 1500/400) took `/rag` from ~100 s to ~26 s with no loss in
+    answers on real documents;
+  - llama.cpp prompt-cache limits and slot similarity;
+  - `scripts/perf_probe.py`, `scripts/rag_budget_eval.py`;
+  - MNN Omni evaluated and not adopted (below).
+
+  Check-in templates (`weekgoals`, `reading`, `health`, `mood`); `/checkins`
+  and `/checkins reload`; the follow-up now looks back to the previous
+  check-in day.
+
 Still open, re-baselined against v1.25:
 
 **Platform / runtime**
@@ -208,7 +220,9 @@ Still open, re-baselined against v1.25:
   this design asked for; the backend workers (`mnn-omni`, `vllm-vlm`,
   `remote-vlm`) and the registered agent are not built. On GB10 the main
   model already covers vision (see "dedicated VLM" section below), so this
-  matters most for the Arm CPU-only profile.
+  matters most for the Arm CPU-only profile. **MNN Omni evaluated on the
+  O6 (October 2026) and not adopted** -- see "MNN Omni evaluation" below;
+  the O6 keeps Qwen2-VL-7B on llama.cpp.
 - `arm-remote-llm` profile -- **planned only** (`docs/PLATFORMS.md`): a small
   Arm host running the bots while generation goes to a private-LAN
   inference server. Needs its compose file, `.env` example and doc, plus the
@@ -559,6 +573,41 @@ Telegram voice/audio upload
 
 Validation should confirm that MNN Omni improves image/audio capability without
 making text-only OpenClaw flows slower or less reliable.
+
+### MNN Omni evaluation (October 2026): not adopted
+
+Qwen2.5-Omni-7B-MNN (4-bit, MNN built from the February 2026 tree, 8
+threads) was compared on the Orion O6 with the vision model in use,
+Qwen2-VL-7B Q4_K_M on llama.cpp. Both got the same verbatim-transcription
+prompt the bots use. The test set was the `o6_validate.py` probe and three
+generated document images (English, Traditional, Simplified; 7 lines each,
+1200 px wide, known text).
+
+| | Qwen2-VL-7B (llama.cpp) | Omni-7B (MNN, default 420 px) | Omni-7B (MNN, 840 px) |
+|---|---|---|---|
+| Probe (EN / 繁 / 简 key strings) | 5/5, 31 s | 5/5, 24 s | -- |
+| English page | exact, 113 s | words exact, but formatted as a table, 30-37 s | -- |
+| Traditional page | **exact**, 108 s | phone number digits swapped, 〇 read as 0, 30 s | phone right, 4 title characters dropped, ~62 s |
+| Simplified page | exact, 108 s | exact, 30 s | -- |
+| Memory | **~3.5 GiB** | ~8.1 GiB peak | -- |
+| Temperature | up to 74 °C | ~55 °C | -- |
+
+The image size column refers to `image_size` in the MNN config. Reasons it
+was not adopted:
+
+- **Speed is its only gain**, 2-3x faster per image. Verbatim accuracy is
+  worse: swapped or dropped characters in a phone number or title are the
+  errors image text must not make.
+- **It needs over twice the memory.** That matters on a 30 GiB board that
+  also holds the text model.
+- **It isn't stable across MNN versions.** The April 2026 MNN build never
+  stopped generating with this model export, even for plain text. The
+  February 2026 tree works.
+- **No serving path.** MNN's `mls` server takes text-only message content,
+  so images would need an adapter that writes files and inserts `<img>` tags.
+
+Worth re-checking when a newer Omni or VL export for MNN appears. Re-run the
+same images and keep "no worse than Qwen2-VL on verbatim text" as the bar.
 
 ### MVP Validation
 

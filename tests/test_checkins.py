@@ -215,5 +215,105 @@ class LoadRuntimesTest(unittest.TestCase):
         self.assertEqual([r.spec.id for r in runtimes], ["worklog"])  # night is the built-in one here
 
 
+
+class PresetLibraryTest(unittest.TestCase):
+    """Every shipped template parses and keeps the card style: Chinese titles,
+    English prompts."""
+
+    def test_all_presets_parse_with_unique_ids_and_commands(self) -> None:
+        specs, problems = ck.load_specs(PRESETS)
+        self.assertEqual(problems, [])
+        self.assertEqual(sorted(s.id for s in specs),
+                         ["health", "mood", "night", "reading", "weekgoals", "worklog"])
+        for spec in specs:
+            self.assertNotIn(spec.command, gateway.RESERVED_COMMANDS - {"night"}, spec.id)
+            self.assertTrue(any("\u4e00" <= ch <= "\u9fff" for ch in spec.title), spec.id)
+            for q in spec.questions:
+                self.assertFalse(any("\u4e00" <= ch <= "\u9fff" for ch in q.prompt), f"{spec.id}.{q.id}")
+            for section in spec.sections:
+                self.assertTrue(set(section.sources) <= {q.id for q in spec.questions})
+
+    def test_weekly_template_reports_monthly_only(self) -> None:
+        spec = ck.parse_spec((PRESETS / "weekgoals.toml").read_text(encoding="utf-8"))
+        self.assertEqual(sorted(spec.days), [0])  # Monday
+        self.assertEqual(list(spec.reports), ["month"])
+        self.assertEqual(spec.unit, "week")
+
+
+class FollowUpLookbackTest(unittest.TestCase):
+    def spec(self, days):
+        return ck.parse_spec(MINIMAL.replace('days = ["sat"]', f"days = {days}"))
+
+    def test_daily_and_weekday_check_ins_keep_three_days(self) -> None:
+        monday = date(2026, 10, 5)
+        self.assertEqual(ck.follow_up_lookback(self.spec('["mon","tue","wed","thu","fri","sat","sun"]'), monday), 3)
+        self.assertEqual(ck.follow_up_lookback(self.spec('["mon","tue","wed","thu","fri"]'), monday), 3)
+
+    def test_weekly_check_in_reaches_last_week(self) -> None:
+        self.assertEqual(ck.follow_up_lookback(self.spec('["mon"]'), date(2026, 10, 5)), 7)
+
+    def test_store_finds_last_weeks_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ck.CheckinStore(Path(tmp), follow_source="book", noun="week")
+            entry = ck.new_entry(date(2026, 9, 28), "x")
+            entry["answers"] = {"book": "Dune"}
+            store.save("1", entry)
+            self.assertIsNone(store.previous_to_check("1", date(2026, 10, 5)))
+            self.assertEqual(store.previous_to_check("1", date(2026, 10, 5), 7)["date"], "2026-09-28")
+
+
+class CheckinsCommandTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.folder = Path(self.tmp.name) / "checkins"
+        self.folder.mkdir()
+        (self.folder / "reading.toml").write_text((PRESETS / "reading.toml").read_text(), encoding="utf-8")
+        settings = dataclasses.replace(gateway.settings, checkin_dir=self.folder, night_ritual_enabled=False,
+                                       checkin_data_dir=Path(self.tmp.name) / "data")
+        self.sent = []
+        for name, value in [("settings", settings), ("send_message", lambda chat_id, text: self.sent.append(text)),
+                            ("telegram", lambda *a, **k: {"ok": True})]:
+            p = patch.object(gateway, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        p = patch.dict("os.environ", {"OPENCLAW_CHECKIN_OWNER": "1"})
+        p.start()
+        self.addCleanup(p.stop)
+        self.addCleanup(self._stop_all)
+        gateway.CHECKIN_RUNTIMES[:] = gateway.load_checkin_runtimes()
+
+    def _stop_all(self) -> None:
+        for runtime in gateway.CHECKIN_RUNTIMES:
+            runtime.stopped.set()
+        gateway.CHECKIN_RUNTIMES.clear()
+        gateway.CHECKIN_PROBLEMS.clear()
+
+    def test_list_shows_check_ins_and_skipped_files(self) -> None:
+        (self.folder / "broken.toml").write_text("[checkin]\nid='x'", encoding="utf-8")
+        gateway.load_checkin_runtimes()
+        self.assertTrue(gateway.checkins_command(1, "/checkins"))
+        self.assertIn("/reading -- 閱讀筆記", self.sent[-1])
+        self.assertIn("broken.toml", self.sent[-1])
+        self.assertFalse(gateway.checkins_command(1, "/checkinsx"))
+
+    def test_reload_adds_and_removes_without_restart(self) -> None:
+        (self.folder / "mood.toml").write_text((PRESETS / "mood.toml").read_text(), encoding="utf-8")
+        (self.folder / "reading.toml").unlink()
+        old = list(gateway.CHECKIN_RUNTIMES)
+        with patch.object(gateway, "start_checkin_loop", lambda runtime: None):
+            gateway.checkins_command(1, "/checkins reload")
+        self.assertIn("added mood; removed reading", self.sent[-1])
+        self.assertEqual([r.spec.id for r in gateway.CHECKIN_RUNTIMES], ["mood"])
+        self.assertTrue(all(r.stopped.is_set() for r in old))
+
+    def test_reserved_command_is_refused(self) -> None:
+        (self.folder / "mem.toml").write_text(MINIMAL.replace('id = "reading"', 'id = "memo"\ncommand = "mem"'),
+                                              encoding="utf-8")
+        ids = [r.spec.id for r in gateway.load_checkin_runtimes()]
+        self.assertNotIn("memo", ids)
+        self.assertTrue(any("/mem is already a bot command" in p for p in gateway.CHECKIN_PROBLEMS))
+
+
 if __name__ == "__main__":
     unittest.main()

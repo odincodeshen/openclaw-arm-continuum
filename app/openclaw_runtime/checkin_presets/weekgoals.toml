@@ -1,0 +1,82 @@
+# Weekly goals: every Monday, set this week's main goal and ask whether last
+# week's was reached. Copy (from app/openclaw_runtime/checkin_presets/) to the
+# bot's checkins folder (OPENCLAW_CHECKIN_DIR, by default
+# profiles/<bot>/workspace/checkins/), set OPENCLAW_CHECKIN_OWNER in its .env,
+# then /checkins reload. /weekgoals shows this week's goals at any time, e.g.
+# for a look back on Friday.
+
+[checkin]
+id = "weekgoals"
+title = "本週目標"
+unit = "week"
+subject = "This week's goals"
+history_title = "每週目標"
+voice_context = "a weekly-goals question"
+
+[schedule]
+days = ["mon"]
+start = "08:30"
+reminders = ["12:30", "17:30"]
+deadline = "00:00"
+reminder_title = "目標提醒"
+last_call_note = "Replies count until midnight; after that this week is saved as it is."
+
+[[question]]
+id = "main"
+label = "Main goal"
+prompt = "What's the one thing that would make this week a success?"
+hint = "One outcome, not a list of tasks"
+short = "Goal"
+shape = "one short line naming the outcome"
+
+[[question]]
+id = "others"
+label = "Also this week"
+prompt = "What else do you want to get done this week? (two or three things, or 'none')"
+list = true
+short = "Also"
+
+[[question]]
+id = "risk"
+label = "In the way"
+prompt = "What could get in the way, and what will you do about it?"
+short = "Risk"
+
+[[question]]
+id = "step"
+label = "First step"
+prompt = "What's the first step toward the main goal, today?"
+short = "Step"
+shape = "one short line naming the task"
+
+[follow_up]
+from = "main"
+title = "上週的主要目標"
+label = "Last week's main goal"
+intro = "Last week you aimed for:"
+prompt = "Did you reach it?"
+report_label = "Main goals"
+short = "Goal"
+md_label = "Main goal reached"
+
+[closing]
+title = "本週目標已設定"
+model_line = "Write one short, encouraging sentence in English about the main goal below. No advice, no lists."
+fallback = "Have a good week."
+
+[reports]
+prepare = "04:00"
+heading = "Weekly goals"
+subject = "weekly goal-setting notes"
+month = { time = "07:30", title = "目標月報" }
+
+[[reports.section]]
+name = "Goals this month"
+from = ["main"]
+items = true
+ask = "the main goal of each week, one short line each, in order."
+
+[[reports.section]]
+name = "What got in the way"
+from = ["risk"]
+ask = "one or two sentences on the obstacles that came up more than once; say 'Nothing recurring' if none did."
