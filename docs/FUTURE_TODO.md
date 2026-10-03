@@ -191,6 +191,14 @@ v1.2 baseline. What has actually shipped since then:
   into the knowledge base, scanned PDF pages read by the vision model, and
   a 【圖片文字】 card after each image so the reading can be checked.
 
+- **After v1.24 (unreleased).** The full feature set on a Radxa Orion O6: context-window
+  trimming, no-vision photo fix, `compose.o6.yaml` + O6 persona example with
+  bridge networking, `scripts/o6_validate.py`, systemd units in `deploy/o6/`;
+  two O6 bots live (work log + growth coach), e2e 10/10 (`docs/O6_SETUP.md`).
+  Check-ins: the night ritual became one preset of a generic engine driven by
+  TOML (`docs/CHECKINS.md`), with a work-log preset; `/mem list ... since:7d`;
+  model calls whose language the code decides run without the persona prompt.
+
 Still open, re-baselined against v1.24:
 
 **Platform / runtime**
@@ -230,9 +238,9 @@ Still open, re-baselined against v1.24:
   tag/date/category scoping are done; v1.17 added the `/mem upcoming` and
   `/rag digest` daily reports, `/rag source:<text>` now narrows a query
   to one document, link or title, and plain `/rag` also searches every
-  category (`OPENCLAW_RAG_INCLUDE_CATEGORIES`). Open: profile show/set flows, and a real
-  calendar source for the schedule report
-  (today it only sees `/mem ... due:` dates, with no times).
+  category (`OPENCLAW_RAG_INCLUDE_CATEGORIES`). Open: profile show/set flows.
+  A real calendar source for the schedule report is **not planned** (decided
+  2026-10-02): the schedule stays on `/mem ... due:` dates.
 
 **English-learning bot**
 
@@ -243,8 +251,6 @@ Still open, re-baselined against v1.24:
   up).
 - Live verification still planned (`docs/TESTING.md`): a full real-calendar
   week (the first one starts 2026-09-28), and the week-18 Part 2+3 combo.
-- Next up: a real calendar source for the schedule report (see Memory and
-  knowledge above).
 
 **Testing**
 
@@ -679,8 +685,8 @@ the digest always reports, for a morning push.
 Candidate work still open:
 
 - Profile show/set flows.
-- A real calendar source (e.g. a read-only calendar feed) for the schedule
-  report; `/mem ... due:` only records dates.
+- A real calendar source for the schedule report -- **not planned**
+  (decided 2026-10-02); `/mem ... due:` dates remain the schedule.
 - More precise `/rag` scope filters -- **done**: collection (`#<category>`,
   `#all`, v1.4), tag and date (`tag:`, `since:`/`before:`, v1.9), and
   source (`source:<text>`, matched against the `Sources:` names).

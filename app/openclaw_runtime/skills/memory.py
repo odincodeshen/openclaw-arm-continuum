@@ -61,6 +61,28 @@ _TAG_ARG_TOKEN_RE = re.compile(r"^tag:(\S+)$", re.IGNORECASE)
 _LIST_STATUS_KEYWORDS = ("done", "archived")
 
 
+_SINCE_ARG_RE = re.compile(r"^since:(\d{1,3})d$|^since:(\d{4}-\d{2}-\d{2})$", re.IGNORECASE)
+
+
+def parse_since_arg(arg: str, now: float | None = None) -> tuple[float | None, str]:
+    """since:7d (the last 7 days) or since:YYYY-MM-DD in /mem list args ->
+    (epoch cutoff, label for the header); (None, "") when absent."""
+    for token in arg.split():
+        match = _SINCE_ARG_RE.match(token)
+        if not match:
+            continue
+        if match.group(1):
+            days = int(match.group(1))
+            cutoff = (now or time.time()) - days * 86400
+            return cutoff, f"in the last {days} day{'s' if days != 1 else ''}"
+        try:
+            day = date.fromisoformat(match.group(2))
+        except ValueError:
+            return None, ""
+        return datetime(day.year, day.month, day.day, tzinfo=timezone.utc).timestamp(), f"since {day.isoformat()}"
+    return None, ""
+
+
 def _parse_list_or_digest_args(arg: str) -> tuple[str, str | None]:
     """Parse /mem list|digest args: the literal "done"/"archived" (list
     only) selects that bucket, and tag:<word> scopes results to that exact
@@ -316,7 +338,12 @@ class MemoryWriteSkill:
         if tag:
             filters["tags"] = tag
         hits = self.qdrant.scroll_by_filters(self.settings.tracker_collection, filters, limit=200)
-        tag_suffix = f' tagged "{tag}"' if tag else ""
+        # since:7d -- active items added, or done/archived items closed, in that window
+        cutoff, since_label = parse_since_arg(arg)
+        if cutoff is not None:
+            stamp = "created_at" if status == "active" else "updated_at"
+            hits = [h for h in hits if ((h.get("payload") or {}).get(stamp) or 0) >= cutoff]
+        tag_suffix = (f' tagged "{tag}"' if tag else "") + (f" {since_label}" if since_label else "")
         status_word = {"done": "completed", "archived": "archived"}.get(status, "active")
         if not hits:
             return SkillResult(self.name, f"No {status_word} memory items{tag_suffix}.")

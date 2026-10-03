@@ -26,6 +26,84 @@ def clean_model_content(content: str) -> str:
     return text.strip()
 
 
+CONTEXT_MARGIN_TOKENS = 256
+IMAGE_TOKENS_ESTIMATE = 1200
+MIN_ANSWER_TOKENS = 128
+TRIM_MARKER = "\n\n[... trimmed to fit the model's context window ...]\n\n"
+
+
+def estimate_tokens(text: str) -> int:
+    """A deliberately high estimate: CJK characters count one token each,
+    everything else one per three characters."""
+    cjk = sum(1 for ch in text if "\u2e80" <= ch <= "\u9fff" or "\uf900" <= ch <= "\ufaff" or "\uac00" <= ch <= "\ud7af")
+    return cjk + (len(text) - cjk) // 3 + 1
+
+
+def _message_tokens(message: dict) -> int:
+    content = message.get("content")
+    if isinstance(content, str):
+        return estimate_tokens(content) + 4
+    total = 4
+    for part in content or []:
+        if part.get("type") == "text":
+            total += estimate_tokens(part.get("text", ""))
+        elif part.get("type") == "image_url":
+            total += IMAGE_TOKENS_ESTIMATE
+    return total
+
+
+def _trim_middle(text: str, drop_chars: int) -> str:
+    if drop_chars <= 0 or drop_chars >= len(text) - 200:
+        drop_chars = max(0, len(text) - 200) if drop_chars > 0 else 0
+    if not drop_chars:
+        return text
+    keep = len(text) - drop_chars
+    head = keep * 3 // 5
+    return text[:head] + TRIM_MARKER + text[len(text) - (keep - head):]
+
+
+def fit_to_context(payload: dict, context_tokens: int) -> dict:
+    """Make a chat payload fit a small context window (llama.cpp on a
+    CPU-only host): cut the middle out of the longest text part -- the
+    retrieved context or transcript, usually; instructions sit at the start
+    and the question at the end -- and, if the prompt alone is still too
+    big, lower max_tokens. Unchanged when context_tokens is 0."""
+    if context_tokens <= 0:
+        return payload
+    messages = payload["messages"]
+    answer = int(payload.get("max_tokens") or MIN_ANSWER_TOKENS)
+    budget = context_tokens - CONTEXT_MARGIN_TOKENS
+    for _ in range(4):
+        prompt = sum(_message_tokens(m) for m in messages)
+        overflow = prompt + min(answer, max(MIN_ANSWER_TOKENS, budget // 4)) - budget
+        if overflow <= 0:
+            break
+        # the longest text piece is the one to shorten
+        best = None
+        for m_index, message in enumerate(messages):
+            content = message.get("content")
+            pieces = [(None, content)] if isinstance(content, str) else [
+                (p_index, part.get("text", "")) for p_index, part in enumerate(content or []) if part.get("type") == "text"
+            ]
+            for p_index, text in pieces:
+                if best is None or len(text) > len(best[2]):
+                    best = (m_index, p_index, text)
+        if best is None or len(best[2]) < 400:
+            break
+        m_index, p_index, text = best
+        ratio = estimate_tokens(text) / max(1, len(text))
+        shorter = _trim_middle(text, int(overflow / ratio) + len(TRIM_MARKER) + 16)
+        if p_index is None:
+            messages[m_index] = {**messages[m_index], "content": shorter}
+        else:
+            parts = list(messages[m_index]["content"])
+            parts[p_index] = {**parts[p_index], "text": shorter}
+            messages[m_index] = {**messages[m_index], "content": parts}
+    prompt = sum(_message_tokens(m) for m in messages)
+    payload["max_tokens"] = max(MIN_ANSWER_TOKENS, min(answer, budget - prompt))
+    return payload
+
+
 class LlmClient:
     def __init__(self, settings: Settings, model_spec=None) -> None:
         self.settings = settings
@@ -50,7 +128,14 @@ class LlmClient:
     def is_reachable(self) -> bool:
         return is_reachable(f"{self.base_url}/models", timeout=3)
 
+    @property
+    def context_tokens(self) -> int:
+        if self.model_spec is not None and getattr(self.model_spec, "context_tokens", 0):
+            return self.model_spec.context_tokens
+        return getattr(self.settings, "model_context_tokens", 0)
+
     def _chat_completion(self, payload: dict) -> dict:
+        payload = fit_to_context(payload, self.context_tokens)
         try:
             return request_json(
                 "POST",
@@ -84,6 +169,16 @@ class LlmClient:
         )
         return {"role": "system", "content": f"{self.settings.system_prompt}\n\n{grounding}"}
 
+    # For text whose language and shape the code decides (an English closing
+    # line, report sections): the bot's persona prompt -- often "always reply
+    # in Traditional Chinese" -- would fight the instruction, and some models
+    # (ERNIE) side with the persona.
+    NEUTRAL_SYSTEM = "You follow the user's formatting and language instructions exactly."
+
+    def _neutral_system_message(self) -> dict:
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d (%A), UTC")
+        return {"role": "system", "content": f"{self.NEUTRAL_SYSTEM}\n\nToday's date is {today}."}
+
     def _answer_instruction(self) -> str:
         directive = "Answer directly and do not output your reasoning process."
         language = getattr(self.settings, "reply_language", "") or ""
@@ -100,9 +195,16 @@ class LlmClient:
         *,
         max_tokens: int | None = None,
         history: list[dict] | None = None,
+        persona: bool = True,
     ) -> str:
-        final_answer_prompt = f"{user_text}\n\n{self._answer_instruction()}"
-        messages = [self._system_message()]
+        """persona=False: no persona prompt and no reply-language instruction --
+        the prompt alone says what language and shape to answer in."""
+        if persona:
+            final_answer_prompt = f"{user_text}\n\n{self._answer_instruction()}"
+            messages = [self._system_message()]
+        else:
+            final_answer_prompt = f"{user_text}\n\nAnswer directly and do not output your reasoning process."
+            messages = [self._neutral_system_message()]
         for turn in history or []:
             role = turn.get("role")
             content = turn.get("content")
@@ -123,11 +225,12 @@ class LlmClient:
             return "The model only returned its reasoning, not a final answer. Send it again and I'll ask for something shorter and more direct."
         return clean_model_content(content)
 
-    def chat_json(self, user_text: str, schema: dict, *, schema_name: str, max_tokens: int | None = None) -> str:
+    def chat_json(self, user_text: str, schema: dict, *, schema_name: str, max_tokens: int | None = None,
+                  persona: bool = True) -> str:
         payload = {
             "model": self.model,
             "messages": [
-                self._system_message(),
+                self._system_message() if persona else self._neutral_system_message(),
                 {"role": "user", "content": user_text},
             ],
             "temperature": 0,

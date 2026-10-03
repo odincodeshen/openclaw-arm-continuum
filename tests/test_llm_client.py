@@ -58,6 +58,19 @@ class ReplyLanguageTest(unittest.TestCase):
         self.assertNotIn("Reply in", user_msg)
 
     @patch("openclaw_runtime.llm_client.request_json")
+    def test_persona_false_drops_persona_and_reply_language(self, request_json) -> None:
+        request_json.return_value = {"choices": [{"message": {"content": "{}"}}]}
+        client = LlmClient(build_settings(reply_language="Traditional Chinese", system_prompt="永遠用繁體中文回答"))
+        client.chat("Reply in English only.", persona=False)
+        messages = request_json.call_args.args[2]["messages"]
+        self.assertNotIn("繁體中文", messages[0]["content"])
+        self.assertNotIn("Reply in Traditional Chinese", messages[-1]["content"])
+        client.chat_json("x", {"type": "object"}, schema_name="s", persona=False)
+        self.assertNotIn("繁體中文", request_json.call_args.args[2]["messages"][0]["content"])
+        client.chat("hi")  # the default keeps the persona
+        self.assertIn("繁體中文", request_json.call_args.args[2]["messages"][0]["content"])
+
+    @patch("openclaw_runtime.llm_client.request_json")
     def test_language_is_injected_into_chat_and_image_prompts(self, request_json) -> None:
         request_json.return_value = {"choices": [{"message": {"content": "ok"}}]}
         client = LlmClient(build_settings(reply_language="Traditional Chinese"))

@@ -37,7 +37,8 @@
 set -eu
 
 CORE_SERVICES="${OPENCLAWCTL_CORE_SERVICES:-openclaw-gateway openclaw-telegram openclaw-cron openclaw-memory-watcher openclaw-browser-scraper openclaw-whisper openclaw-tts}"
-MODEL_SERVICES="${OPENCLAWCTL_MODEL_SERVICES:-openclaw-vllm}"
+# may be set empty (e.g. on an O6, where llama.cpp runs outside Docker)
+MODEL_SERVICES="${OPENCLAWCTL_MODEL_SERVICES-openclaw-vllm}"
 COMPOSE="${OPENCLAWCTL_COMPOSE:-docker compose}"
 ROOT="${OPENCLAWCTL_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 
@@ -87,14 +88,22 @@ services_for() {
     esac
 }
 
+# An empty list must never reach compose: `up -d` with no service names
+# starts every service in the file.
+has_services() {
+    [ -n "$(printf '%s' "$1" | tr -d ' ')" ]
+}
+
 cmd_start() {
     _svc=$(services_for "$1") || exit $?
+    if ! has_services "$_svc"; then echo "openclawctl: no '$1' services here -- nothing to start"; return 0; fi
     # shellcheck disable=SC2086
     run_compose up -d $_svc
 }
 
 cmd_stop() {
     _svc=$(services_for "$1") || exit $?
+    if ! has_services "$_svc"; then echo "openclawctl: no '$1' services here -- nothing to stop"; return 0; fi
     # shellcheck disable=SC2086
     run_compose stop $_svc
 }
@@ -110,8 +119,12 @@ cmd_status() {
     run_compose ps $CORE_SERVICES
     echo
     echo "== model =="
-    # shellcheck disable=SC2086
-    run_compose ps $MODEL_SERVICES
+    if has_services "$MODEL_SERVICES"; then
+        # shellcheck disable=SC2086
+        run_compose ps $MODEL_SERVICES
+    else
+        echo "(none -- the model engine runs outside Docker here)"
+    fi
 }
 
 cmd_boot() {
@@ -131,7 +144,7 @@ list_profiles() {
         [ -e "$f" ] || continue
         name=$(basename "$f" .yaml)
         name=${name#compose.persona.}
-        [ "$name" = "example" ] && continue
+        case "$name" in example|*.example) continue ;; esac
         printf '%s\n' "$name"
     done
 }

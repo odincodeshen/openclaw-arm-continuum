@@ -54,6 +54,71 @@ identifying profile configuration (the `.env` itself, and any per-profile
 compose file -- see `compose.persona.*.yaml` in `.gitignore`) stays local.
 See `docs/PUBLISH_CHECKLIST.md`.
 
+## Who Uses A Bot, And Who Gets What
+
+Data is separated per bot, never per Telegram account. Everyone on a bot's
+allowlist reads and writes the same memory, knowledge, categories and
+`/cron` jobs. Whether people share data or keep it apart is therefore a
+choice of how many bots to run and whom each one allows. It is set in each
+bot's `.env`, with no code change.
+
+Each role has its own setting:
+
+| Setting | Decides | Empty means |
+|---|---|---|
+| `OPENCLAW_TELEGRAM_ALLOWED_CHAT_IDS` | who can use the bot (and so shares its data) | anyone who finds the bot |
+| `OPENCLAW_CRON_CHAT_IDS` | who receives scheduled results | everyone on the allowlist |
+| `OPENCLAW_ALERT_CHAT_IDS` | who receives operator alerts | no alerts |
+| `OPENCLAW_CHECKIN_OWNER` (or the variable a check-in's `owner_env` names) | who a check-in asks | that check-in is off |
+| `OPENCLAW_NIGHT_RITUAL_OWNER`, `OPENCLAW_ENGLISH_BOT_OWNERS` | who the night ritual / English coach is for | off |
+
+All values are comma-separated Telegram chat IDs, except the single-owner
+ones. Chat IDs live only in `.env`, never in check-in files or compose
+files.
+
+Everyone on the allowlist has full use of the bot. There is no read-only
+role. Removing someone from the allowlist doesn't delete `/cron` jobs that
+deliver to their chat; remove those with `/cron delete`.
+
+### Example layouts
+
+Placeholders: `<A>`, `<B>`, `<C>` are three people's chat IDs.
+
+**One shared bot plus one private bot per person.** Everyone uses `bot-home`.
+`bot-a` and `bot-b` each belong to one person.
+
+```dotenv
+# profiles/bot-home/.env -- shared data
+OPENCLAW_TELEGRAM_ALLOWED_CHAT_IDS=<A>,<B>,<C>
+OPENCLAW_CRON_CHAT_IDS=<A>,<B>,<C>
+OPENCLAW_ALERT_CHAT_IDS=<A>          # whoever runs the box
+
+# profiles/bot-a/.env -- A's own data
+OPENCLAW_TELEGRAM_ALLOWED_CHAT_IDS=<A>
+OPENCLAW_CRON_CHAT_IDS=<A>
+OPENCLAW_ALERT_CHAT_IDS=<A>
+
+# profiles/bot-b/.env -- B's own data
+OPENCLAW_TELEGRAM_ALLOWED_CHAT_IDS=<B>
+OPENCLAW_CRON_CHAT_IDS=<B>
+OPENCLAW_ALERT_CHAT_IDS=<A>          # alerts still go to the operator
+```
+
+**One main user plus a supervisor.** Both can use the bot and see the same
+data. Pushes, the daily check-in and alerts go only to the main user.
+
+```dotenv
+# profiles/bot-work/.env
+OPENCLAW_TELEGRAM_ALLOWED_CHAT_IDS=<A>,<B>   # A = main user, B = supervisor
+OPENCLAW_CRON_CHAT_IDS=<A>
+OPENCLAW_ALERT_CHAT_IDS=<A>
+OPENCLAW_CHECKIN_OWNER=<A>
+```
+
+To make the supervisor receive the weekly reports too, add `<B>` to
+`OPENCLAW_CRON_CHAT_IDS`. To make them an equal second user, add them
+everywhere except the single-owner settings.
+
 ## Directory Layout
 
 ```text

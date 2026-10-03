@@ -1,0 +1,74 @@
+# Shared services for a Radxa Orion O6 (Arm CPU-only) running several bots,
+# the same way the GB10 does -- see docs/O6_SETUP.md.
+#
+# Unlike compose.yaml there is no model container: llama.cpp runs on the host
+# (one server for text + vision, or two) and the bots reach it, Ollama and
+# Qdrant through host.docker.internal. Each bot is a compose.persona.<bot>.yaml
+# made from compose.persona.o6.example.yaml, which `include`s this file.
+#
+#   docker compose -f compose.o6.yaml up -d            # whisper, scraper, tts
+#   bin/openclawctl --profile <bot> start              # one bot (always --no-deps)
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  openclaw-browser-scraper:
+    logging: *default-logging
+    build:
+      context: ./scraper
+    container_name: openclaw-browser-scraper
+    working_dir: /app
+    command: ["python", "-u", "openclaw_browser_scraper.py"]
+    environment:
+      OPENCLAW_SCRAPER_HOST: 0.0.0.0
+      OPENCLAW_SCRAPER_PORT: 8787
+      OPENCLAW_WORKSPACE_ROOT: /workspace
+      OPENCLAW_CHROMIUM_PATH: /usr/bin/chromium
+    volumes:
+      - ./app:/app:ro
+      - ${OPENCLAW_HOST_WORKSPACE:-./workspace}:/workspace
+    restart: unless-stopped
+
+  openclaw-whisper:
+    logging: *default-logging
+    build:
+      context: ./whisper
+    container_name: openclaw-whisper
+    working_dir: /app
+    command: ["python", "-u", "openclaw_whisper_service.py"]
+    environment:
+      OPENCLAW_WHISPER_HOST: 0.0.0.0
+      OPENCLAW_WHISPER_PORT: 8765
+      OPENCLAW_WHISPER_MODEL: ${OPENCLAW_WHISPER_MODEL:-base}
+      OPENCLAW_WHISPER_DEVICE: cpu
+      OPENCLAW_WHISPER_COMPUTE_TYPE: int8
+      OPENCLAW_WORKSPACE_ROOT: /workspace
+      # every bot's workspace, as on the GB10 (see compose.yaml)
+      OPENCLAW_WHISPER_ALLOWED_ROOTS: /profiles
+    volumes:
+      - ./app:/app:ro
+      - ./profiles:/profiles
+      - ${OPENCLAW_HOST_WORKSPACE:-./workspace}:/workspace
+      - ${HF_CACHE_DIR:-./.cache/huggingface}:/root/.cache/huggingface
+    restart: unless-stopped
+
+  openclaw-tts:
+    logging: *default-logging
+    build:
+      context: ./tts
+    container_name: openclaw-tts
+    working_dir: /app
+    command: ["python", "-u", "openclaw_tts_service.py"]
+    environment:
+      OPENCLAW_TTS_HOST: 0.0.0.0
+      OPENCLAW_TTS_PORT: 8766
+      OPENCLAW_TTS_CACHE_DIR: /cache/tts
+    volumes:
+      - ./app:/app:ro
+      - ${HF_CACHE_DIR:-./.cache/huggingface}:/root/.cache/huggingface
+      - ./.cache/tts:/cache/tts
+    restart: unless-stopped

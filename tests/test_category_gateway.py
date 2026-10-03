@@ -20,6 +20,7 @@ class CategoryGatewayTestBase(unittest.TestCase):
             category_registry_path=self.inbox / ".openclaw" / "categories.json",
             category_collection_prefix="oc_cat_",
             category_pending_ttl_seconds=100,
+            vision_enabled=True,
         )
         self._orig_settings = gateway.settings
         gateway.settings = self.settings

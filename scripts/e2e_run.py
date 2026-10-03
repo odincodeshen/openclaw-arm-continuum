@@ -147,9 +147,10 @@ class Run:
                               "thirty first of January.")
         InboxIngestor(self.settings, self.embeddings, self.qdrant).scan_once()
         answer = self.rag("#batteries what cell chemistry is described?")
-        expect("phosphate" in answer.lower(), "the battery document wasn't used")
+        # the bot may answer in its reply language (e.g. 磷酸鐵鋰)
+        expect(any(w in answer.lower() for w in ("phosphate", "磷酸")), "the battery document wasn't used")
         expect("Sources: cells.md" in answer, "no Sources: line for cells.md")
-        expect("january" not in answer.lower(), "the other category leaked in")
+        expect(not any(w in answer.lower() for w in ("january", "一月", "1月")), "the other category leaked in")
         return "ingest, isolation and Sources: ok"
 
     def knowledge_rag(self) -> str:
@@ -161,7 +162,9 @@ class Run:
         )
         InboxIngestor(self.settings, self.embeddings, self.qdrant).scan_once()
         answer = self.rag("what does the Neoverse V2 platform target?")
-        expect("performance" in answer.lower() or "watt" in answer.lower(), f"unexpected answer: {answer[:120]!r}")
+        # the bot may answer in its reply language (e.g. Traditional Chinese)
+        expect(any(word in answer.lower() for word in ("performance", "watt", "性能", "效能", "瓦")),
+               f"unexpected answer: {answer[:120]!r}")
         expect("neoverse.txt" in answer, "no source for neoverse.txt")
         return "indexed and answered with its source"
 
@@ -199,7 +202,7 @@ class Run:
         expect(line != FALLBACK_CLOSING, "closing line fell back (model call failed)")
         expect(not any("一" <= ch <= "鿿" for ch in line), f"closing line isn't English: {line!r}")
         summary = summarize_period(self.llm, [{"date": "2026-01-01", **entry}], "week")
-        expect(bool(summary.highlights), "weekly summary has no highlights (model call failed?)")
+        expect(bool(summary.sections.get("highlights")), "weekly summary has no highlights (model call failed?)")
         return f"closing: {line[:60]}"
 
     def gist_options(self) -> str:

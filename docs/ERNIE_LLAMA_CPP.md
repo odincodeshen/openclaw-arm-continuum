@@ -81,6 +81,12 @@ Success means the model loads and generates text. On Orion O6, CPU-only generati
 
 ## 4. Start llama-server
 
+> For the full feature set (several bots, the English coach, image text,
+> pronunciation) follow `docs/O6_SETUP.md` instead: it needs `-c 16384`
+> rather than the `-c 2048` below, a non-Thinking or multimodal model, and
+> `OPENCLAW_MODEL_CONTEXT_TOKENS`. This section is the original single-bot
+> bring-up.
+
 Start the OpenAI-compatible server on the host:
 
 ```bash

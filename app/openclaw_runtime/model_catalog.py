@@ -24,6 +24,9 @@ class ModelSpec:
     timeout: int
     enabled: bool = True
     fallback: str | None = None
+    # The server's context window in tokens (e.g. llama.cpp -c); 0 = unknown,
+    # no trimming. Prompts are fitted to it before they are sent.
+    context_tokens: int = 0
 
     @classmethod
     def from_dict(cls, model_id: str, value: dict[str, Any], *, default_timeout: int) -> "ModelSpec":
@@ -53,7 +56,10 @@ class ModelSpec:
         fallback = value.get("fallback")
         if fallback is not None:
             fallback = str(fallback).strip() or None
-        return cls(model_id.strip(), base_url, model, roles, timeout, enabled, fallback)
+        context_tokens = value.get("context_tokens", 0)
+        if isinstance(context_tokens, bool) or not isinstance(context_tokens, int) or context_tokens < 0:
+            raise ValueError(f"model {model_id!r} context_tokens must be a non-negative integer")
+        return cls(model_id.strip(), base_url, model, roles, timeout, enabled, fallback, context_tokens)
 
 
 class ModelRegistry:
@@ -102,6 +108,7 @@ def default_model_spec(settings: Settings) -> ModelSpec:
         model=settings.vllm_model,
         roles=("general",),
         timeout=settings.request_timeout,
+        context_tokens=settings.model_context_tokens,
     )
 
 
@@ -115,6 +122,7 @@ def default_vision_spec(settings: Settings) -> ModelSpec:
         roles=("vision",),
         timeout=settings.request_timeout,
         fallback="local_default",
+        context_tokens=settings.vlm_context_tokens or settings.model_context_tokens,
     )
 
 

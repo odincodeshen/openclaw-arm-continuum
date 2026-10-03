@@ -588,5 +588,31 @@ class MemoryArchiveStaleTest(unittest.TestCase):
         self.assertIn("old idea", archived_list.answer)
 
 
+class MemListSinceTest(unittest.TestCase):
+    def test_done_items_closed_in_the_window(self) -> None:
+        import time as _time
+        from unittest.mock import MagicMock
+
+        from openclaw_runtime.skills.memory import MemoryWriteSkill, parse_since_arg
+        from tests.support import build_settings
+
+        now = _time.time()
+        qdrant = MagicMock()
+        qdrant.scroll_by_filters.return_value = [
+            {"payload": {"text": "Shipped O6 setup", "short_id": "a1", "updated_at": now - 2 * 86400}},
+            {"payload": {"text": "Old thing", "short_id": "b2", "updated_at": now - 30 * 86400}},
+        ]
+        skill = MemoryWriteSkill(build_settings(), {}, MagicMock(), qdrant)
+        answer = skill.run("/mem list done since:7d").answer
+        self.assertIn("Completed memory in the last 7 days (1):", answer)
+        self.assertIn("#a1 Shipped O6 setup", answer)
+        self.assertNotIn("Old thing", answer)
+        self.assertEqual(qdrant.scroll_by_filters.call_args.args[1], {"kind": "tracker_memory", "status": "done"})
+        self.assertEqual(parse_since_arg("since:2026-09-28")[1], "since 2026-09-28")
+        self.assertEqual(parse_since_arg("nothing"), (None, ""))
+        qdrant.scroll_by_filters.return_value = [{"payload": {"text": "x", "updated_at": now - 30 * 86400}}]
+        self.assertEqual(skill.run("/mem list done since:7d").answer, "No completed memory items in the last 7 days.")
+
+
 if __name__ == "__main__":
     unittest.main()

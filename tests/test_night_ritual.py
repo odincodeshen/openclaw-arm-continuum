@@ -23,11 +23,11 @@ class FakeLlm:
                                  "adjusting": "Late finishes (2 times).", "closing": "A steady week."}
         self.prompts = []
 
-    def chat(self, prompt, max_tokens=None, history=None):
+    def chat(self, prompt, max_tokens=None, history=None, persona=True):
         self.prompts.append(prompt)
         return self.reply
 
-    def chat_json(self, prompt, schema, *, schema_name, max_tokens=None):
+    def chat_json(self, prompt, schema, *, schema_name, max_tokens=None, persona=True):
         self.prompts.append(prompt)
         return json.dumps(self.report)
 

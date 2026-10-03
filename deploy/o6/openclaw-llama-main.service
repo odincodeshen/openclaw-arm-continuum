@@ -1,0 +1,17 @@
+# llama.cpp text model for OpenClaw on an Orion O6 -- systemd *user* unit.
+#   cp deploy/o6/*.service ~/.config/systemd/user/ && cp deploy/o6/o6-models.env.example ~/.config/openclaw-o6-models.env
+#   systemctl --user daemon-reload && systemctl --user enable --now openclaw-llama-main
+# Needs lingering (loginctl enable-linger) to start at boot. Bound to the
+# Docker bridge so only containers on this host reach it. See docs/O6_SETUP.md.
+[Unit]
+Description=OpenClaw llama.cpp main model (text, and vision when MAIN_MMPROJ is set)
+After=network-online.target
+
+[Service]
+EnvironmentFile=%h/.config/openclaw-o6-models.env
+ExecStart=/bin/sh -c 'exec "$LLAMA_SERVER" -m "$MAIN_MODEL" $${MAIN_MMPROJ:+--mmproj "$MAIN_MMPROJ"} --alias o6-main --jinja -c "$MAIN_CTX" -t "$THREADS" --host "$BIND_HOST" --port 8080'
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=default.target

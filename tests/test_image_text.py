@@ -169,5 +169,20 @@ class ScannedPdfTest(unittest.TestCase):
             self.assertNotIn("read from the page image", plain)
 
 
+class NoVisionModelTest(unittest.TestCase):
+    def test_photos_are_not_queued_for_categories_without_vision(self) -> None:
+        sent, pickers = [], []
+        settings = dataclasses.replace(gateway.settings, vision_enabled=False, category_rag_enabled=True)
+        with patch.object(gateway, "settings", settings), \
+                patch.object(gateway, "send_message", lambda c, t: sent.append(t)), \
+                patch.object(gateway, "send_category_picker", lambda *a, **k: pickers.append(a)), \
+                patch.object(gateway, "index_image_to_knowledge", lambda *a: pickers.append("kb")):
+            gateway._route_image_to_category(5, Path("/x/a.jpg"), None, "")
+            gateway._route_image_to_category(5, Path("/x/a.jpg"), "trip", "")
+        self.assertEqual(pickers, [])
+        self.assertNotIn(5, gateway.PENDING_CATEGORY)
+        self.assertIn("no vision model", sent[-1])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,104 @@
+# Night ritual: a four-question wind-down journal (docs/NIGHT_RITUAL.md).
+# This is also the built-in preset a bot uses with
+# OPENCLAW_NIGHT_RITUAL_ENABLED=true and no checkins folder; the
+# OPENCLAW_NIGHT_RITUAL_* settings override the days and times below.
+
+[checkin]
+id = "night"
+title = "晚安儀式"
+owner_env = "OPENCLAW_NIGHT_RITUAL_OWNER"
+unit = "night"
+subject = "Tonight's wind-down"
+history_title = "晚安紀錄"
+voice_context = "a journal question"
+data_dir = "/workspace/.openclaw/night"
+
+[schedule]
+days = ["sun", "mon", "tue", "wed", "thu", "fri"]
+start = "22:30"
+reminders = ["23:00", "23:30"]
+deadline = "00:00"
+reminder_title = "晚安提醒"
+last_call_note = "Replies count until midnight; after that tonight is saved as it is."
+
+[[question]]
+id = "wins"
+label = "Wins &amp; Gratitude"
+prompt = "What went well today — a win, a small breakthrough, or a nice moment?"
+hint = "One message, 1–3 things · text or voice"
+list = true
+card = "Wins"
+short = "Wins"
+
+[[question]]
+id = "better"
+label = "1% Better"
+prompt = "Compared with yesterday, where did you get a little better — a skill, your mood, or how you worked?"
+short = "1%"
+
+[[question]]
+id = "adjust"
+label = "One Adjustment"
+prompt = "No judgement. If you replayed today, what one thing would you smooth out?"
+card = "Adjustment"
+short = "Adjust"
+
+[[question]]
+id = "first"
+label = "Mental Shutdown"
+prompt = "What's the one thing to start tomorrow with? Write it down and today is done."
+card = "First thing tomorrow"
+short = "First"
+shape = "one short line naming the task"
+
+[follow_up]
+from = "first"
+title = "昨天的第一件事"
+label = "Yesterday's first thing"
+intro = "You planned to start with:"
+prompt = "Did you get to it?"
+report_label = "First things"
+short = "First"
+md_label = "First thing done"
+
+[morning]
+from = "first"
+time = "07:05"
+title = "今天的第一件事"
+label = "First thing today"
+intro = "You wrote last night:"
+outro = "Start here."
+
+[closing]
+title = "今日結案"
+schedule_button = "first"
+model_line = """Someone just finished a short end-of-day journal. Write ONE or TWO short, warm sentences in \
+English to close their day -- acknowledge something specific they wrote, then let them rest. \
+No advice, no analysis, no questions, no emoji, no quotation marks. Reply in English only, \
+even if the notes are in Chinese."""
+fallback = "You showed up for today. Let the rest wait until tomorrow — rest well."
+
+[reports]
+prepare = "04:00"
+heading = "Night ritual"
+subject = "end-of-day journal notes"
+closing = "one short, warm sentence for the end of the {period}."
+week = { day = "mon", time = "07:30", period = "last_7_days", title = "晚安週報" }
+month = { time = "07:30", title = "晚安月報" }
+year = { time = "07:30", title = "晚安年報" }
+
+[[reports.section]]
+name = "Highlights"
+from = ["wins"]
+items = true
+ask = "up to 3 of their best moments or wins, each a short phrase."
+
+[[reports.section]]
+name = "Growing"
+from = ["better"]
+ask = "one sentence on the improvement that shows up most."
+
+[[reports.section]]
+name = "Adjusting"
+from = ["adjust"]
+ask = "one sentence on the adjustment that comes up most (say how many times if it repeats), phrased kindly, with at most one gentle suggestion."

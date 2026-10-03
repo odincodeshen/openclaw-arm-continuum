@@ -21,6 +21,8 @@ Copy-paste ready Telegram examples are in [`examples/`](examples/).
 - Telegram long polling gateway with allowlist support.
 - Local memory and document RAG through Ollama embeddings and Qdrant.
 - Playwright/Chromium scraper worker for `/search` and cron web tasks.
+- Runs on the GB10 (vLLM) or, CPU-only, on a Radxa Orion O6 with llama.cpp
+  (`docs/O6_SETUP.md`).
 - Local Whisper service for Telegram voice transcription, and a local
   text-to-speech service (`openclaw-tts`, Kokoro on CPU) for UK / US
   pronunciation on word lookups.
@@ -39,6 +41,9 @@ Copy-paste ready Telegram examples are in [`examples/`](examples/).
 - Optional night ritual: a four-question wind-down journal at 22:30 with a
   morning "first thing" card and weekly/monthly reports, kept only on the
   host (`docs/NIGHT_RITUAL.md`).
+- Check-ins: guided question flows (the night ritual, a work log, ...) defined
+  in TOML -- schedule, reminders, follow-up buttons, reports -- with no code
+  per flow (`docs/CHECKINS.md`).
 - Optional video summary relay for bare YouTube links
   (`docs/VIDEO_SUMMARY_RELAY.md`).
 - English use-case guide and copy-paste ready Telegram examples.
@@ -233,6 +238,7 @@ Main commands:
 /w        look up a word (English-learning bot only, see docs/DICTIONARY.md)
 /vocab    word list and spaced-repetition review (English-learning bot only)
 /night    night ritual: start, history, reports (when enabled, see docs/NIGHT_RITUAL.md)
+/worklog  (and any check-in's own command) see docs/CHECKINS.md
 /menu     buttons for the common commands
 ```
 

@@ -2,7 +2,7 @@
 """Host-side maintenance: nightly backup and a weekly L3 e2e run.
 
     python3 scripts/openclaw_maintenance.py backup
-    python3 scripts/openclaw_maintenance.py e2e [--bot lc9-dgx2-apa]
+    python3 scripts/openclaw_maintenance.py e2e [--bot lc9-dgx2-apa | --container openclaw-telegram]
 
 backup -- everything that exists only on this host, into
 OPENCLAW_BACKUP_DIR/<YYYY-MM-DD_HHMM>/ (default ~/openclaw-backups):
@@ -144,8 +144,8 @@ def backup() -> int:
     return 0
 
 
-def e2e(bot: str) -> int:
-    container = f"openclaw-telegram-{bot}"
+def e2e(bot: str, container: str = "") -> int:
+    container = container or f"openclaw-telegram-{bot}"
     started = time.time()
     with (ROOT / "scripts" / "e2e_run.py").open("rb") as script:
         run = subprocess.run(["docker", "exec", "-i", container, "python3", "-"], stdin=script,
@@ -171,7 +171,8 @@ def main(argv: list[str]) -> int:
     if argv[0] == "backup":
         return backup()
     bot = argv[argv.index("--bot") + 1] if "--bot" in argv else os.environ.get("OPENCLAW_E2E_BOT", "lc9-dgx2-apa")
-    return e2e(bot)
+    container = argv[argv.index("--container") + 1] if "--container" in argv else os.environ.get("OPENCLAW_E2E_CONTAINER", "")
+    return e2e(bot, container)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,84 @@
+# Work log: three questions at the end of each working day.
+# Copy (from app/openclaw_runtime/checkin_presets/) to the bot's checkins folder (OPENCLAW_CHECKIN_DIR, by default
+# profiles/<bot>/workspace/checkins/) and set OPENCLAW_CHECKIN_OWNER in its .env.
+# Pair it with /cron jobs for the rest of the weekly review, e.g.
+#   /cron add weekly fri 19:35 本週完成 :: /mem list done since:7d
+#   /cron add weekly fri 19:40 本週文件 :: /rag digest week
+
+[checkin]
+id = "worklog"
+title = "收工紀錄"
+owner_env = "OPENCLAW_CHECKIN_OWNER"
+unit = "day"
+subject = "Today's work log"
+history_title = "工作紀錄"
+voice_context = "a work-log question"
+
+[schedule]
+days = ["mon", "tue", "wed", "thu", "fri"]
+start = "18:00"
+reminders = ["19:00"]
+deadline = "00:00"
+reminder_title = "收工提醒"
+last_call_note = "Replies count until midnight; after that today is saved as it is."
+
+[[question]]
+id = "done"
+label = "Done today"
+prompt = "What did you finish or move forward today?"
+hint = "One message, a few items · text or voice"
+list = true
+short = "Done"
+
+[[question]]
+id = "blocked"
+label = "Blockers"
+prompt = "Where are you stuck, and who or what could unblock it? ('none' is fine)"
+short = "Blocked"
+
+[[question]]
+id = "first"
+label = "First thing tomorrow"
+prompt = "What's the first thing you'll do tomorrow?"
+short = "First"
+shape = "one short line naming the task"
+
+[follow_up]
+from = "first"
+title = "昨天的第一件事"
+label = "Yesterday's first thing"
+intro = "You planned to start with:"
+prompt = "Did you start with it?"
+report_label = "First things"
+short = "First"
+
+[morning]
+from = "first"
+time = "07:01"
+title = "今天的第一件事"
+label = "First thing today"
+intro = "You planned yesterday:"
+outro = "Start here."
+
+[closing]
+title = "今日收工"
+schedule_button = "first"
+model_line = ""
+
+[reports]
+prepare = "04:00"
+heading = "Work log"
+subject = "end-of-workday notes"
+week = { day = "fri", time = "19:30", period = "week_to_date", title = "工作週報" }
+month = { time = "07:30", title = "工作月報" }
+
+[[reports.section]]
+name = "Done this week"
+from = ["done"]
+items = true
+ask = "the 3-5 most significant things finished or moved forward, each a short line."
+
+[[reports.section]]
+name = "Recurring blockers"
+from = ["blocked"]
+ask = "one or two sentences on blockers that came up more than once and whether they cleared; say 'None' if there were none."

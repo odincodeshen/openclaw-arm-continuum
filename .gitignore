@@ -3,6 +3,7 @@
 .env.*
 !.env.arm-cpu-only.example
 !.env.example
+!.env.o6.example
 
 workspace/*
 !workspace/.gitkeep
@@ -26,6 +27,7 @@ profiles/*/backups/*
 # is tracked. See docs/PROFILES.md "Run Several Bots At Once".
 compose.persona.*.yaml
 !compose.persona.example.yaml
+!compose.persona.o6.example.yaml
 
 backups/
 backup/

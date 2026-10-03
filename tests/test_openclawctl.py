@@ -67,6 +67,15 @@ class OpenclawctlTest(unittest.TestCase):
         out = run("start", "model", env_extra={"OPENCLAWCTL_MODEL_SERVICES": "my-engine"})
         self.assertIn("up -d my-engine", out.stdout)
 
+    def test_no_model_services_never_reaches_compose(self):
+        out = run("start", "model", env_extra={"OPENCLAWCTL_MODEL_SERVICES": ""})
+        self.assertEqual(out.returncode, 0)
+        self.assertNotIn("up -d", out.stdout)  # a bare `up -d` would start every service
+        self.assertIn("nothing to start", out.stdout)
+        out = run("start", "full", env_extra={"OPENCLAWCTL_MODEL_SERVICES": "", "OPENCLAWCTL_CORE_SERVICES": "a b"})
+        self.assertIn("up -d a b", out.stdout)
+        self.assertIn("runs outside Docker", run("status", env_extra={"OPENCLAWCTL_MODEL_SERVICES": ""}).stdout)
+
     def test_compose_command_override(self):
         out = run("status", env_extra={"OPENCLAWCTL_COMPOSE": "podman-compose"})
         self.assertIn("+ podman-compose ps", out.stdout)
@@ -88,6 +97,7 @@ class OpenclawctlProfileTest(unittest.TestCase):
                 f"OPENCLAW_HOST_GATEWAY_DATA=./profiles/{bot}/gateway-data\n"
             )
         (self.root / "compose.persona.example.yaml").write_text("services: {}\n")
+        (self.root / "compose.persona.o6.example.yaml").write_text("services: {}\n")
 
     def ctl(self, *args, running="bot_a"):
         return run(*args, env_extra={"OPENCLAWCTL_ROOT": str(self.root), "OPENCLAWCTL_RUNNING_BOTS": running})

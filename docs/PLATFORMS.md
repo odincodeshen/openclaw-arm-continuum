@@ -8,6 +8,7 @@ OpenClaw is designed as one runtime with multiple deployment profiles. The Pytho
 |---|---|---|---|---|
 | `dgx-spark` | Stable | Local vLLM on NVIDIA GPU | DGX Spark / GB10 class workstation | Single local host |
 | `arm-cpu-only` | Experimental, verified on Orion O6 | Local CPU LLM endpoint, preferably llama.cpp | Radxa Orion O6 or similar Armv9 board/server | Single local host |
+| `o6` (`compose.o6.yaml` + `compose.persona.o6.example.yaml`) | Full feature set, several bots -- validate with `scripts/o6_validate.py` (`docs/O6_SETUP.md`) | llama.cpp on the host: one multimodal model, or text + VLM | Radxa Orion O6 (32 GB) | Single local host, bridge networking like the GB10 |
 | `arm-remote-llm` | Planned / beta | Remote private LAN vLLM endpoint | RPi5 or small Arm gateway plus local inference server | Trusted private LAN |
 
 ## Current Stable Profile: `dgx-spark`

@@ -168,6 +168,10 @@ class Settings:
     # due tomorrow -- another bot's tracker collection on the same Qdrant, so
     # it shows in that bot's morning schedule report. Empty = this bot's own.
     night_ritual_schedule_collection: str = ""
+    # Check-ins from TOML files (openclaw_runtime.checkins): where the bot
+    # reads them, and where their answers are kept (one folder per check-in).
+    checkin_dir: Path = Path("/workspace/checkins")
+    checkin_data_dir: Path = Path("/workspace/.openclaw/checkins")
     # Pronunciation audio (openclaw_tts_service.py): 🔊 UK / US buttons on
     # word lookups and review answers.
     tts_enabled: bool = False
@@ -179,6 +183,11 @@ class Settings:
     # in that language. Up to image_ocr_max_tokens of text per image (one
     # continuation if cut off). Photos not filed into a category go to the
     # knowledge base when index_chat_photos is on.
+    # The model server's context window (llama.cpp -c / vLLM max-model-len)
+    # in tokens; prompts are trimmed to fit it. 0 = don't trim (vLLM on the
+    # GB10 has 262k). models.json can set "context_tokens" per endpoint.
+    model_context_tokens: int = 0
+    vlm_context_tokens: int = 0
     image_ocr_max_tokens: int = 4096
     index_chat_photos: bool = True
     # Scanned PDFs: pages with no text layer are read by the vision model,
@@ -337,9 +346,13 @@ def load_settings() -> Settings:
         night_ritual_prepare_time=os.environ.get("OPENCLAW_NIGHT_RITUAL_PREPARE_TIME", "04:00"),
         night_ritual_dir=Path(os.environ.get("OPENCLAW_NIGHT_RITUAL_DIR", "/workspace/.openclaw/night")),
         night_ritual_schedule_collection=os.environ.get("OPENCLAW_NIGHT_RITUAL_SCHEDULE_COLLECTION", "").strip(),
+        checkin_dir=Path(os.environ.get("OPENCLAW_CHECKIN_DIR", "/workspace/checkins")),
+        checkin_data_dir=Path(os.environ.get("OPENCLAW_CHECKIN_DATA_DIR", "/workspace/.openclaw/checkins")),
         tts_enabled=env_bool("OPENCLAW_TTS_ENABLED", False),
         tts_base_url=os.environ.get("OPENCLAW_TTS_BASE_URL", "http://openclaw-tts:8766"),
         tts_timeout=env_int("OPENCLAW_TTS_TIMEOUT", 60),
+        model_context_tokens=env_int("OPENCLAW_MODEL_CONTEXT_TOKENS", 0),
+        vlm_context_tokens=env_int("OPENCLAW_VLM_CONTEXT_TOKENS", 0),
         image_ocr_max_tokens=env_int("OPENCLAW_IMAGE_OCR_MAX_TOKENS", 4096),
         index_chat_photos=env_bool("OPENCLAW_INDEX_CHAT_PHOTOS", True),
         pdf_ocr_max_pages=env_int("OPENCLAW_PDF_OCR_MAX_PAGES", 40),

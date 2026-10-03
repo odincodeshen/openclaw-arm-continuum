@@ -7,6 +7,14 @@ clear line between work and rest -- about three to five minutes.
 It's off by default and runs for exactly one person
 (`OPENCLAW_NIGHT_RITUAL_OWNER`, a Telegram chat ID).
 
+The night ritual is a **check-in** (`docs/CHECKINS.md`): its questions,
+cards and report sections are the preset
+`app/openclaw_runtime/checkin_presets/night.toml`, run by the same engine as
+any other check-in. `OPENCLAW_NIGHT_RITUAL_ENABLED=true` uses that built-in
+preset with the settings below. To change its questions or wording, copy
+the file into the bot's check-in folder, edit it, and turn the built-in one
+off.
+
 ## A night
 
 At `OPENCLAW_NIGHT_RITUAL_TIME` (default 22:30) on
