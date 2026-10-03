@@ -1,7 +1,7 @@
 # Future TODO List
 
 This document tracks candidate work items for `openclaw-arm-continuum`.
-Current release: **v1.25**.
+Current release: **v1.26**.
 
 The runtime is intentionally stable and text-first. The items below are
 future-facing and should be implemented incrementally without breaking the
@@ -199,7 +199,7 @@ v1.2 baseline. What has actually shipped since then:
   TOML (`docs/CHECKINS.md`), with a work-log preset; `/mem list ... since:7d`;
   model calls whose language the code decides run without the persona prompt.
 
-- **After v1.25 (unreleased).** O6 performance:
+- **v1.26 — O6 performance and check-in templates.**
   - a `/rag` budget (`OPENCLAW_RAG_CONTEXT_TOKENS` / `_PASSAGE_TOKENS`, O6
     example 1500/400) took `/rag` from ~100 s to ~26 s with no loss in
     answers on real documents;
@@ -211,7 +211,7 @@ v1.2 baseline. What has actually shipped since then:
   and `/checkins reload`; the follow-up now looks back to the previous
   check-in day.
 
-Still open, re-baselined against v1.25:
+Still open, re-baselined against v1.26:
 
 **Platform / runtime**
 
