@@ -6,7 +6,7 @@ After=network-online.target
 
 [Service]
 EnvironmentFile=%h/.config/openclaw-o6-models.env
-ExecStart=/bin/sh -c 'exec "$LLAMA_SERVER" -m "$VISION_MODEL" --mmproj "$VISION_MMPROJ" --alias o6-vision --jinja -c "$VISION_CTX" -t "$THREADS" --host "$BIND_HOST" --port 8081'
+ExecStart=/bin/sh -c 'exec "$LLAMA_SERVER" -m "$VISION_MODEL" --mmproj "$VISION_MMPROJ" --alias o6-vision --jinja -c "$VISION_CTX" -t "$THREADS" --cache-ram "$${VISION_CACHE_RAM:-512}" --host "$BIND_HOST" --port 8081'
 Restart=on-failure
 RestartSec=15
 

@@ -281,3 +281,12 @@ The memory watcher ingests anything under `categories/<slug>/` into
 | `OPENCLAW_CATEGORY_MAX_NAME_CHARS` | `40` | Category name length limit |
 | `OPENCLAW_CATEGORY_IMAGE_MAX_TOKENS` | `600` | Max tokens for the image description |
 | `OPENCLAW_MEDIA_GROUP_FLUSH_SECONDS` | `2.5` | How long to wait after the last photo in an album before filing the whole group |
+| `OPENCLAW_RAG_CONTEXT_TOKENS` | `0` | How much retrieved text one `/rag` answer reads, in estimated tokens; `0` = everything retrieved. Passages are kept best-first (files named in the question, then by score). |
+| `OPENCLAW_RAG_PASSAGE_TOKENS` | `0` | Cut each passage to the run of sentences closest to the question; `0` = whole passages |
+
+The two budget settings are for CPU-only models, where reading the prompt is
+what makes `/rag` slow. On an Orion O6 a `/rag` question over 8 passages
+reads ~3,800 tokens in ~95 s. The Sources line and the passage buttons show
+only the passages the model actually read. `scripts/rag_budget_eval.py`
+checks a budget against a bot's own documents: it writes questions from
+sampled passages and compares answers with and without the budget.

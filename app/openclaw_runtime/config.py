@@ -188,6 +188,13 @@ class Settings:
     # GB10 has 262k). models.json can set "context_tokens" per endpoint.
     model_context_tokens: int = 0
     vlm_context_tokens: int = 0
+    # How much retrieved text a /rag answer reads, in estimated tokens (the
+    # passages only, not the instructions or question). Reading the prompt is
+    # what makes /rag slow on a CPU-only model, so these cap it: each passage
+    # is cut to its part closest to the question, then the best-scoring
+    # passages are kept until the total is reached. 0 = no limit.
+    rag_context_tokens: int = 0
+    rag_passage_tokens: int = 0
     image_ocr_max_tokens: int = 4096
     index_chat_photos: bool = True
     # Scanned PDFs: pages with no text layer are read by the vision model,
@@ -353,6 +360,8 @@ def load_settings() -> Settings:
         tts_timeout=env_int("OPENCLAW_TTS_TIMEOUT", 60),
         model_context_tokens=env_int("OPENCLAW_MODEL_CONTEXT_TOKENS", 0),
         vlm_context_tokens=env_int("OPENCLAW_VLM_CONTEXT_TOKENS", 0),
+        rag_context_tokens=env_int("OPENCLAW_RAG_CONTEXT_TOKENS", 0),
+        rag_passage_tokens=env_int("OPENCLAW_RAG_PASSAGE_TOKENS", 0),
         image_ocr_max_tokens=env_int("OPENCLAW_IMAGE_OCR_MAX_TOKENS", 4096),
         index_chat_photos=env_bool("OPENCLAW_INDEX_CHAT_PHOTOS", True),
         pdf_ocr_max_pages=env_int("OPENCLAW_PDF_OCR_MAX_PAGES", 40),

@@ -45,7 +45,11 @@ prompt benchmark:
 Both are mixture-of-experts with ~3B active parameters, so generation is
 fast. On the GB10, Qwen3.6-27B (dense) generates at ~8 tokens/s. **Reading
 the prompt is the O6's bottleneck**: about 40 tokens/s against the GB10's
-1,500+. So `/rag` questions and other long prompts take 1-2 minutes.
+1,500+. Without a limit, a `/rag` question over 8 passages reads ~3,800
+tokens and takes ~100 s. `.env.o6.example` therefore caps the retrieved text
+(`OPENCLAW_RAG_CONTEXT_TOKENS=1500`, `OPENCLAW_RAG_PASSAGE_TOKENS=400`), which
+brings it to 20-30 s. `scripts/rag_budget_eval.py` checked that budget on real
+documents: it kept as many answers as no limit.
 
 Use the **non-Thinking** ERNIE (`-PT`). The Thinking variant writes its
 reasoning first.
@@ -66,7 +70,17 @@ The services:
 
 - bind to the Docker bridge (`172.17.0.1`), so only containers on this host can reach them;
 - use `-c 16384` for text and `-c 8192` for vision;
-- use `-t 8` threads.
+- use `-t 8` threads;
+- cap llama.cpp's prompt cache at 2 GiB (text) and 512 MiB (vision), not
+  its 8 GiB default (`MAIN_CACHE_RAM`, `VISION_CACHE_RAM`);
+- set the slot similarity to 0.01 (`SLOT_SIMILARITY`). At the default 0.10
+  a long `/rag` prompt, which shares only the ~150-token persona with
+  earlier requests, went to an empty slot and reused nothing.
+
+`scripts/perf_probe.py` measures what this buys. Run it in a bot container;
+it reports prompt size, tokens reused from the cache, and the time spent
+reading the prompt and writing the answer. The persona is short, so caching
+saves 1-4 s per request. The long `/rag` prompts are what take the time.
 
 Set `OPENCLAW_MODEL_CONTEXT_TOKENS` / `OPENCLAW_VLM_CONTEXT_TOKENS` to the
 same values; prompts are trimmed to fit.
@@ -196,7 +210,7 @@ spin the fan up for several minutes.
 
 - Replies take longer than on the GB10:
   - short chat is as fast;
-  - `/rag` and other long prompts take 1-2 minutes;
+  - `/rag` takes 20-30 s with the budget above; other long prompts take 1-2 minutes;
   - English-coach feedback can take minutes.
 - Image text reading takes 30-60 s per image, in the background. The
   【圖片文字】 card arrives when it's done.

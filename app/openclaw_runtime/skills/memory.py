@@ -21,6 +21,7 @@ from openclaw_runtime.embedding_client import EmbeddingClient
 from openclaw_runtime.http_client import is_reachable
 from openclaw_runtime.llm_client import LlmClient
 from openclaw_runtime.qdrant_client import QdrantClient
+from openclaw_runtime.rag_budget import fit_passages
 from openclaw_runtime.skills.base import SkillResult
 
 
@@ -817,6 +818,12 @@ class RagRetrieveSkill:
         return SkillResult(self.name, answer)
 
     def _answer_from(self, query: str, labelled_hits: list[tuple[str, list[dict]]]) -> str | None:
+        labelled_hits = fit_passages(
+            labelled_hits,
+            query,
+            context_tokens=getattr(self.settings, "rag_context_tokens", 0),
+            passage_tokens=getattr(self.settings, "rag_passage_tokens", 0),
+        )
         context = self._format_context(labelled_hits)
         if not context:
             return None
