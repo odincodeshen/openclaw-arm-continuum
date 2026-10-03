@@ -176,11 +176,21 @@ out from boot. Under load, the temperature behaves as follows:
 | 15+ minutes of continuous load | up to 82 °C | full speed (passive throttling starts at 85 °C) |
 
 A small temperature-based controller (a root systemd service on the board,
-not part of this repo) keeps it quiet. It steps 0 (off) / 1 / 2 / 3 at
-<45 / 45-60 / 60-72 / ≥72 °C with 3 °C hysteresis, and drops to full speed
-if it stops. On this board the steps are PWM 0 / 150 / 200 / 255, so even
-step 1 is audible; idle (~30 °C) stays at 0. Short bot replies reach steps
-1-2. Long off-peak runs at 04:00 can spin the fan up for several minutes.
+not part of this repo) keeps it quiet, and drops to full speed if it stops.
+On this board the fan steps are PWM 0 / 150 / 200 / 255, so even step 1 is
+audible.
+
+| Step | On at | Off below |
+|---|---|---|
+| 1 | 55 °C | 45 °C (back to off) |
+| 2 | 62 °C | 59 °C |
+| 3 (full) | 72 °C | 69 °C |
+
+With the fan off, the idle board settles around 50 °C. The wide 45-55 °C
+band keeps the fan off at idle. With a narrow band (on at 45 °C) the fan
+started and stopped every two minutes. A bot reply that crosses 55 °C runs
+the fan until the board is back under 45 °C. Long off-peak runs at 04:00 can
+spin the fan up for several minutes.
 
 ## What to expect
 
