@@ -1,7 +1,7 @@
 # Future TODO List
 
 This document tracks candidate work items for `openclaw-arm-continuum`.
-Current release: **v1.24**.
+Current release: **v1.25**.
 
 The runtime is intentionally stable and text-first. The items below are
 future-facing and should be implemented incrementally without breaking the
@@ -191,7 +191,7 @@ v1.2 baseline. What has actually shipped since then:
   into the knowledge base, scanned PDF pages read by the vision model, and
   a 【圖片文字】 card after each image so the reading can be checked.
 
-- **After v1.24 (unreleased).** The full feature set on a Radxa Orion O6: context-window
+- **v1.25 — check-ins and the Orion O6.** The full feature set on a Radxa Orion O6: context-window
   trimming, no-vision photo fix, `compose.o6.yaml` + O6 persona example with
   bridge networking, `scripts/o6_validate.py`, systemd units in `deploy/o6/`;
   two O6 bots live (work log + growth coach), e2e 10/10 (`docs/O6_SETUP.md`).
@@ -199,7 +199,7 @@ v1.2 baseline. What has actually shipped since then:
   TOML (`docs/CHECKINS.md`), with a work-log preset; `/mem list ... since:7d`;
   model calls whose language the code decides run without the persona prompt.
 
-Still open, re-baselined against v1.24:
+Still open, re-baselined against v1.25:
 
 **Platform / runtime**
 
