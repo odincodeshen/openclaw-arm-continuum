@@ -1,7 +1,7 @@
 # Future TODO List
 
 This document tracks candidate work items for `openclaw-arm-continuum`.
-Current release: **v1.26**.
+Current release: **v1.27**.
 
 The runtime is intentionally stable and text-first. The items below are
 future-facing and should be implemented incrementally without breaking the
@@ -211,7 +211,16 @@ v1.2 baseline. What has actually shipped since then:
   and `/checkins reload`; the follow-up now looks back to the previous
   check-in day.
 
-Still open, re-baselined against v1.26:
+- **v1.27 — /rag finds the right passage.**
+  - Keyword search next to vector search: on bot2, the right passage
+    reached the model 87% of the time (was 27%), 70% for Chinese
+    questions (was 13%).
+  - A relevance cut-off for plain `/rag`.
+  - `/checkins add` / `remove`.
+  - Chat IDs masked in logs.
+  - `rag_retrieval_eval.py`, `qdrant_add_keywords.py`.
+
+Still open, re-baselined against v1.27:
 
 **Platform / runtime**
 
