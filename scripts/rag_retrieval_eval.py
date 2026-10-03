@@ -45,7 +45,7 @@ from openclaw_runtime.embedding_client import EmbeddingClient  # noqa: E402
 from openclaw_runtime.http_client import request_json  # noqa: E402
 from openclaw_runtime.llm_client import LlmClient, estimate_tokens  # noqa: E402
 from openclaw_runtime.qdrant_client import QdrantClient  # noqa: E402
-from openclaw_runtime.rag_budget import terms  # noqa: E402
+from openclaw_runtime.rag_budget import drop_weak_hits, fit_passages, keywords_first, terms  # noqa: E402
 from openclaw_runtime.rag_eval import bot_collections, make_questions  # noqa: E402
 from openclaw_runtime.skills.memory import RagRetrieveSkill  # noqa: E402
 
@@ -135,6 +135,7 @@ class Bm25:
                         counts[w] = counts.get(w, 0) + 1
                     self.docs.append((collection, str(point["id"]), counts, len(words)))
         self.avg = sum(d[3] for d in self.docs) / (len(self.docs) or 1)
+        self.collection_of = {pid: coll for coll, pid, _, _ in self.docs}
         df = {}
         for _, _, counts, _ in self.docs:
             for w in counts:
@@ -164,12 +165,18 @@ class Bm25:
         return sorted(scored, key=lambda x: -x[1])
 
 
-def rrf(*rankings: list[str], k: int = 60) -> list[str]:
+def rrf(*rankings: list[str], k: int = 60, weights: tuple[float, ...] | None = None) -> list[str]:
     scores = {}
-    for ranking in rankings:
+    for i, ranking in enumerate(rankings):
+        w = weights[i] if weights else 1.0
         for position, pid in enumerate(ranking, start=1):
-            scores[pid] = scores.get(pid, 0.0) + 1 / (k + position)
+            scores[pid] = scores.get(pid, 0.0) + w / (k + position)
     return [pid for pid, _ in sorted(scores.items(), key=lambda x: -x[1])]
+
+
+PIPELINE_WEIGHTS = ((1, 1), (3, 1), (1, 0))  # (keywords, vector)
+PIPELINE_KEEP = (4, 6, 8)
+KEYWORD_FIRST = ((3, 1), (4, 2), (3, 3), (5, 2))  # (keyword hits, vector hits added after them)
 
 
 def drop_copies(settings, mapping: dict[str, str]) -> None:
@@ -224,6 +231,32 @@ def main(argv: list[str]) -> int:
     return 0
 
 
+def sent_to_model(settings, sections: list, question: str) -> list[dict]:
+    """The passages /rag would put in the prompt (same steps as _answer_from)."""
+    sections = drop_weak_hits(sections, settings.rag_relevance_margin)
+    sections = keywords_first(sections, keyword_hits=settings.rag_keyword_hits, vector_hits=settings.rag_vector_hits)
+    sections = fit_passages(sections, question, context_tokens=settings.rag_context_tokens,
+                            passage_tokens=settings.rag_passage_tokens)
+    return [h for _, hits in sections for h in hits]
+
+
+def final_context(settings, qdrant, embeddings, llm, samples) -> dict[str, tuple[int, list[int], list[int]]]:
+    """For keyword search off and on: (source passage sent, passages sent,
+    est. tokens sent) with this bot's settings."""
+    out = {}
+    for label, on in (("vector only", False), ("keywords first", True)):
+        s_on = dataclasses.replace(settings, rag_keyword_search=on)
+        skill = RagRetrieveSkill(s_on, {}, embeddings, qdrant, llm)
+        found, counts, tokens = 0, [], []
+        for s in samples:
+            sent = sent_to_model(s_on, skill.default_sections(s.question), s.question)
+            found += any(str(h.get("id")) == s.point_id for h in sent)
+            counts.append(len(sent))
+            tokens.append(sum(estimate_tokens(str((h.get("payload") or {}).get("text") or "")) for h in sent))
+        out[label] = (found, counts, tokens)
+    return out
+
+
 def report(args, settings, skill, qdrant, embeddings, samples) -> None:
     usable = []
     for s in samples:
@@ -262,6 +295,7 @@ def report(args, settings, skill, qdrant, embeddings, samples) -> None:
 
     if args.hybrid:
         hybrid = hybrid_ranks(settings, qdrant, embeddings, samples)
+    final = final_context(settings, qdrant, embeddings, skill.llm, samples)
     n = len(samples) or 1
     print(f"# /rag retrieval check -- {settings.runtime_label}"
           + (f" -- query prefix {args.query_prefix!r}" if args.query_prefix else "")
@@ -279,6 +313,12 @@ def report(args, settings, skill, qdrant, embeddings, samples) -> None:
     if gaps:
         print(f"| Best score minus source score, when retrieved (median / max) | "
               f"{statistics.median(gaps):.3f} / {max(gaps):.3f} |")
+    print("\n| What /rag sends the model (this bot's settings) | Source passage sent | Passages (median) "
+          "| Est. tokens (median) |")
+    print("| --- | --- | --- | --- |")
+    for label, (found_n, counts, tokens) in final.items():
+        print(f"| {label} | {found_n}/{len(samples)} ({100 * found_n / n:.0f}%) | "
+              f"{statistics.median(counts) if counts else 0:.0f} | {statistics.median(tokens) if tokens else 0:.0f} |")
     print("\n| Source passage in its own collection, top N | Found |")
     print("| --- | --- |")
     for d in DEPTHS:
@@ -293,12 +333,24 @@ def report(args, settings, skill, qdrant, embeddings, samples) -> None:
         for d in DEPTHS:
             cells = [sum(1 for r in hybrid[kind] if r is not None and r <= d) for kind in ("vector", "bm25", "rrf")]
             print(f"| {d} | " + " | ".join(f"{c}/{len(samples)} ({100 * c / n:.0f}%)" for c in cells) + " |")
+        print("\n| /rag pipeline: weights keywords:vector | " + " | ".join(f"keep {k}" for k in PIPELINE_KEEP) + " |")
+        print("| --- |" + " --- |" * len(PIPELINE_KEEP))
+        for wk, wv in PIPELINE_WEIGHTS:
+            cells = [sum(1 for r in hybrid[f"pipe {wk}:{wv} keep {k}"] if r) for k in PIPELINE_KEEP]
+            print(f"| {wk}:{wv} | " + " | ".join(f"{c}/{len(samples)} ({100 * c / n:.0f}%)" for c in cells) + " |")
+        print("\n| Keyword hits first, then vector hits | Source kept |")
+        print("| --- | --- |")
+        for k, v in KEYWORD_FIRST:
+            c = sum(1 for r in hybrid[f"first {k}+{v}"] if r)
+            print(f"| {k} + {v} | {c}/{len(samples)} ({100 * c / n:.0f}%) |")
 
 
 def hybrid_ranks(settings, qdrant, embeddings, samples) -> dict[str, list[int | None]]:
     collections = bot_collections(settings)
     bm25 = Bm25(qdrant, collections)
     out = {"vector": [], "bm25": [], "rrf": []}
+    out.update({f"pipe {wk}:{wv} keep {keep}": [] for wk, wv in PIPELINE_WEIGHTS for keep in PIPELINE_KEEP})
+    out.update({f"first {k}+{v}": [] for k, v in KEYWORD_FIRST})
     for s in samples:
         vector = embeddings.embed(s.question)
         hits = []
@@ -311,6 +363,28 @@ def hybrid_ranks(settings, qdrant, embeddings, samples) -> dict[str, list[int | 
         by_bm25 = [pid for pid, _ in bm25.rank(s.question)]
         for kind, ranking in (("vector", by_vector), ("bm25", by_bm25), ("rrf", rrf(by_vector, by_bm25))):
             out[kind].append(ranking.index(s.point_id) + 1 if s.point_id in ranking else None)
+        # The /rag pipeline: per collection the top 5 by vector and by keywords
+        # (as plain /rag fetches), pooled, fused with weights, then the best kept.
+        dense = []
+        for collection in collections:
+            try:
+                dense += qdrant.search(collection, vector, limit=settings.retrieval_limit)
+            except Exception:  # noqa: BLE001
+                continue
+        dense_ids = [str(h["id"]) for h in sorted(dense, key=lambda h: -float(h.get("score") or 0))]
+        per_collection = {}
+        for pid, score in bm25.rank(s.question):
+            coll = bm25.collection_of[pid]
+            if len(per_collection.setdefault(coll, [])) < settings.retrieval_limit:
+                per_collection[coll].append((pid, score))
+        sparse_ids = [pid for pid, _ in sorted((x for v in per_collection.values() for x in v), key=lambda x: -x[1])]
+        for wk, wv in PIPELINE_WEIGHTS:
+            fused = rrf(sparse_ids, dense_ids, weights=(wk, wv))
+            for keep in PIPELINE_KEEP:
+                out[f"pipe {wk}:{wv} keep {keep}"].append(1 if s.point_id in fused[:keep] else None)
+        for k, v in KEYWORD_FIRST:
+            chosen = sparse_ids[:k] + [pid for pid in dense_ids if pid not in sparse_ids[:k]][:v]
+            out[f"first {k}+{v}"].append(1 if s.point_id in chosen else None)
     return out
 
 

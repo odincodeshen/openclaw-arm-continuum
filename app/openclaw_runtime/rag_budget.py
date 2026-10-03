@@ -24,7 +24,7 @@ from openclaw_runtime.llm_client import estimate_tokens
 HEADER_TOKENS = 20
 
 _SENTENCE_END = re.compile(r"(?<=[.!?。！？；;])\s+|(?<=[。！？；])|\n+")
-_LATIN_WORD = re.compile(r"[A-Za-z0-9]{2,}")
+_LATIN_WORD = re.compile(r"[A-Za-z0-9]{2,}|[0-9]")  # words of 2+ characters, and any number
 _CJK = re.compile(r"[⺀-鿿豈-﫿가-힯]+")
 _STOP = {
     "the", "and", "for", "are", "was", "what", "which", "who", "how", "does", "did", "with", "that", "this",
@@ -33,15 +33,41 @@ _STOP = {
 }
 
 
+def _word(word: str) -> str:
+    """Lower case, and a plural made singular ("cells" -> "cell", "batteries"
+    -> "battery", "boxes" -> "box"), so a question and a passage match
+    either way. Applied to both sides, so an odd stem ("analysis" ->
+    "analysi") still matches itself."""
+    w = word.lower()
+    if len(w) <= 3 or not w.isalpha() or w.endswith(("ss", "us", "is")):
+        return w
+    if w.endswith("ies") and len(w) > 4:
+        return w[:-3] + "y"
+    if w.endswith(("ches", "shes", "xes", "sses", "zes")):
+        return w[:-2]
+    if w.endswith("s"):
+        return w[:-1]
+    return w
+
+
 def terms(text: str) -> set[str]:
-    """Words for matching: lower-case Latin words and digits, plus character
-    pairs for Chinese / Japanese / Korean text, which has no spaces."""
-    found = {w.lower() for w in _LATIN_WORD.findall(text)} - _STOP
+    """Words for matching: lower-case Latin words (plurals made singular) and
+    digits, plus character pairs for Chinese / Japanese / Korean text, which
+    has no spaces."""
+    found = {_word(w) for w in _LATIN_WORD.findall(text) if w.lower() not in _STOP}
     for run in _CJK.findall(text):
         found.update(run[i:i + 2] for i in range(len(run) - 1))
         if len(run) == 1:
             found.add(run)
     return found
+
+
+def term_list(text: str) -> list[str]:
+    """Like ``terms`` but in order and with repeats (for term counts)."""
+    out = [_word(w) for w in _LATIN_WORD.findall(text) if w.lower() not in _STOP]
+    for run in _CJK.findall(text):
+        out += [run[i:i + 2] for i in range(len(run) - 1)] if len(run) > 1 else [run]
+    return out
 
 
 def split_sentences(text: str) -> list[str]:
@@ -101,12 +127,58 @@ def drop_weak_hits(
     question (``keep_labels``, which carry no score) always stay. 0 = off."""
     if margin <= 0:
         return labelled_hits
-    scores = [float(h.get("score") or 0) for label, hits in labelled_hits if label not in keep_labels for h in hits]
+
+    def vector_hit(label: str, hit: dict) -> bool:  # keyword hits carry BM25 scores, not cosine
+        return label not in keep_labels and hit.get("via") != "keywords"
+
+    scores = [float(h.get("score") or 0) for label, hits in labelled_hits for h in hits if vector_hit(label, h)]
     if not scores:
         return labelled_hits
     floor = max(scores) - margin
     return [
-        (label, hits if label in keep_labels else [h for h in hits if float(h.get("score") or 0) >= floor])
+        (label, [h for h in hits if not vector_hit(label, h) or float(h.get("score") or 0) >= floor])
+        for label, hits in labelled_hits
+    ]
+
+
+def keywords_first(
+    labelled_hits: list[tuple[str, list[dict]]],
+    *,
+    keyword_hits: int,
+    vector_hits: int,
+    keep_labels: tuple[str, ...] = ("filename_match",),
+) -> list[tuple[str, list[dict]]]:
+    """With keyword search on: the best ``keyword_hits`` keyword hits across
+    all sections, then the best ``vector_hits`` vector hits not already
+    chosen. On one bot's documents this kept the right passage for 93% of
+    questions (73% for Chinese questions about English notes), against
+    20-27% by vector alone (scripts/rag_retrieval_eval.py). Files named in
+    the question always stay. Without keyword hits the input is unchanged,
+    so a question with no shared terms is answered as before. Chosen hits
+    get a "rank" that fit_passages keeps."""
+    flat = [(section, label, hit) for section, (label, hits) in enumerate(labelled_hits) for hit in hits]
+    keyword = sorted((x for x in flat if x[2].get("via") == "keywords" and x[1] not in keep_labels),
+                     key=lambda x: -float(x[2].get("score") or 0))
+    if not keyword:
+        return labelled_hits
+    vector = sorted((x for x in flat if x[2].get("via") != "keywords" and x[1] not in keep_labels),
+                    key=lambda x: -float(x[2].get("score") or 0))
+    chosen: dict[int, int] = {}  # id(hit) -> rank
+    seen: set[str] = set()
+    for pool, count in ((keyword, keyword_hits), (vector, vector_hits)):
+        taken = 0
+        for _, _, hit in pool:
+            if taken >= count:
+                break
+            key = str(hit.get("id")) if hit.get("id") is not None else _text(hit)
+            if key in seen:
+                continue
+            seen.add(key)
+            chosen[id(hit)] = len(chosen)
+            taken += 1
+    return [
+        (label, hits if label in keep_labels else
+         [{**h, "rank": chosen[id(h)]} for h in hits if id(h) in chosen])
         for label, hits in labelled_hits
     ]
 
@@ -141,7 +213,9 @@ def fit_passages(
             seen_texts.add(text)
             focused = focus_passage(text, query, passage_tokens)
             priority = 0 if label in priority_labels else 1
-            candidates.append((priority, -float(hit.get("score") or 0), section, index,
+            # a "rank" from keywords_first orders hits whose scores aren't comparable
+            order = float(hit["rank"]) if "rank" in hit else -float(hit.get("score") or 0)
+            candidates.append((priority, order, section, index,
                                _with_text(hit, focused) if focused != text else hit))
     candidates.sort(key=lambda c: (c[0], c[1], c[2], c[3]))
     kept: set[tuple[int, int]] = set()

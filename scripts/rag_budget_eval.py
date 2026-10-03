@@ -64,6 +64,8 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--budgets", default="1200/300,1500/400",
                         help='comma-separated "context/passage" token budgets')
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--question-language", default="",
+                        help='write the questions in this language, e.g. "Traditional Chinese"')
     parser.add_argument("--show", action="store_true", help="also print each question and fact")
     args = parser.parse_args(argv)
 
@@ -75,7 +77,7 @@ def main(argv: list[str]) -> int:
 
     embeddings, qdrant, llm = EmbeddingClient(base), QdrantClient(base), LlmClient(base)
     sizes = PromptSizes()
-    questions = make_questions(base, qdrant, llm, args.questions, args.seed)
+    questions = make_questions(base, qdrant, llm, args.questions, args.seed, args.question_language)
     print(f"{len(questions)} questions from the bot's own documents", file=sys.stderr)
 
     rows = []

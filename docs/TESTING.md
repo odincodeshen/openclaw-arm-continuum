@@ -101,6 +101,7 @@ one layer that fails if it breaks.
 | Check-ins from TOML: spec validation (ids, references, times, days, bad files skipped), presets parse, deadline and report periods, a full work-log week through the gateway (questions, closing card without a model line, schedule button, next-day follow-up and morning card, week-to-date report made at send time, sent once), weekends skipped, `/worklog` history and help, command menu, owner checks, the night ritual unchanged through the generic runtime; `/mem list done since:7d`; `persona=False` model calls | `test_checkins`, `test_night_ritual`, `test_memory_write::MemListSinceTest`, `test_llm_client` | — | night ritual live on DGX bot2 via the runtime; worklog live on the O6 |
 | O6 / CPU-only readiness: prompts trimmed to the model's context window (middle of the longest part, then max_tokens), `context_tokens` per catalog endpoint, photos not queued without a vision model, `openclawctl` with no model services, `compose.o6.yaml` + O6 persona example, e2e `--container` | `test_context_fit`, `test_image_text::NoVisionModelTest`, `test_openclawctl` | — | `scripts/o6_validate.py` 7/7 on the GB10 and on the O6 (ERNIE + Qwen2-VL); e2e 10/10 on the O6 |
 | O6 performance and check-in templates: `/rag` budget (passages focused on the question, best-first within `OPENCLAW_RAG_CONTEXT_TOKENS`, named files first, at least one kept, duplicates once, Chinese matching, Sources only for what was read); every template parses with Chinese titles and English prompts; follow-up look-back reaches last week for a weekly check-in; `/checkins` lists and reports skipped files, `/checkins reload` adds and removes without a restart, built-in commands can't be taken | `test_rag_budget`, `test_checkins::PresetLibraryTest`, `::FollowUpLookbackTest`, `::CheckinsCommandTest` | — | `scripts/perf_probe.py` on the O6 (`/rag` ~100 s -> ~26 s); `scripts/rag_budget_eval.py` on DGX bot2's documents (1500/400 kept as many answers as no limit) |
+| `/rag` retrieval: relevance margin (vector hits only, named files kept); keyword vectors (terms incl. numbers and Chinese pairs, BM25 tf, stable hashes); Qdrant collections created with `kw`, passages written with it only where the collection has it, keyword query with filters; keywords-first selection and its order through the budget; `_search` merges keyword and vector hits without duplicates; chat IDs masked in logs except `rejected`; `/checkins add` / `remove` | `test_keyword_search`, `test_rag_budget::DropWeakHitsTest`, `test_logsafe`, `test_checkins::CheckinsCommandTest` | — | `scripts/qdrant_add_keywords.py` on bot2 (10 collections, 553 points); `scripts/rag_retrieval_eval.py`: source passage sent 27% -> 87% (Chinese questions 13% -> 70%); e2e 10/10 |
 | Image text: separate verbatim transcription (no persona/reply-language instruction, continuation when cut off, NO_TEXT), description in the image's language, uncategorised and cancelled photos into the knowledge base, scanned PDF pages rendered and read with a per-page cache and page limit | `test_image_text`, `test_category_gateway::CategoryIngestTest` | — | UK ticket screenshot complete (was cut off), Traditional receipt and Simplified rail ticket exact with script kept, scanned lease PDF read exactly via the watcher (~10 s/page) |
 | Nightly backup (Qdrant snapshots + workspace archive, rebuildable files skipped, own folders pruned), daily cleanup inside each bot, weekly e2e via `openclaw_maintenance.py`, summary lines; Anki `.apkg` with UK/US MP3; `/say`; `/vocab quiz` + Sunday offer; 🔊 on `/vocab` and Monday/Friday chunks; upload category suggestion + duplicate skip; `/rag` Show sources / Follow-up / Save answer; spoken night answers tidied; yearly night report | `test_maintenance`, `test_housekeeping`, `test_watchdog`, `test_tts`, `test_vocab_review::WordQuizTest`, `test_upload_hints`, `test_rag_buttons`, `test_night_ritual` | — | backup run live (31 collections, 9 s); e2e 10/10 via the script; .apkg imported into the real Anki library (notes, media, re-import updates) |
 | Pronunciation: `openclaw-tts` request checks and per-voice cache, 🔊 UK/US word + sentence buttons on lookups and self-check answers, voice message sent and temp file removed, expired button / service down | `test_tts` | — | Kokoro samples compared with Piper on bot4; UK `bf_emma`, US `af_heart` |
@@ -174,6 +175,17 @@ Both run inside a bot's Telegram container, like the e2e.
   2. it compares answers with and without the budget.
 
   Only counts are printed (questions with `--show`).
+- **`rag_retrieval_eval.py`** checks retrieval only, so it is quick. For
+  each model-written question it reports:
+  - whether the source passage is in what `/rag` sends the model, with
+    keyword search off and on;
+  - its rank in its collection;
+  - what relevance margins would keep.
+
+  `--hybrid` adds offline keyword/fusion rankings,
+  `--question-language "Traditional Chinese"` tests cross-language
+  questions, and `--reembed-model` / `--reembed-prefix` try another
+  embedding model on throwaway copies.
 
 ```bash
 docker exec -i openclaw-telegram-<bot> python3 - --rounds 2 < scripts/perf_probe.py

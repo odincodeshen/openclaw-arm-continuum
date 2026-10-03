@@ -200,6 +200,13 @@ class Settings:
     # scripts/rag_retrieval_eval.py: 0.10 kept every retrieved source passage
     # and cut hits per question from 20 to 4 (nomic-embed-text).
     rag_relevance_margin: float = 0.0
+    # Keyword search next to vector search (keywords.py): needs collections
+    # with the keyword vector (new ones have it; older ones after
+    # scripts/qdrant_add_keywords.py). Then /rag reads the best keyword
+    # hits first and fills in with the best vector hits.
+    rag_keyword_search: bool = False
+    rag_keyword_hits: int = 4
+    rag_vector_hits: int = 2
     image_ocr_max_tokens: int = 4096
     index_chat_photos: bool = True
     # Scanned PDFs: pages with no text layer are read by the vision model,
@@ -368,6 +375,9 @@ def load_settings() -> Settings:
         rag_context_tokens=env_int("OPENCLAW_RAG_CONTEXT_TOKENS", 0),
         rag_passage_tokens=env_int("OPENCLAW_RAG_PASSAGE_TOKENS", 0),
         rag_relevance_margin=env_float("OPENCLAW_RAG_RELEVANCE_MARGIN", 0.0),
+        rag_keyword_search=env_bool("OPENCLAW_RAG_KEYWORD_SEARCH", False),
+        rag_keyword_hits=env_int("OPENCLAW_RAG_KEYWORD_HITS", 4),
+        rag_vector_hits=env_int("OPENCLAW_RAG_VECTOR_HITS", 2),
         image_ocr_max_tokens=env_int("OPENCLAW_IMAGE_OCR_MAX_TOKENS", 4096),
         index_chat_photos=env_bool("OPENCLAW_INDEX_CHAT_PHOTOS", True),
         pdf_ocr_max_pages=env_int("OPENCLAW_PDF_OCR_MAX_PAGES", 40),

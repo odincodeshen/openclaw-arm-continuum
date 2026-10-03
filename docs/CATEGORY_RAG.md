@@ -285,9 +285,65 @@ The memory watcher ingests anything under `categories/<slug>/` into
 | `OPENCLAW_RAG_PASSAGE_TOKENS` | `0` | Cut each passage to the run of sentences closest to the question; `0` = whole passages |
 | `OPENCLAW_RAG_RELEVANCE_MARGIN` | `0` (`.env.example`: `0.10`) | Keep only hits scoring within this margin of the best one. Plain `/rag` takes 3 hits from every category whether or not they match; on a bot with 8 categories that was a median of 20 passages (~11,600 tokens) per question, cut to 4 by 0.10 without losing a retrieved source passage. Files named in the question always stay. |
 
+| `OPENCLAW_RAG_KEYWORD_SEARCH` | `false` | Keyword search next to vector search (see "Keyword search" below) |
+| `OPENCLAW_RAG_KEYWORD_HITS` / `OPENCLAW_RAG_VECTOR_HITS` | `4` / `2` | With keyword search: how many keyword hits /rag reads first, then how many vector hits after them |
+
 The two budget settings are for CPU-only models, where reading the prompt is
 what makes `/rag` slow. On an Orion O6 a `/rag` question over 8 passages
 reads ~3,800 tokens in ~95 s. The Sources line and the passage buttons show
 only the passages the model actually read. `scripts/rag_budget_eval.py`
 checks a budget against a bot's own documents: it writes questions from
 sampled passages and compares answers with and without the budget.
+
+## Keyword search
+
+`nomic-embed-text` is weak in two cases:
+
+- **Near-identical passages.** It can't tell apart passages from one long
+  manual.
+- **Chinese questions.** It barely connects a Chinese question to English
+  notes.
+
+Keyword search finds those passages by the terms they share with the
+question: command names, model codes, numbers, names, and the English
+terms people keep inside Chinese questions.
+
+Each passage has a second, sparse vector, `kw` (`app/openclaw_runtime/keywords.py`):
+
+- English words and numbers, with plurals made singular (`cells` matches
+  `cell`), plus Chinese character pairs;
+- BM25-weighted, with Qdrant applying the IDF.
+
+With `OPENCLAW_RAG_KEYWORD_SEARCH=true`, `/rag` searches each collection both
+ways. It reads the best 4 keyword hits first, then the best 2 vector hits not
+already chosen. A question that shares no terms with any passage is answered
+from vector hits, as before.
+
+On a bot with ~550 passages, mostly one 500-page hardware manual, keyword
+search changed how often the right passage was in what `/rag` sent the model
+(`scripts/rag_retrieval_eval.py`, 30 model-written questions each):
+
+| Questions | Vector only | Keywords first |
+| --- | --- | --- |
+| In the passage's language | 27% (4 passages, ~1,600 tokens) | **87%** (6 passages, ~2,800 tokens) |
+| In Chinese, about English notes | 13% (14 passages, ~11,000 tokens) | **70%** (6 passages, ~3,700 tokens) |
+
+Collections created since keyword search was added have the `kw` vector.
+Older ones need a one-off migration. It copies the points, adding keyword
+vectors without re-embedding, and recreates each collection under the same
+name. A Qdrant snapshot is taken first:
+
+```bash
+docker exec -i openclaw-telegram-<bot> python3 - < scripts/qdrant_add_keywords.py           # plan
+docker exec -i openclaw-telegram-<bot> python3 - --apply < scripts/qdrant_add_keywords.py   # migrate
+```
+
+After a change to how terms are made (`keywords.py`,
+`rag_budget.term_list`), `--apply --refresh` recomputes the keyword vectors
+in place. Then restart the bots, so the questions use the same rules.
+
+Then set `OPENCLAW_RAG_KEYWORD_SEARCH=true` in the bot's `.env` and
+recreate its containers with `bin/openclawctl --profile <bot> start`, so the
+new setting is read; `restart` doesn't. Until then, keyword search skips
+collections without the vector.
+

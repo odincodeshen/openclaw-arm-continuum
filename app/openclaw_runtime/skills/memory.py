@@ -21,7 +21,7 @@ from openclaw_runtime.embedding_client import EmbeddingClient
 from openclaw_runtime.http_client import is_reachable
 from openclaw_runtime.llm_client import LlmClient
 from openclaw_runtime.qdrant_client import QdrantClient
-from openclaw_runtime.rag_budget import drop_weak_hits, fit_passages
+from openclaw_runtime.rag_budget import drop_weak_hits, fit_passages, keywords_first
 from openclaw_runtime.skills.base import SkillResult
 
 
@@ -673,14 +673,27 @@ class RagRetrieveSkill:
             return self._run_single_category(category_token, query, source)
         return self._run_default(query, prefix_filters)
 
-    def _search(self, collection: str, vector: list[float], source: str | None, limit: int | None = None, **kwargs):
+    def _search(self, collection: str, vector: list[float], source: str | None, limit: int | None = None,
+                query: str | None = None, **kwargs):
         """qdrant.search, narrowed to ``source`` when given: over-fetch, then
-        keep the hits whose source matches, capped back to the usual size."""
+        keep the hits whose source matches, capped back to the usual size.
+        With keyword search on and the question given, the collection's
+        keyword hits come first ("via": "keywords"), then the vector hits
+        not already among them."""
         limit = limit or self.settings.retrieval_limit
-        if not source:
-            return self.qdrant.search(collection, vector, limit=limit, **kwargs)
-        hits = self.qdrant.search(collection, vector, limit=limit * _SOURCE_FILTER_OVERFETCH, **kwargs)
-        return filter_hits_by_source(hits, source, limit)
+        fetch = limit * _SOURCE_FILTER_OVERFETCH if source else limit
+        hits = self.qdrant.search(collection, vector, limit=fetch, **kwargs)
+        hits = filter_hits_by_source(hits, source, limit) if source else hits
+        if not (query and getattr(self.settings, "rag_keyword_search", False)):
+            return hits
+        try:
+            keyword_hits = self.qdrant.keyword_search(collection, query, limit=fetch, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - keywords are a bonus; vector hits still answer
+            print(f"[rag] keyword search skipped {collection}: {exc}", flush=True)
+            return hits
+        keyword_hits = filter_hits_by_source(keyword_hits, source, limit) if source else keyword_hits
+        seen = {str(h.get("id")) for h in keyword_hits}
+        return keyword_hits + [h for h in hits if str(h.get("id")) not in seen]
 
     def _knowledge_digest(self, days: int = 1) -> SkillResult:
         """Knowledge report: every document added to the knowledge base or a
@@ -756,19 +769,20 @@ class RagRetrieveSkill:
         # since:/before: apply to both collections -- both have created_at.
         tracker_filters = {"tags": tag} if tag else None
         tracker_hits = self._search(
-            self.settings.tracker_collection, vector, source, filters=tracker_filters, since=since, before=before
+            self.settings.tracker_collection, vector, source, query=query, filters=tracker_filters,
+            since=since, before=before,
         )
         sections = [("filename_match", file_hits), (self.settings.tracker_collection, tracker_hits)]
         if not tag:
             knowledge_hits = self._search(
-                self.settings.knowledge_collection, vector, source, since=since, before=before
+                self.settings.knowledge_collection, vector, source, query=query, since=since, before=before
             )
             sections.append((self.settings.knowledge_collection, knowledge_hits))
             # Most saved material lives in categories, so plain /rag looks
             # there too (a few hits each, like #all). Skipped under tag:,
             # which only exists on tracker items.
             if self.settings.category_rag_enabled and self.settings.rag_include_categories:
-                sections += self._category_sections(vector, source, since=since, before=before)
+                sections += self._category_sections(vector, source, query=query, since=since, before=before)
         return sections
 
     def _category_sections(
@@ -798,7 +812,7 @@ class RagRetrieveSkill:
         collection = entry["collection"]
         vector = self.embeddings.embed(query)
         try:
-            hits = self._search(collection, vector, source)
+            hits = self._search(collection, vector, source, query=query)
         except Exception:
             hits = []
         file_hits = filter_hits_by_source(self._file_hits(query, [collection]), source, limit=50)
@@ -822,7 +836,7 @@ class RagRetrieveSkill:
         if not entries:
             return SkillResult(self.name, "No categories have been created yet.")
         vector = self.embeddings.embed(query)
-        answer = self._answer_from(query, self._category_sections(vector, source))
+        answer = self._answer_from(query, self._category_sections(vector, source, query=query))
         if answer is None:
             suffix = f' from a source matching "{source}"' if source else ""
             return SkillResult(self.name, f"No relevant content was found in any category{suffix}.")
@@ -830,6 +844,11 @@ class RagRetrieveSkill:
 
     def _answer_from(self, query: str, labelled_hits: list[tuple[str, list[dict]]]) -> str | None:
         labelled_hits = drop_weak_hits(labelled_hits, getattr(self.settings, "rag_relevance_margin", 0.0))
+        labelled_hits = keywords_first(
+            labelled_hits,
+            keyword_hits=getattr(self.settings, "rag_keyword_hits", 4),
+            vector_hits=getattr(self.settings, "rag_vector_hits", 2),
+        )
         labelled_hits = fit_passages(
             labelled_hits,
             query,
