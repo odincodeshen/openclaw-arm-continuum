@@ -60,7 +60,7 @@ class Alerter:
             try:
                 self.send(chat_id, text)
             except Exception as exc:  # noqa: BLE001 - an alert must never break the caller
-                self.log(f"[alert] could not send to {chat_id}: {exc}")
+                self.log(f"[alert] could not send chat_id={chat_id}: {exc}")
 
     def alert(self, key: str, summary: str, detail: str = "") -> bool:
         """Report a problem. Returns True if a message was sent (not muted by

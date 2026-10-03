@@ -22,8 +22,6 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
-import json
-import random
 import sys
 from pathlib import Path
 
@@ -32,74 +30,12 @@ for candidate in (Path("/app"), Path(__file__).resolve().parent.parent / "app" i
         sys.path.insert(0, str(candidate))
 
 from openclaw_runtime import llm_client  # noqa: E402
-from openclaw_runtime.categories import registry_entries  # noqa: E402
 from openclaw_runtime.config import load_settings  # noqa: E402
 from openclaw_runtime.embedding_client import EmbeddingClient  # noqa: E402
 from openclaw_runtime.llm_client import LlmClient  # noqa: E402
 from openclaw_runtime.qdrant_client import QdrantClient  # noqa: E402
+from openclaw_runtime.rag_eval import judge, make_questions  # noqa: E402
 from openclaw_runtime.skills.memory import RagRetrieveSkill  # noqa: E402
-
-QUESTION_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "usable": {"type": "boolean"},
-        "question": {"type": "string"},
-        "fact": {"type": "string"},
-    },
-    "required": ["usable", "question", "fact"],
-}
-JUDGE_SCHEMA = {
-    "type": "object",
-    "properties": {"contains_fact": {"type": "boolean"}},
-    "required": ["contains_fact"],
-}
-
-
-def sample_passages(settings, qdrant, count: int, seed: int) -> list[dict]:
-    collections = [settings.knowledge_collection]
-    if settings.category_rag_enabled:
-        collections += [entry["collection"] for entry in registry_entries(settings)]
-    pool = []
-    for collection in collections:
-        try:
-            points = qdrant.scroll_by_filters(collection, {}, limit=512)
-        except Exception:  # noqa: BLE001 - a missing collection just has nothing to sample
-            continue
-        pool += [str((p.get("payload") or {}).get("text") or "").strip() for p in points]
-    pool = [text for text in pool if len(text) >= 400]
-    random.Random(seed).shuffle(pool)
-    return [{"text": text} for text in pool[: count * 2]]  # spares for passages the model can't use
-
-
-def write_question(llm, passage: str) -> dict | None:
-    prompt = (
-        "Here is a passage from someone's notes. Write one question a person might ask that this passage "
-        "answers with a specific fact (a number, name, date, place or short phrase), and give that fact. "
-        "Ask it the way they would, without quoting the passage, in the passage's own language. If the "
-        "passage has no clear, specific fact, set usable to false.\n\n"
-        f"Passage:\n{passage[:3000]}"
-    )
-    try:
-        data = json.loads(llm.chat_json(prompt, QUESTION_SCHEMA, schema_name="rag_eval_question",
-                                        max_tokens=200, persona=False))
-    except Exception:  # noqa: BLE001
-        return None
-    if not data.get("usable") or not data.get("question") or not data.get("fact"):
-        return None
-    return data
-
-
-def judge(llm, question: str, fact: str, answer: str) -> bool:
-    prompt = (
-        "Does the answer below state this fact (in any language or wording)? Reply with contains_fact.\n\n"
-        f"Question: {question}\nFact: {fact}\n\nAnswer:\n{answer[:2000]}"
-    )
-    try:
-        data = json.loads(llm.chat_json(prompt, JUDGE_SCHEMA, schema_name="rag_eval_judge",
-                                        max_tokens=40, persona=False))
-    except Exception:  # noqa: BLE001
-        return False
-    return bool(data.get("contains_fact"))
 
 
 class PromptSizes:
@@ -139,13 +75,7 @@ def main(argv: list[str]) -> int:
 
     embeddings, qdrant, llm = EmbeddingClient(base), QdrantClient(base), LlmClient(base)
     sizes = PromptSizes()
-    questions = []
-    for passage in sample_passages(base, qdrant, args.questions, args.seed):
-        if len(questions) >= args.questions:
-            break
-        made = write_question(llm, passage["text"])
-        if made:
-            questions.append(made)
+    questions = make_questions(base, qdrant, llm, args.questions, args.seed)
     print(f"{len(questions)} questions from the bot's own documents", file=sys.stderr)
 
     rows = []
@@ -155,13 +85,13 @@ def main(argv: list[str]) -> int:
         kept, prompt_sizes = 0, []
         for q in questions:
             sizes.take()
-            answer = skill.run(f"/rag {q['question']}").answer
+            answer = skill.run(f"/rag {q.question}").answer
             prompt_sizes.append(sizes.take())
-            ok = judge(llm, q["question"], q["fact"], answer)
+            ok = judge(llm, q.question, q.fact, answer)
             sizes.take()
             kept += ok
             if args.show:
-                print(f"[{name}] {'OK ' if ok else 'MISS'} {q['question']} -> {q['fact']}", file=sys.stderr)
+                print(f"[{name}] {'OK ' if ok else 'MISS'} {q.question} -> {q.fact}", file=sys.stderr)
         average = sum(prompt_sizes) / len(prompt_sizes) if prompt_sizes else 0
         rows.append((name, kept, len(questions), average))
         print(f"{name}: {kept}/{len(questions)}", file=sys.stderr)

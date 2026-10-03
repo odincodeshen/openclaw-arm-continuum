@@ -293,6 +293,14 @@ def load_specs(folder: Path) -> tuple[list[CheckinSpec], list[str]]:
     return specs, problems
 
 
+PRESET_DIR = Path(__file__).parent / "checkin_presets"
+
+
+def preset_names() -> list[str]:
+    """The templates shipped with OpenClaw (checkin_presets/*.toml)."""
+    return sorted(path.stem for path in PRESET_DIR.glob("*.toml"))
+
+
 def with_overrides(spec: CheckinSpec, **values) -> CheckinSpec:
     return replace(spec, **{k: v for k, v in values.items() if v not in (None, "")})
 

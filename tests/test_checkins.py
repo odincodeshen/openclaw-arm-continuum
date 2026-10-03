@@ -307,6 +307,36 @@ class CheckinsCommandTest(unittest.TestCase):
         self.assertEqual([r.spec.id for r in gateway.CHECKIN_RUNTIMES], ["mood"])
         self.assertTrue(all(r.stopped.is_set() for r in old))
 
+    def test_add_template_from_telegram(self) -> None:
+        with patch.object(gateway, "start_checkin_loop", lambda runtime: None):
+            gateway.checkins_command(1, "/checkins add mood")
+        self.assertTrue((self.folder / "mood.toml").exists())
+        self.assertIn("Added 心情紀錄 (/mood)", self.sent[-1])
+        self.assertIn("mood", [r.spec.id for r in gateway.CHECKIN_RUNTIMES])
+        gateway.checkins_command(1, "/checkins add mood")
+        self.assertIn("already in this bot's check-ins", self.sent[-1])
+        gateway.checkins_command(1, "/checkins add nope")
+        self.assertIn("No template called 'nope'", self.sent[-1])
+
+    def test_add_without_owner_explains_why_it_is_not_running(self) -> None:
+        with patch.dict("os.environ", {"OPENCLAW_CHECKIN_OWNER": ""}), \
+                patch.object(gateway, "start_checkin_loop", lambda runtime: None):
+            gateway.checkins_command(1, "/checkins add health")
+        self.assertIn("isn't running: health: OPENCLAW_CHECKIN_OWNER is not set", self.sent[-1])
+
+    def test_remove_keeps_the_file_aside_and_overview_offers_templates(self) -> None:
+        gateway.checkins_command(1, "/checkins")
+        self.assertIn("Templates you can add: ", self.sent[-1])
+        self.assertNotIn("reading,", self.sent[-1].split("Templates you can add: ")[1].split("\n")[0] + ",")
+        with patch.object(gateway, "start_checkin_loop", lambda runtime: None):
+            gateway.checkins_command(1, "/checkins remove reading")
+        self.assertIn("Stopped reading", self.sent[-1])
+        self.assertFalse((self.folder / "reading.toml").exists())
+        self.assertEqual(len(list((self.folder / "removed").glob("reading-*.toml"))), 1)
+        self.assertEqual(gateway.CHECKIN_RUNTIMES, [])
+        gateway.checkins_command(1, "/checkins remove reading")
+        self.assertIn("No check-in 'reading'", self.sent[-1])
+
     def test_reserved_command_is_refused(self) -> None:
         (self.folder / "mem.toml").write_text(MINIMAL.replace('id = "reading"', 'id = "memo"\ncommand = "mem"'),
                                               encoding="utf-8")

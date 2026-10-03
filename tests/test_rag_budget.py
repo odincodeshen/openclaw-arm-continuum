@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "app"))
 
 from openclaw_runtime.llm_client import estimate_tokens  # noqa: E402
-from openclaw_runtime.rag_budget import HEADER_TOKENS, fit_passages, focus_passage, terms  # noqa: E402
+from openclaw_runtime.rag_budget import HEADER_TOKENS, drop_weak_hits, fit_passages, focus_passage, terms  # noqa: E402
 from openclaw_runtime.skills.memory import RagRetrieveSkill  # noqa: E402
 from support import build_settings  # noqa: E402
 
@@ -95,6 +95,23 @@ class FitPassagesTest(unittest.TestCase):
         self.assertNotIn("…", original["payload"]["text"])
 
 
+class DropWeakHitsTest(unittest.TestCase):
+    def test_off_by_default(self):
+        hits = [("kb", [hit("a", 0.9), hit("b", 0.1)])]
+        self.assertIs(drop_weak_hits(hits, 0.0), hits)
+
+    def test_keeps_hits_near_the_best_across_sections(self):
+        sections = [("kb", [hit("a", 0.80), hit("b", 0.65)]), ("category:x", [hit("c", 0.72), hit("d", 0.40)])]
+        out = drop_weak_hits(sections, 0.10)
+        self.assertEqual([[h["payload"]["text"] for h in hits] for _, hits in out], [["a"], ["c"]])
+        self.assertEqual([label for label, _ in out], ["kb", "category:x"])
+
+    def test_named_files_always_stay(self):
+        sections = [("filename_match", [hit("f", 0.0)]), ("kb", [hit("a", 0.9)])]
+        out = drop_weak_hits(sections, 0.05)
+        self.assertEqual(out[0][1][0]["payload"]["text"], "f")
+
+
 class RagPromptBudgetTest(unittest.TestCase):
     """The settings reach the /rag prompt and the Sources line."""
 
@@ -120,6 +137,11 @@ class RagPromptBudgetTest(unittest.TestCase):
         answer, prompt = self.answer()
         self.assertIn("garden.md", answer)
         self.assertGreater(estimate_tokens(prompt), 1000)
+
+    def test_relevance_margin_drops_unrelated_sources(self):
+        answer, prompt = self.answer(rag_relevance_margin=0.10)
+        self.assertNotIn("garden.md", prompt)
+        self.assertTrue(answer.endswith("Sources: power.md"))
 
     def test_budget_trims_prompt_and_sources(self):
         answer, prompt = self.answer(rag_context_tokens=120, rag_passage_tokens=80)

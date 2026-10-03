@@ -20,6 +20,7 @@ from openclaw_runtime.audio_clip_client import AudioClipClient
 from openclaw_runtime.embedding_client import EmbeddingClient
 from openclaw_runtime.english_weekly import build_weekly_recap
 from openclaw_runtime.llm_client import LlmClient
+from openclaw_runtime.logsafe import redact_ids
 from openclaw_runtime.qdrant_client import QdrantClient
 from openclaw_runtime.skills.english_bot import (
     evaluate_friday_reply,
@@ -321,7 +322,7 @@ def run_todays_push(
                     )
                     send_report(owner, recap)
                 except Exception as exc:  # noqa: BLE001
-                    print(f"[english_bot] weekly recap failed owner={owner}: {exc}", flush=True)
+                    print(redact_ids(f"[english_bot] weekly recap failed owner={owner}: {exc}"), flush=True)
 
 
 def run_todays_sweep(qdrant: QdrantClient, collection: str, owners: list[str]) -> dict[str, list[str]]:

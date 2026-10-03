@@ -13,7 +13,19 @@ OPENCLAW_TELEGRAM_BOT_TOKEN=<your-token>
 
 ## Chat Id
 
-Send a message to your bot, then inspect updates through Telegram's API or your preferred bot tooling. Put your chat id into:
+Start the bot with your account not yet on the allowlist and send it any
+message. The bot ignores it, and its log shows the ID:
+
+```bash
+docker logs openclaw-telegram-<bot> 2>&1 | grep "rejected chat_id"
+```
+
+This is the only log line with a full chat ID. Everywhere else
+(`chat_id=`, `owner=`, `owners=`, `recipients=`) only the last three digits
+are logged, e.g. `chat_id=…175`. That is enough to tell accounts apart
+without putting an account's ID in logs that get copied around.
+
+Put your chat id into:
 
 ```text
 OPENCLAW_TELEGRAM_ALLOWED_CHAT_IDS=<your-chat-id>

@@ -84,6 +84,7 @@ from openclaw_runtime.file_ingest import META_SIDECAR_SUFFIX, SUPPORTED_SUFFIXES
 from openclaw_runtime.engineering_review import EngineeringReviewAgent
 from openclaw_runtime.http_client import post_multipart_file, request_json
 from openclaw_runtime.llm_client import VLLM_NOT_READY_MESSAGE
+from openclaw_runtime.logsafe import redact_ids
 from openclaw_runtime.alerts import Alerter
 from openclaw_runtime.dictionary import LocalDictionary
 from openclaw_runtime.message_cards import RULE, bold, esc, html_to_plain, split_html_message
@@ -104,7 +105,11 @@ from openclaw_runtime.checkins import (
     CheckinStore,
 )
 from openclaw_runtime.checkins import build_report as ck_build_report
+from openclaw_runtime.checkins import PRESET_DIR as CK_PRESET_DIR
+from openclaw_runtime.checkins import SpecError as CkSpecError
 from openclaw_runtime.checkins import close_status as ck_close_status
+from openclaw_runtime.checkins import parse_spec as ck_parse_spec
+from openclaw_runtime.checkins import preset_names as ck_preset_names
 from openclaw_runtime.checkins import follow_up_lookback as ck_follow_up_lookback
 from openclaw_runtime.checkins import closing_line as ck_closing_line
 from openclaw_runtime.checkins import condense_voice_answer as ck_condense_voice_answer
@@ -518,7 +523,7 @@ Example: What's the weather like in the UK tomorrow?
 
 def log(message: str) -> None:
     stamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-    print(f"{stamp} {message}", flush=True)
+    print(f"{stamp} {redact_ids(message)}", flush=True)
 
 
 def stop(_signum: int, _frame: object) -> None:
@@ -4200,15 +4205,80 @@ def checkins_overview() -> str:
         lines.append(f"/{spec.command} -- {spec.title}, {days} {spec.start} ({source})")
     if CHECKIN_PROBLEMS:
         lines += ["", "Skipped:"] + [f"- {problem}" for problem in CHECKIN_PROBLEMS]
-    lines += ["", f"Files: {settings.checkin_dir} · templates: docs/CHECKINS.md",
-              "/checkins reload -- re-read the files without restarting the bot"]
+    in_use = {rt.spec.id for rt in runtimes}
+    available = [name for name in ck_preset_names() if name not in in_use]
+    if available:
+        lines += ["", "Templates you can add: " + ", ".join(available),
+                  "/checkins add <template> -- e.g. /checkins add " + available[0]]
+    lines += ["/checkins remove <id> -- stop one (its answers are kept)",
+              "/checkins reload -- re-read the files after editing them"]
     return "\n".join(lines)
+
+
+def _checkin_file(checkin_id: str) -> Path | None:
+    """The file in the check-in folder that defines checkin_id."""
+    for path in sorted(settings.checkin_dir.glob("*.toml")):
+        try:
+            if ck_parse_spec(path.read_text(encoding="utf-8"), source=path.name).id == checkin_id:
+                return path
+        except (CkSpecError, OSError):
+            continue
+    return None
+
+
+def add_checkin_template(name: str) -> str:
+    """Copy a shipped template into the check-in folder and load it."""
+    name = name.strip().lower().removesuffix(".toml")
+    if name not in ck_preset_names():
+        return f"No template called {name!r}. Templates: {', '.join(ck_preset_names())}."
+    if name == "night" and settings.night_ritual_enabled:
+        return "The night ritual is already on (built in, OPENCLAW_NIGHT_RITUAL_ENABLED)."
+    if _checkin_file(name) is not None:
+        return f"{name} is already in this bot's check-ins. /checkins shows them."
+    settings.checkin_dir.mkdir(parents=True, exist_ok=True)
+    target = settings.checkin_dir / f"{name}.toml"
+    if target.exists():
+        return f"{target.name} already exists in the check-in folder but doesn't define {name}; rename it first."
+    target.write_text((CK_PRESET_DIR / f"{name}.toml").read_text(encoding="utf-8"), encoding="utf-8")
+    reload_checkins()
+    runtime = next((rt for rt in CHECKIN_RUNTIMES if rt.spec.id == name), None)
+    if runtime is None:
+        reason = next((p for p in CHECKIN_PROBLEMS if p.startswith(name)), "see /checkins")
+        return f"Added {target.name}, but it isn't running: {reason}"
+    spec = runtime.spec
+    days = ",".join(code.capitalize() for i, code in enumerate(WEEKDAY_CODES) if i in spec.days)
+    return (f"Added {spec.title} (/{spec.command}): {days} at {spec.start}.\n"
+            f"/{spec.command} start begins it now. To change the days, times or questions, edit "
+            f"{target.name} in the bot's check-in folder, then /checkins reload.")
+
+
+def remove_checkin(checkin_id: str) -> str:
+    """Move a check-in's file to checkins/removed/ and reload. Its answers
+    stay where they are, so adding it again picks them up."""
+    checkin_id = checkin_id.strip().lower().removesuffix(".toml")
+    path = _checkin_file(checkin_id)
+    if path is None:
+        if checkin_id == "night" and settings.night_ritual_enabled:
+            return "The night ritual is built in; turn it off with OPENCLAW_NIGHT_RITUAL_ENABLED=false."
+        return f"No check-in {checkin_id!r} in this bot's folder. /checkins shows them."
+    removed = settings.checkin_dir / "removed"
+    removed.mkdir(exist_ok=True)
+    path.rename(removed / f"{path.stem}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.toml")
+    reload_checkins()
+    return f"Stopped {checkin_id}. Its answers are kept; /checkins add {checkin_id} brings it back."
 
 
 def checkins_command(chat_id: int, text: str) -> bool:
     words = text.split()
     if not words or words[0].lower() != "/checkins":
         return False
+    if len(words) > 1 and words[1].lower() in ("add", "remove"):
+        if len(words) < 3:
+            send_message(chat_id, f"Usage: /checkins {words[1].lower()} <name>\n\n" + checkins_overview())
+            return True
+        action = add_checkin_template if words[1].lower() == "add" else remove_checkin
+        send_message(chat_id, action(words[2]))
+        return True
     if len(words) > 1 and words[1].lower() == "reload":
         before, after = reload_checkins()
         added = [i for i in after if i not in before]

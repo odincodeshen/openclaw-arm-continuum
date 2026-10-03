@@ -283,6 +283,7 @@ The memory watcher ingests anything under `categories/<slug>/` into
 | `OPENCLAW_MEDIA_GROUP_FLUSH_SECONDS` | `2.5` | How long to wait after the last photo in an album before filing the whole group |
 | `OPENCLAW_RAG_CONTEXT_TOKENS` | `0` | How much retrieved text one `/rag` answer reads, in estimated tokens; `0` = everything retrieved. Passages are kept best-first (files named in the question, then by score). |
 | `OPENCLAW_RAG_PASSAGE_TOKENS` | `0` | Cut each passage to the run of sentences closest to the question; `0` = whole passages |
+| `OPENCLAW_RAG_RELEVANCE_MARGIN` | `0` (`.env.example`: `0.10`) | Keep only hits scoring within this margin of the best one. Plain `/rag` takes 3 hits from every category whether or not they match; on a bot with 8 categories that was a median of 20 passages (~11,600 tokens) per question, cut to 4 by 0.10 without losing a retrieved source passage. Files named in the question always stay. |
 
 The two budget settings are for CPU-only models, where reading the prompt is
 what makes `/rag` slow. On an Orion O6 a `/rag` question over 8 passages

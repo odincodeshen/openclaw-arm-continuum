@@ -195,6 +195,11 @@ class Settings:
     # passages are kept until the total is reached. 0 = no limit.
     rag_context_tokens: int = 0
     rag_passage_tokens: int = 0
+    # Plain /rag takes a few hits from every category; keep only those whose
+    # score is within this margin of the best (0 = keep all). Measured with
+    # scripts/rag_retrieval_eval.py: 0.10 kept every retrieved source passage
+    # and cut hits per question from 20 to 4 (nomic-embed-text).
+    rag_relevance_margin: float = 0.0
     image_ocr_max_tokens: int = 4096
     index_chat_photos: bool = True
     # Scanned PDFs: pages with no text layer are read by the vision model,
@@ -362,6 +367,7 @@ def load_settings() -> Settings:
         vlm_context_tokens=env_int("OPENCLAW_VLM_CONTEXT_TOKENS", 0),
         rag_context_tokens=env_int("OPENCLAW_RAG_CONTEXT_TOKENS", 0),
         rag_passage_tokens=env_int("OPENCLAW_RAG_PASSAGE_TOKENS", 0),
+        rag_relevance_margin=env_float("OPENCLAW_RAG_RELEVANCE_MARGIN", 0.0),
         image_ocr_max_tokens=env_int("OPENCLAW_IMAGE_OCR_MAX_TOKENS", 4096),
         index_chat_photos=env_bool("OPENCLAW_INDEX_CHAT_PHOTOS", True),
         pdf_ocr_max_pages=env_int("OPENCLAW_PDF_OCR_MAX_PAGES", 40),

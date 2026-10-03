@@ -89,6 +89,28 @@ def _cut_to_tokens(text: str, max_tokens: int) -> str:
     return text[:low].rstrip()
 
 
+def drop_weak_hits(
+    labelled_hits: list[tuple[str, list[dict]]],
+    margin: float,
+    *,
+    keep_labels: tuple[str, ...] = ("filename_match",),
+) -> list[tuple[str, list[dict]]]:
+    """Only hits scoring within ``margin`` of the best hit (cosine scores).
+    Plain /rag takes a few hits from every category whether or not they
+    match; this drops the ones far below the best. Files named in the
+    question (``keep_labels``, which carry no score) always stay. 0 = off."""
+    if margin <= 0:
+        return labelled_hits
+    scores = [float(h.get("score") or 0) for label, hits in labelled_hits if label not in keep_labels for h in hits]
+    if not scores:
+        return labelled_hits
+    floor = max(scores) - margin
+    return [
+        (label, hits if label in keep_labels else [h for h in hits if float(h.get("score") or 0) >= floor])
+        for label, hits in labelled_hits
+    ]
+
+
 def _text(hit: dict) -> str:
     return str((hit.get("payload") or {}).get("text") or "").strip()
 

@@ -15,6 +15,14 @@ code.
 
 ## Turning one on
 
+From Telegram: `/checkins add <template>` (e.g. `/checkins add mood`)
+copies a template into the bot's check-in folder and starts it.
+`/checkins remove <id>` stops one: the file moves to `checkins/removed/`
+and the answers are kept. `/checkins` lists what runs and which templates
+are left to add. The owner variable (step 2) still has to be set in `.env`.
+
+By hand, to change a template's days, times or questions:
+
 1. Copy a template from `app/openclaw_runtime/checkin_presets/` (see
    "Templates" below) into the bot's check-in folder,
    `profiles/<bot>/workspace/checkins/`. Inside the container that is

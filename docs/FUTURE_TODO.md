@@ -243,6 +243,23 @@ Still open, re-baselined against v1.26:
 
 **Memory and knowledge**
 
+- **Next (in progress, October 2026) -- found by the v1.26 budget check:**
+  1. *Relevance cut-off for `/rag`.* Plain `/rag` takes 3 hits from every
+     category whether or not they match. On a bot with many categories that
+     is ~12,600 tokens per question, and a Sources line full of unrelated
+     files. Drop hits well below the best one.
+  2. *Better retrieval: keyword + vector.* With no budget only 6 of 20
+     questions written from the bot's own passages were answered. Many
+     misses happen at retrieval, before the model. Measure recall (is the
+     source passage retrieved, at which rank) and add keyword matching
+     and/or re-ranking where it helps names, numbers and model codes.
+  3. *No chat IDs in logs.* Some schedulers log owner chat IDs at start;
+     log a count instead.
+  4. *`/checkins add <template>` / `/checkins remove <id>`.* Set up a
+     check-in from Telegram, without copying files on the host.
+- Later: a check-in "skip today" button, editing a past answer, holidays;
+  a read-only role (`OPENCLAW_READONLY_CHAT_IDS`); a watchdog temperature
+  alert; e2e on tags from a GB10 runner.
 - Image text (OCR) -- **done in v1.24** with the vision model itself: a
   separate verbatim transcription call per image (own language/script, long
   limit, continuation), photos outside categories indexed into the

@@ -21,7 +21,7 @@ from openclaw_runtime.embedding_client import EmbeddingClient
 from openclaw_runtime.http_client import is_reachable
 from openclaw_runtime.llm_client import LlmClient
 from openclaw_runtime.qdrant_client import QdrantClient
-from openclaw_runtime.rag_budget import fit_passages
+from openclaw_runtime.rag_budget import drop_weak_hits, fit_passages
 from openclaw_runtime.skills.base import SkillResult
 
 
@@ -721,6 +721,28 @@ class RagRetrieveSkill:
         source = prefix_filters.get("source")
         since = _epoch_for_date(prefix_filters["since"]) if "since" in prefix_filters else None
         before = _epoch_for_date(prefix_filters["before"]) if "before" in prefix_filters else None
+        answer = self._answer_from(query, self.default_sections(query, prefix_filters))
+        if answer is None:
+            bits = []
+            if tag:
+                bits.append(f'tagged "{tag}"')
+            if since is not None or before is not None:
+                bits.append("in that date range")
+            if source:
+                bits.append(f'from a source matching "{source}"')
+            suffix = f" {' and '.join(bits)}" if bits else ""
+            return SkillResult(self.name, f"No relevant memory or document was found{suffix}.")
+        return SkillResult(self.name, answer)
+
+    def default_sections(self, query: str, prefix_filters: dict[str, str] | None = None) -> list[tuple[str, list[dict]]]:
+        """What plain /rag retrieves, as labelled sections, before any budget:
+        files named in the question, tracker memory, the knowledge base and
+        (unless tag: scopes it to tracker items) every category."""
+        prefix_filters = prefix_filters or {}
+        tag = prefix_filters.get("tag")
+        source = prefix_filters.get("source")
+        since = _epoch_for_date(prefix_filters["since"]) if "since" in prefix_filters else None
+        before = _epoch_for_date(prefix_filters["before"]) if "before" in prefix_filters else None
 
         file_hits = filter_hits_by_source(
             self._file_hits(query, [self.settings.knowledge_collection, self.settings.tracker_collection]),
@@ -747,18 +769,7 @@ class RagRetrieveSkill:
             # which only exists on tracker items.
             if self.settings.category_rag_enabled and self.settings.rag_include_categories:
                 sections += self._category_sections(vector, source, since=since, before=before)
-        answer = self._answer_from(query, sections)
-        if answer is None:
-            bits = []
-            if tag:
-                bits.append(f'tagged "{tag}"')
-            if since is not None or before is not None:
-                bits.append("in that date range")
-            if source:
-                bits.append(f'from a source matching "{source}"')
-            suffix = f" {' and '.join(bits)}" if bits else ""
-            return SkillResult(self.name, f"No relevant memory or document was found{suffix}.")
-        return SkillResult(self.name, answer)
+        return sections
 
     def _category_sections(
         self, vector: list[float], source: str | None, limit: int = 3, **search_kwargs
@@ -818,6 +829,7 @@ class RagRetrieveSkill:
         return SkillResult(self.name, answer)
 
     def _answer_from(self, query: str, labelled_hits: list[tuple[str, list[dict]]]) -> str | None:
+        labelled_hits = drop_weak_hits(labelled_hits, getattr(self.settings, "rag_relevance_margin", 0.0))
         labelled_hits = fit_passages(
             labelled_hits,
             query,

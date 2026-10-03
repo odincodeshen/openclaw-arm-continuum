@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from openclaw_runtime.alerts import Alerter
 from openclaw_runtime.config import Settings, load_settings
 from openclaw_runtime.cron_jobs import is_due, load_jobs, mark_ran, validate_time, validate_weekday
+from openclaw_runtime.logsafe import redact_ids
 from openclaw_runtime.gateway_cron import (
     append_gateway_run_log,
     gateway_job_to_runtime,
@@ -41,7 +42,7 @@ def _resolve(key: str, summary: str) -> None:
 
 def log(message: str) -> None:
     stamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-    print(f"{stamp} {message}", flush=True)
+    print(f"{stamp} {redact_ids(message)}", flush=True)
 
 
 def stop(_signum: int, _frame: object) -> None:
