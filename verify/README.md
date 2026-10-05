@@ -5,6 +5,9 @@ bin/verify                # standard: unit tests, platform check, then every sce
 bin/verify quick          # unit tests and ci_validate only (no services needed)
 bin/verify platform       # what this machine's services can do, against its profile
 bin/verify scenarios      # scenarios only
+bin/verify gold           # answer quality on the fixed gold set, against this machine's baseline
+bin/verify full           # standard, then gold (the weekly run)
+bin/verify gold --accept  # take this run as the new baseline, after an intended change
 bin/verify scenarios --only checkin_skip_fillin rag_keywords_chinese
 bin/verify platform --platform orion-o6   # use a profile instead of detecting one
 ```
@@ -93,6 +96,54 @@ long_prompt_seconds_max = 400
 vision_seconds_max = 120
 embedding_ms_max = 1000
 ```
+
+## The gold set: answer quality against a baseline
+
+`bin/verify gold` (`verify/gold_check.py`) measures quality on a fixed,
+made-up set in `verify/gold/`.
+
+**Inputs:**
+
+- five documents in English, Traditional and Simplified Chinese, among them
+  a manual and a log full of near-identical sections. They are filed into
+  the knowledge base and three categories, as a bot would file them.
+- 36 questions in `gold.yaml`: 16 asked in the document's language, 10 across
+  languages (Chinese about English and the reverse) and 10 paraphrased.
+- 7 images, each with its exact text: clean, rotated, blurred,
+  low-contrast, small print, a Traditional Chinese notice and a Simplified
+  Chinese table. `make_images.py` regenerates them on a host with CJK fonts.
+
+**Measures:** all scored by code, no model judging another.
+
+- **retrieval:** did `/rag`, with the bot's real settings (relevance margin,
+  keyword search, budget), send the right document to the model?
+- **answers:** does the `/rag` answer contain one of the expected strings?
+- **ocr:** the image text's character accuracy.
+
+**When a run fails:**
+
+- below the `minimums` in `gold.yaml` (the same on every platform);
+- or more than the `tolerances` below this machine's baseline,
+  `.cache/verify/baseline-<platform>.json`. The first run that passes is
+  saved as the baseline; `--accept` replaces it after an intended change,
+  such as a new model.
+
+**Warnings only:**
+
+- questions that were right in the baseline and are wrong now;
+- answers or images more than 1.5x slower;
+- a different model.
+
+First runs (October 2026):
+
+| | Retrieval | Answers | Image text | Answer time | Image time |
+| --- | --- | --- | --- | --- | --- |
+| GB10 | 92% | 92% | 100% | 5 s | 4 s |
+| Orion O6 | 89% | 86% | 99% | 20 s | 48 s |
+
+Both answer every same-language question; cross-language is the weak spot
+(70% on the GB10, 60% on the O6). The embedding model links Chinese and
+English poorly, and keyword search can't help when no words are shared.
 
 ## Writing a scenario
 

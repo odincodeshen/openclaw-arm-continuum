@@ -196,7 +196,9 @@ docker exec -i openclaw-telegram-<bot> python3 - --budgets 1200/300,1500/400 < s
 ## Self-verification -- `bin/verify`
 
 `bin/verify` runs the unit tests and a platform check, then one scenario
-per feature, each in its own throwaway sandbox. The platform check covers
+per feature, each in its own throwaway sandbox. `bin/verify full` adds the
+gold set: 36 fixed questions and 7 images, scored by code against minimums
+and this machine's last accepted run. The platform check covers
 model, context, JSON output, a long prompt, image text and services, and
 compares speeds with `verify/platforms/<machine>.toml`. Each scenario gets:
 
@@ -212,6 +214,16 @@ Its first run (October 2026) passed all 12 scenarios on both the GB10 and
 the O6. With the fill-in bug of 2026-10-05 put back,
 `checkin_skip_fillin` failed at the step where the answer went to chat
 instead.
+
+The gold set's first runs:
+
+| | Retrieval | Answers | Image text |
+| --- | --- | --- | --- |
+| GB10 | 92% | 92% | 100% |
+| O6 | 89% | 86% | 99% |
+
+A second GB10 run matched its baseline exactly. Cross-language questions
+are the weak spot: 70% on the GB10 and 60% on the O6.
 
 ## Releasing -- `bin/release`
 

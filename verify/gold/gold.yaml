@@ -1,0 +1,81 @@
+# The fixed gold set for bin/verify gold. Everything in it is made up.
+#
+# Each question names the document that answers it (retrieval: did /rag send
+# that document to the model?) and the strings any one of which a right
+# answer contains (answer: checked by code, not by a model). Groups:
+#   same        question and document in the same language
+#   cross       a Chinese question about an English document, or the reverse
+#   paraphrase  worded so that it shares few or no words with the document
+#
+# minimums apply on every platform: quality is not discounted for a slower
+# machine. bin/verify also compares each run with the last accepted one on
+# the same machine (tolerances below).
+
+minimums:
+  retrieval: 0.80       # share of questions whose document reached the model
+  answers: 0.70         # share answered with an expected string
+  ocr: 0.90             # mean character accuracy of the image set
+tolerances:             # allowed drop from this machine's baseline
+  retrieval: 0.06
+  answers: 0.12         # answers vary more from run to run
+  ocr: 0.03
+  slower: 1.5           # slower than this many times the baseline: a warning
+
+documents:              # where each corpus file is filed, as a bot would
+  claw_debugger_manual.md: knowledge
+  northwind_fleet_report.md: knowledge
+  greenhouse_log.md: garden
+  community_rules_zh_tw.md: home
+  travel_policy_zh_cn.md: work
+
+questions:
+  # --- same language: English -------------------------------------------------
+  - {id: en-manual-1, group: same, source: claw_debugger_manual.md, q: "What is the default value of CLAW.Option.TraceDepth?", a: ["64"]}
+  - {id: en-manual-2, group: same, source: claw_debugger_manual.md, q: "What is CLAW.Option.ProbeVoltage set to by default?", a: ["1.8"]}
+  - {id: en-manual-3, group: same, source: claw_debugger_manual.md, q: "What default does CLAW.Option.LinkSpeed have?", a: ["40 MHz", "40MHz"]}
+  - {id: en-report-1, group: same, source: northwind_fleet_report.md, q: "How many sensors did the Northwind fleet have in service at the end of the quarter?", a: ["1,240", "1240"]}
+  - {id: en-report-2, group: same, source: northwind_fleet_report.md, q: "Which firmware version was rolled out to the Northwind sensors in August?", a: ["4.7.2"]}
+  - {id: en-report-3, group: same, source: northwind_fleet_report.md, q: "When is the next external audit of the Northwind fleet?", a: ["14 March 2027", "March 14, 2027", "2027-03-14"]}
+  - {id: en-report-4, group: same, source: northwind_fleet_report.md, q: "What was the average uptime of the Northwind fleet this quarter?", a: ["99.2"]}
+  - {id: en-green-1, group: same, source: greenhouse_log.md, q: "In the greenhouse log, what was the night minimum on 12 April?", a: ["6 °C", "6°C", "6 degrees", "6 ℃", "6℃", "6 度", "6度"]}
+  - {id: en-green-2, group: same, source: greenhouse_log.md, q: "What was the day maximum in the greenhouse on 24 April?", a: ["27"]}
+  - {id: en-green-3, group: same, source: greenhouse_log.md, q: "On 20 April, were the greenhouse roof vents open or closed at noon?", a: ["closed"]}
+  # --- same language: Chinese -------------------------------------------------
+  - {id: tw-rules-1, group: same, source: community_rules_zh_tw.md, q: "社區管理費每坪每月多少錢？", a: ["六十", "60"]}
+  - {id: tw-rules-2, group: same, source: community_rules_zh_tw.md, q: "訪客車輛最多可以停多久？", a: ["兩小時", "2小時", "2 小時", "两小时"]}
+  - {id: tw-rules-3, group: same, source: community_rules_zh_tw.md, q: "室內修繕要提前幾天申請？", a: ["七天", "7天", "7 天"]}
+  - {id: cn-travel-1, group: same, source: travel_policy_zh_cn.md, q: "一线城市住宿每晚的标准是多少？", a: ["六百", "600"]}
+  - {id: cn-travel-2, group: same, source: travel_policy_zh_cn.md, q: "坐飞机出差需要提前几天申请？", a: ["三天", "3天", "3 天"]}
+  - {id: cn-travel-3, group: same, source: travel_policy_zh_cn.md, q: "财务部咨询电话是哪个分机？", a: ["二一八", "218"]}
+  # --- cross language: Chinese questions about English documents ------------------
+  - {id: x-manual-1, group: cross, source: claw_debugger_manual.md, q: "CLAW.Option.WatchPeriod 的預設值是多少？", a: ["250"]}
+  - {id: x-manual-2, group: cross, source: claw_debugger_manual.md, q: "CLAW.Option.CacheLines 預設是多少？", a: ["512"]}
+  - {id: x-report-1, group: cross, source: northwind_fleet_report.md, q: "Northwind 感測器的電池多久更換一次？", a: ["18 個月", "18個月", "十八個月", "18 months", "18个月"]}
+  - {id: x-report-2, group: cross, source: northwind_fleet_report.md, q: "Northwind 感測器車隊的工程負責人是誰？", a: ["Priya Okafor", "Okafor"]}
+  - {id: x-report-3, group: cross, source: northwind_fleet_report.md, q: "Northwind 明年的維護預算是多少？", a: ["86,500", "86500", "8.65", "八萬六千五百"]}
+  - {id: x-green-1, group: cross, source: greenhouse_log.md, q: "溫室日誌裡，四月十六日的夜間最低溫是幾度？", a: ["7 °C", "7°C", "7 度", "7度", "七度", "7 ℃", "7℃", "攝氏7", "攝氏 7"]}
+  # --- cross language: English questions about Chinese documents ------------------
+  - {id: x-rules-1, group: cross, source: community_rules_zh_tw.md, q: "What are the swimming pool opening hours in the community rules?", a: ["6 a.m", "6am", "6 am", "6:00", "06:00", "六點", "6 o'clock"]}
+  - {id: x-rules-2, group: cross, source: community_rules_zh_tw.md, q: "On which evenings is rubbish collected according to the community rules?", a: ["Tuesday", "週二", "Friday"]}
+  - {id: x-travel-1, group: cross, source: travel_policy_zh_cn.md, q: "Within how many working days must a travel expense claim be submitted?", a: ["10 working", "ten working", "10 business", "ten business", "10 days", "ten days", "十个工作日", "十個工作日"]}
+  - {id: x-travel-2, group: cross, source: travel_policy_zh_cn.md, q: "What is the hotel limit per night outside first-tier cities in the travel policy?", a: ["450", "四百五十"]}
+  # --- paraphrase: few or no shared words ---------------------------------------
+  - {id: p-report-1, group: paraphrase, source: northwind_fleet_report.md, q: "How often do the power packs in the monitoring devices get swapped?", a: ["18 months", "18-month", "eighteen months"]}
+  - {id: p-report-2, group: paraphrase, source: northwind_fleet_report.md, q: "What mostly broke the units near the sea?", a: ["corrosion", "connector"]}
+  - {id: p-report-3, group: paraphrase, source: northwind_fleet_report.md, q: "Who is in charge of the technical team for the devices?", a: ["Priya", "Okafor"]}
+  - {id: p-report-4, group: paraphrase, source: northwind_fleet_report.md, q: "How much money is set aside for upkeep next year?", a: ["86,500", "86500"]}
+  - {id: p-green-1, group: paraphrase, source: greenhouse_log.md, q: "Which day in April had the coldest night under glass?", a: ["20 April", "April 20"]}
+  - {id: p-manual-1, group: paraphrase, source: claw_debugger_manual.md, q: "How long does the tool wait after a reset by default?", a: ["7 msec", "7 ms", "7ms", "7 milli"]}
+  - {id: p-rules-1, group: paraphrase, source: community_rules_zh_tw.md, q: "住戶想在家裡裝潢，要多早跟管委會說？", a: ["七天", "7天", "7 天"]}
+  - {id: p-rules-2, group: paraphrase, source: community_rules_zh_tw.md, q: "朋友開車來玩，車子能放多久？", a: ["兩小時", "2小時", "2 小時"]}
+  - {id: p-travel-1, group: paraphrase, source: travel_policy_zh_cn.md, q: "出差回来以后，单据最晚什么时候交？", a: ["十个工作日", "10个工作日", "10 个工作日", "十个"]}
+  - {id: p-travel-2, group: paraphrase, source: travel_policy_zh_cn.md, q: "坐火车可以直接报销什么座位？", a: ["二等座"]}
+
+images:                 # verify/gold/images/<name>.png against <name>.txt
+  - receipt_clean
+  - receipt_rotated
+  - receipt_blurred
+  - receipt_low_contrast
+  - small_print_en
+  - notice_zh_tw
+  - table_zh_cn

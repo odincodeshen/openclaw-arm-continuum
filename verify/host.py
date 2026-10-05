@@ -5,6 +5,9 @@
     bin/verify quick           # unit tests and ci_validate only (no services)
     bin/verify platform        # what this machine's services can do, against its profile
     bin/verify scenarios       # scenarios only
+    bin/verify gold            # answer quality on the fixed gold set, against this machine's baseline
+    bin/verify full            # standard, then gold (the weekly run)
+    bin/verify gold --accept   # take this run as the new baseline (after an intended change)
     bin/verify platform --platform orion-o6   # pick the profile instead of detecting it
     bin/verify scenarios --only checkin_skip rag_keywords
 
@@ -16,6 +19,14 @@ never the checkout itself. Gitignored files never reach it: profiles/, .env
 files, .cache/ and the local settings.
 
 - quick: the unit tests, with no services and Telegram unreachable.
+- gold (verify/gold_check.py): files the made-up gold corpus as a bot would,
+  then for 36 questions checks whether /rag sent the right document
+  (retrieval) and whether the answer has an expected string (answers). It
+  also scores 7 images character by character (ocr). It fails below the
+  minimums in verify/gold/gold.yaml, or on a drop beyond the tolerances from
+  this machine's baseline (.cache/verify/baseline-<platform>.json, written by
+  the first passing run or --accept). Slower than 1.5x the baseline is a
+  warning.
 - platform (verify/platform_check.py): checks the model, its context window,
   JSON output, a long prompt, image text, embeddings, Qdrant, Whisper and
   TTS. Speeds are compared with the matching verify/platforms/*.toml
@@ -285,6 +296,57 @@ def run_platform(tag, env, network, hosts, source: Path, long_tokens: int) -> di
                                                        "detail": (result.stderr or result.stdout)[-800:]}]}
 
 
+def run_gold(tag, env, network, hosts, source: Path) -> dict:
+    prefix = f"verify_{int(time.time())}_{secrets.token_hex(3)}_"
+    cmd = sandbox_cmd(tag, env, network, hosts, [])
+    cmd[-1] = UNPACK + f"exec python /src/verify/gold_check.py --prefix {prefix}"
+    with source.open("rb") as stdin:
+        result = sh(cmd, timeout=7200, stdin=stdin)
+    lines = [line for line in result.stdout.splitlines() if line.startswith("{")]
+    try:
+        return json.loads(lines[-1])
+    except (IndexError, json.JSONDecodeError):
+        return {"error": (result.stderr or result.stdout)[-1500:]}
+
+
+def judge_gold(run: dict, baseline: dict | None) -> tuple[bool, list[str], list[str]]:
+    """(passed, report lines, warnings) for a gold run against the minimums
+    and this machine's baseline."""
+    scores, minimums, tolerances = run["scores"], run["minimums"], run["tolerances"]
+    failures, rows, warnings = [], [], []
+    base_scores = (baseline or {}).get("scores") or {}
+    for key in ("retrieval", "answers", "ocr"):
+        value = scores.get(key)
+        if value is None:
+            rows.append(f"| {key} | -- | -- | not run here |")
+            continue
+        verdict = "ok"
+        if value < minimums[key]:
+            verdict = f"**below the minimum {minimums[key]:.0%}**"
+            failures.append(key)
+        before = base_scores.get(key)
+        if before is not None and value < before - tolerances[key]:
+            verdict = f"**dropped from {before:.0%}** (tolerance {tolerances[key]:.0%})"
+            failures.append(key)
+        rows.append(f"| {key} | {value:.0%} | {f'{before:.0%}' if before is not None else 'none yet'} | {verdict} |")
+    for key in sorted(k for k in scores if k.startswith(("answers_", "retrieval_"))):
+        before = base_scores.get(key)
+        rows.append(f"| {key} | {scores[key]:.0%} | {f'{before:.0%}' if before is not None else '--'} | |")
+    if baseline:
+        for key, value in (run.get("timing") or {}).items():
+            before = (baseline.get("timing") or {}).get(key)
+            if value and before and value > before * tolerances.get("slower", 1.5):
+                warnings.append(f"{key}: {value}s, baseline {before}s")
+        old = {q["id"]: q for q in baseline.get("questions") or []}
+        newly = [q["id"] for q in run["questions"] if not q["right"] and old.get(q["id"], {}).get("right")]
+        if newly:
+            warnings.append("newly wrong: " + ", ".join(newly))
+        if baseline.get("model") != run.get("model"):
+            warnings.append(f"the model changed ({baseline.get('model')} -> {run.get('model')}): "
+                            "consider --accept once the new numbers look right")
+    return not failures, rows, warnings
+
+
 def run_scenario(tag, env, network, hosts, path: Path, source: Path) -> dict:
     prefix = f"verify_{int(time.time())}_{secrets.token_hex(3)}_"
     started = time.time()
@@ -308,7 +370,9 @@ def run_scenario(tag, env, network, hosts, path: Path, source: Path) -> dict:
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Verify this checkout here, with no personal data.")
-    parser.add_argument("mode", nargs="?", default="standard", choices=["quick", "platform", "scenarios", "standard"])
+    parser.add_argument("mode", nargs="?", default="standard",
+                        choices=["quick", "platform", "scenarios", "standard", "gold", "full"])
+    parser.add_argument("--accept", action="store_true", help="gold: save this run as the baseline")
     parser.add_argument("--platform", default="", help="a profile name in verify/platforms/ (default: detect)")
     parser.add_argument("--only", nargs="*", default=[], help="scenario names (file stems)")
     args = parser.parse_args(argv)
@@ -317,13 +381,13 @@ def main(argv: list[str]) -> int:
     source = source_tar()
     lines = [f"# OpenClaw verify -- {time.strftime('%Y-%m-%d %H:%M %Z')} -- {args.mode}", ""]
     ok = True
-    if args.mode in ("quick", "standard"):
+    if args.mode in ("quick", "standard", "full"):
         print("== unit tests and ci_validate", flush=True)
         passed, detail = run_quick(tag, source)
         print(f"   {detail}", flush=True)
         lines += [f"Unit tests and ci_validate: {detail}", ""]
         ok &= passed
-    if args.mode in ("platform", "standard") and ok:
+    if args.mode in ("platform", "standard", "full") and ok:
         facts = host_facts()
         profile = pick_profile(facts, args.platform or config.get("VERIFY_PLATFORM", ""))
         name, env, network, hosts = reference(config)
@@ -347,7 +411,7 @@ def main(argv: list[str]) -> int:
             print(f"   {metric}: {value} -- {verdict}", flush=True)
             lines.append(f"| {metric} | {value} | {verdict} |")
         lines.append("")
-    if args.mode in ("scenarios", "standard") and (ok or args.mode == "scenarios"):
+    if args.mode in ("scenarios", "standard", "full") and (ok or args.mode == "scenarios"):
         name, env, network, hosts = reference(config)
         print(f"== scenarios (services from {name}, network {network})", flush=True)
         with source.open("rb") as stdin:
@@ -376,6 +440,42 @@ def main(argv: list[str]) -> int:
                 lines.append(f"|  | earlier attempt | | {note.splitlines()[0][:160].replace('|', '/')} |")
             lines.append(f"| {path.stem} | {'**FAIL**' if status == 'fail' else status}{retry} | "
                          f"{outcome.get('seconds', 0)}s | {detail.replace('|', '/')} |")
+    if args.mode in ("gold", "full") and (ok or args.mode == "gold"):
+        facts = host_facts()
+        profile = pick_profile(facts, args.platform or config.get("VERIFY_PLATFORM", ""))
+        name, env, network, hosts = reference(config)
+        print(f"== gold set ({profile['name']}; services from {name}) -- this takes a while", flush=True)
+        run = run_gold(tag, env, network, hosts, source)
+        if "error" in run:
+            print(f"   FAILED: {run['error'][-800:]}", flush=True)
+            lines += ["## Gold set", "", "**failed to run**", ""]
+            ok = False
+        else:
+            baseline_path = REPORTS / f"baseline-{profile['name']}.json"
+            baseline = json.loads(baseline_path.read_text()) if baseline_path.exists() else None
+            passed, rows, warnings = judge_gold(run, baseline)
+            ok &= passed
+            lines += [f"## Gold set ({profile['name']}, {run['model']})", "",
+                      "| Score | This run | Baseline | |", "| --- | --- | --- | --- |", *rows, ""]
+            for row in rows:
+                print("   " + row.strip("| ").replace(" | ", "  "), flush=True)
+            timing = run.get("timing") or {}
+            print(f"   answer {timing.get('answer_seconds_median')}s median, image {timing.get('ocr_seconds_median')}s median",
+                  flush=True)
+            for warning in warnings:
+                print(f"   warning: {warning}", flush=True)
+                lines.append(f"- warning: {warning}")
+            for q in run["questions"]:
+                if not q["right"]:
+                    lines.append(f"- wrong: {q['id']} ({'document sent' if q['retrieved'] else 'document not sent'})"
+                                 f" -- {q['answer'][:120].replace(chr(10), ' ')}")
+            REPORTS.mkdir(parents=True, exist_ok=True)
+            (REPORTS / f"{time.strftime('%Y%m%d-%H%M%S')}-gold.json").write_text(
+                json.dumps(run, ensure_ascii=False, indent=1), encoding="utf-8")
+            if args.accept or (baseline is None and passed):
+                baseline_path.write_text(json.dumps(run, ensure_ascii=False, indent=1), encoding="utf-8")
+                print(f"   saved as the baseline for {profile['name']}", flush=True)
+                lines.append(f"- saved as the baseline for {profile['name']}")
     REPORTS.mkdir(parents=True, exist_ok=True)
     report = REPORTS / f"{time.strftime('%Y%m%d-%H%M%S')}-{args.mode}.md"
     report.write_text("\n".join(lines) + "\n", encoding="utf-8")

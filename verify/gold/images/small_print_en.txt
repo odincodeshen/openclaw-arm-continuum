@@ -1,0 +1,7 @@
+Maintenance notice for building B, server room 2.
+The room closes on 14 November 2026 from 08:30 to 17:00 for cooling work.
+Racks R4 to R9 lose power between 09:15 and 11:45.
+Racks R1 to R3 stay on the backup feed during the work.
+Contact the facilities desk on extension 4471, ticket FM-2026-0388.
+Approved budget: GBP 18,640.50 excluding VAT.
+Move test jobs off nodes gpu-07 and gpu-12 before 08:00.

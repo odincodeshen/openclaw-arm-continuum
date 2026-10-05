@@ -8,8 +8,22 @@ OpenClaw is designed as one runtime with multiple deployment profiles. The Pytho
 |---|---|---|---|---|
 | `dgx-spark` | Stable | Local vLLM on NVIDIA GPU | DGX Spark / GB10 class workstation | Single local host |
 | `arm-cpu-only` | Experimental, verified on Orion O6 | Local CPU LLM endpoint, preferably llama.cpp | Radxa Orion O6 or similar Armv9 board/server | Single local host |
-| `o6` (`compose.o6.yaml` + `compose.persona.o6.example.yaml`) | Full feature set, several bots -- validate with `scripts/o6_validate.py` (`docs/O6_SETUP.md`) | llama.cpp on the host: one multimodal model, or text + VLM | Radxa Orion O6 (32 GB) | Single local host, bridge networking like the GB10 |
+| `o6` (`compose.o6.yaml` + `compose.persona.o6.example.yaml`) | Full feature set, several bots -- validate with `bin/verify` (profile `orion-o6`, `docs/O6_SETUP.md`) | llama.cpp on the host: one multimodal model, or text + VLM | Radxa Orion O6 (32 GB) | Single local host, bridge networking like the GB10 |
 | `arm-remote-llm` | Planned / beta | Remote private LAN vLLM endpoint | RPi5 or small Arm gateway plus local inference server | Trusted private LAN |
+
+## Validating a platform
+
+`bin/verify` (`verify/README.md`) checks any of these hosts the same way. It
+uses throwaway sandboxes with no personal data:
+
+- the model, context, JSON output, a long prompt, image text and services;
+- every feature scenario;
+- optionally the fixed gold set.
+
+Speeds are compared with a profile in `verify/platforms/`, chosen from the
+board, GPU and architecture. `gb10` and `orion-o6` are calibrated on real
+machines; a new machine starts from `cpu-only` or `nvidia-gpu` and gets its
+own profile from its first measurements.
 
 ## Current Stable Profile: `dgx-spark`
 

@@ -121,7 +121,8 @@ progress and word lists, the night-ritual journal -- exists only on this
 host, so `scripts/openclaw_maintenance.py` (host, standard library only)
 keeps copies:
 
-- `backup` (nightly, 03:15): a Qdrant snapshot of every collection, and
+- `backup` (nightly, 03:15): a Qdrant snapshot of every collection (except
+  the throwaway `verify_`, `e2e_`, `perf_` and `evalcopy_` ones), and
   `files.tar.gz` with each profile's workspace (minus what can be rebuilt:
   the dictionary, the English bot's weekly audio, voice messages, staging),
   `profiles/*/.env` and the Gateway state, into

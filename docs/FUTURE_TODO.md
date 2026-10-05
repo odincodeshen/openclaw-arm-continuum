@@ -289,8 +289,15 @@ Still open, re-baselined against v1.27:
     chosen from the board, GPU and architecture. `gb10` and `orion-o6` are
     calibrated; `nvidia-gpu` and `cpu-only` are fallbacks. Timed prompts
     start with a random line, so the prompt cache can't flatter them.
-  - phase 3: a fixed gold set (RAG, cross-language, image text) and
-    performance, compared with the last run on that host;
+  - phase 3 -- **done**: `bin/verify gold` / `full`. The fixed made-up
+    gold set has 36 questions across same-language, cross-language and
+    paraphrase, plus 7 images, all scored by code. A run fails below the
+    minimums or on a drop from the machine's baseline; slower answers only
+    warn.
+    - GB10: 92% / 92% / 100%.
+    - O6: 89% / 86% / 99%.
+    - Cross-language is the measured weak spot (70% / 60%), and the case for
+      trying a multilingual embedding model.
   - phase 4: `bin/release` and the weekly timers run it, and a coverage
     check lists commands without a scenario.
 - Later: a read-only role (`OPENCLAW_READONLY_CHAT_IDS`); a watchdog
@@ -321,7 +328,14 @@ Still open, re-baselined against v1.27:
 **Testing**
 
 - L3 end-to-end script (`scripts/e2e_run.py`) -- written and run live (10/10 on
-  bot2); still to wire into a GB10 runner on tags, plus VLM/router quality checks.
+  bot2). It is now one part of a wider check:
+  - `bin/release` runs it before every tag, on the host rather than a GitHub
+    runner;
+  - `bin/verify` adds platform checks, feature scenarios and the gold set
+    for answer and image-text quality, on any host and without personal
+    data.
+
+  Left: an intent-router quality check.
 
 Done since the v1.6 re-baseline, for reference: Telegram conversational
 memory (post-v1.6), concurrent multi-bot personas (see the section below),
