@@ -195,8 +195,10 @@ docker exec -i openclaw-telegram-<bot> python3 - --budgets 1200/300,1500/400 < s
 
 ## Self-verification -- `bin/verify`
 
-`bin/verify` runs the unit tests and then one scenario per feature, each in
-its own throwaway sandbox:
+`bin/verify` runs the unit tests and a platform check, then one scenario
+per feature, each in its own throwaway sandbox. The platform check covers
+model, context, JSON output, a long prompt, image text and services, and
+compares speeds with `verify/platforms/<machine>.toml`. Each scenario gets:
 
 - the real gateway code with a fake Telegram;
 - this machine's real model and services;

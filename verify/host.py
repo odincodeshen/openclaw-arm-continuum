@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """bin/verify: check this checkout on this machine, without personal data.
 
-    bin/verify                 # standard: unit tests, then every scenario
+    bin/verify                 # standard: unit tests, platform check, every scenario
     bin/verify quick           # unit tests and ci_validate only (no services)
+    bin/verify platform        # what this machine's services can do, against its profile
     bin/verify scenarios       # scenarios only
+    bin/verify platform --platform orion-o6   # pick the profile instead of detecting it
     bin/verify scenarios --only checkin_skip rag_keywords
 
 Everything runs in throwaway containers from verify/Dockerfile (built once
@@ -14,6 +16,11 @@ never the checkout itself. Gitignored files never reach it: profiles/, .env
 files, .cache/ and the local settings.
 
 - quick: the unit tests, with no services and Telegram unreachable.
+- platform (verify/platform_check.py): checks the model, its context window,
+  JSON output, a long prompt, image text, embeddings, Qdrant, Whisper and
+  TTS. Speeds are compared with the matching verify/platforms/*.toml
+  profile, chosen from the board name, GPU and CPU architecture. Correctness
+  failures fail the run; a slow number is a warning.
 - scenarios: each verify/scenarios/*.yaml in its own sandbox:
   - the real gateway code from this checkout, driven by a fake Telegram;
   - this machine's model, embeddings, Qdrant, Whisper and TTS;
@@ -35,13 +42,16 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import json
+import platform as host_platform
 import secrets
 import shlex
 import subprocess
 import sys
 import tarfile
 import time
+import tomllib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -56,6 +66,15 @@ SERVICE_KEYS = {
     "OPENCLAW_RAG_CONTEXT_TOKENS", "OPENCLAW_RAG_PASSAGE_TOKENS", "OPENCLAW_RAG_RELEVANCE_MARGIN",
     "OPENCLAW_RAG_KEYWORD_SEARCH", "OPENCLAW_RAG_KEYWORD_HITS", "OPENCLAW_RAG_VECTOR_HITS",
     "OPENCLAW_RETRIEVAL_LIMIT", "OPENCLAW_IMAGE_OCR_MAX_TOKENS",
+}
+PLATFORMS = REPO / "verify" / "platforms"
+# metric -> (threshold key, "min" or "max", unit)
+LIMITS = {
+    "generation_tokens_per_s": ("generation_tokens_per_s_min", "min", "tokens/s"),
+    "prompt_tokens_per_s": ("prompt_tokens_per_s_min", "min", "tokens/s"),
+    "long_prompt_seconds": ("long_prompt_seconds_max", "max", "s"),
+    "vision_seconds": ("vision_seconds_max", "max", "s"),
+    "embedding_ms": ("embedding_ms_max", "max", "ms"),
 }
 
 
@@ -90,6 +109,80 @@ def source_tar() -> Path:
 
 
 UNPACK = "mkdir -p /src && tar -x -C /src && cd /src && "
+
+
+def host_facts() -> dict:
+    """What the host itself says about its hardware (nothing personal)."""
+    facts = {"arch": host_platform.machine(), "cpus": os.cpu_count() or 0, "board": "", "gpu": ""}
+    for path in ("/proc/device-tree/model", "/sys/class/dmi/id/product_name"):
+        try:
+            facts["board"] = Path(path).read_text(errors="replace").replace("\0", "").strip()
+            if facts["board"]:
+                break
+        except OSError:
+            continue
+    gpu = sh(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"]) if shutil_which("nvidia-smi") else None
+    if gpu and gpu.returncode == 0:
+        facts["gpu"] = gpu.stdout.strip().splitlines()[0] if gpu.stdout.strip() else ""
+    try:
+        meminfo = Path("/proc/meminfo").read_text()
+        facts["memory_gb"] = round(int(meminfo.split("MemTotal:")[1].split()[0]) / 1024 / 1024)
+    except (OSError, IndexError, ValueError):
+        pass
+    return facts
+
+
+def shutil_which(name: str) -> bool:
+    import shutil
+    return shutil.which(name) is not None
+
+
+def profiles() -> list[dict]:
+    found = []
+    for path in sorted(PLATFORMS.glob("*.toml")):
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        data.setdefault("name", path.stem)
+        found.append(data)
+    return sorted(found, key=lambda p: -int(p.get("priority", 0)))
+
+
+def pick_profile(facts: dict, wanted: str = "") -> dict:
+    """The named profile, or the highest-priority one whose [match] fits:
+    board / gpu are substrings (gpu = "none" means no GPU), arch is exact."""
+    for profile in profiles():
+        if wanted:
+            if profile["name"] == wanted:
+                return profile
+            continue
+        match = profile.get("match") or {}
+        ok = True
+        for key, value in match.items():
+            have = str(facts.get(key, ""))
+            if key == "gpu" and str(value).lower() == "none":
+                ok &= not have
+            elif key == "arch":
+                ok &= have == str(value)
+            else:
+                ok &= str(value).lower() in have.lower()
+        if ok:
+            return profile
+    raise SystemExit(f"no platform profile {wanted!r} in verify/platforms/" if wanted else "no platform profile matched")
+
+
+def compare(metrics: dict, thresholds: dict) -> list[tuple[str, str, str]]:
+    """(metric, value, verdict) with verdict ok / warn / no limit."""
+    rows = []
+    for metric, value in metrics.items():
+        key, kind, unit = LIMITS.get(metric, ("", "", ""))
+        limit = thresholds.get(key) if key else None
+        if not limit:
+            rows.append((metric, f"{value} {unit}".strip(), "no limit set"))
+            continue
+        ok = value >= limit if kind == "min" else value <= limit
+        rows.append((metric, f"{value} {unit}".strip(),
+                     f"ok ({'≥' if kind == 'min' else '≤'} {limit})" if ok else
+                     f"**slow** (wants {'≥' if kind == 'min' else '≤'} {limit})"))
+    return rows
 
 
 def image() -> str:
@@ -152,13 +245,44 @@ def sandbox_cmd(tag: str, env: dict[str, str], network: str, hosts: list[str], a
     return cmd + [tag, "sh", "-c", UNPACK + "exec python /src/verify/runner.py " + shlex.join(args)]
 
 
-def scenario_timeout(path: Path) -> int:
-    """A scenario's "timeout:" in seconds (default 900); read without YAML,
-    which the host may not have."""
+def scenario_setting(path: Path, key: str, default: int) -> int:
+    """A top-level number in a scenario ("timeout:", "retries:"), read
+    without YAML, which the host may not have."""
     for line in path.read_text(encoding="utf-8").splitlines():
-        if line.startswith("timeout:"):
-            return int(line.split(":", 1)[1].strip())
-    return 900
+        if line.startswith(f"{key}:"):
+            return int(line.split(":", 1)[1].split("#")[0].strip())
+    return default
+
+
+def scenario_timeout(path: Path) -> int:
+    return scenario_setting(path, "timeout", 900)
+
+
+def run_with_retries(tag, env, network, hosts, path: Path, source: Path) -> dict:
+    """Each attempt in a fresh sandbox; earlier failures are kept in the result."""
+    earlier = []
+    for attempt in range(1, scenario_setting(path, "retries", 0) + 2):
+        outcome = run_scenario(tag, env, network, hosts, path, source)
+        outcome["attempts"] = attempt
+        if outcome.get("status") != "fail":
+            break
+        if attempt <= scenario_setting(path, "retries", 0):
+            earlier.append(f"attempt {attempt}, step {outcome.get('step', '?')}: {outcome.get('reason', '')}")
+    outcome["earlier_failures"] = earlier
+    return outcome
+
+
+def run_platform(tag, env, network, hosts, source: Path, long_tokens: int) -> dict:
+    cmd = sandbox_cmd(tag, env, network, hosts, [])
+    cmd[-1] = UNPACK + f"exec python /src/verify/platform_check.py --long-prompt-tokens {int(long_tokens)}"
+    with source.open("rb") as stdin:
+        result = sh(cmd, timeout=3600, stdin=stdin)
+    lines = [line for line in result.stdout.splitlines() if line.startswith("{")]
+    try:
+        return json.loads(lines[-1])
+    except (IndexError, json.JSONDecodeError):
+        return {"facts": {}, "metrics": {}, "checks": [{"name": "platform check", "status": "fail", "seconds": 0,
+                                                       "detail": (result.stderr or result.stdout)[-800:]}]}
 
 
 def run_scenario(tag, env, network, hosts, path: Path, source: Path) -> dict:
@@ -184,7 +308,8 @@ def run_scenario(tag, env, network, hosts, path: Path, source: Path) -> dict:
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Verify this checkout here, with no personal data.")
-    parser.add_argument("mode", nargs="?", default="standard", choices=["quick", "scenarios", "standard"])
+    parser.add_argument("mode", nargs="?", default="standard", choices=["quick", "platform", "scenarios", "standard"])
+    parser.add_argument("--platform", default="", help="a profile name in verify/platforms/ (default: detect)")
     parser.add_argument("--only", nargs="*", default=[], help="scenario names (file stems)")
     args = parser.parse_args(argv)
     config = local_config()
@@ -198,6 +323,30 @@ def main(argv: list[str]) -> int:
         print(f"   {detail}", flush=True)
         lines += [f"Unit tests and ci_validate: {detail}", ""]
         ok &= passed
+    if args.mode in ("platform", "standard") and ok:
+        facts = host_facts()
+        profile = pick_profile(facts, args.platform or config.get("VERIFY_PLATFORM", ""))
+        name, env, network, hosts = reference(config)
+        print(f"== platform: {profile['name']} ({facts.get('board') or facts['arch']}"
+              f"{', ' + facts['gpu'] if facts.get('gpu') else ''}; services from {name})", flush=True)
+        outcome = run_platform(tag, env, network, hosts, source, (profile.get("run") or {}).get("long_prompt_tokens", 6000))
+        lines += [f"## Platform: {profile['name']} -- {profile.get('description', '')}", "",
+                  f"Host: {facts.get('board') or '?'} · {facts['arch']} · {facts['cpus']} CPUs"
+                  f"{' · ' + str(facts['memory_gb']) + ' GB' if facts.get('memory_gb') else ''}"
+                  f"{' · ' + facts['gpu'] if facts.get('gpu') else ''}",
+                  f"Model: {outcome['facts'].get('model', '?')} on {outcome['facts'].get('model_server', '?')}, "
+                  f"context {outcome['facts'].get('server_context') or '?'}", "",
+                  "| Check | Result | Time | Detail |", "| --- | --- | --- | --- |"]
+        for check in outcome["checks"]:
+            ok &= check["status"] != "fail"
+            print(f"   {check['status'].upper():4} {check['name']}  {check['seconds']}s  {check['detail'][:150]}", flush=True)
+            lines.append(f"| {check['name']} | {'**FAIL**' if check['status'] == 'fail' else check['status']} | "
+                         f"{check['seconds']}s | {check['detail'][:200].replace('|', '/')} |")
+        lines += ["", "| Measure | Value | Against the profile |", "| --- | --- | --- |"]
+        for metric, value, verdict in compare(outcome.get("metrics") or {}, profile.get("thresholds") or {}):
+            print(f"   {metric}: {value} -- {verdict}", flush=True)
+            lines.append(f"| {metric} | {value} | {verdict} |")
+        lines.append("")
     if args.mode in ("scenarios", "standard") and (ok or args.mode == "scenarios"):
         name, env, network, hosts = reference(config)
         print(f"== scenarios (services from {name}, network {network})", flush=True)
@@ -211,7 +360,7 @@ def main(argv: list[str]) -> int:
             paths = [p for p in paths if p.stem in args.only]
         lines += ["| Scenario | Result | Time | Detail |", "| --- | --- | --- | --- |"]
         for path in paths:
-            outcome = run_scenario(tag, env, network, hosts, path, source)
+            outcome = run_with_retries(tag, env, network, hosts, path, source)
             status = outcome.get("status")
             ok &= status in ("pass", "skip")
             retry = " (2nd try)" if outcome.get("attempts", 1) > 1 and status == "pass" else ""
@@ -222,6 +371,9 @@ def main(argv: list[str]) -> int:
             print(f"   {status.upper():4} {path.stem}  {outcome.get('seconds', 0)}s{retry}  {detail}", flush=True)
             if status == "fail" and outcome.get("reason"):
                 print("        " + outcome["reason"].replace("\n", "\n        ")[:1500], flush=True)
+            for note in outcome.get("earlier_failures") or []:
+                print("        earlier: " + note.replace("\n", "\n        ")[:1200], flush=True)
+                lines.append(f"|  | earlier attempt | | {note.splitlines()[0][:160].replace('|', '/')} |")
             lines.append(f"| {path.stem} | {'**FAIL**' if status == 'fail' else status}{retry} | "
                          f"{outcome.get('seconds', 0)}s | {detail.replace('|', '/')} |")
     REPORTS.mkdir(parents=True, exist_ok=True)

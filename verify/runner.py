@@ -363,20 +363,9 @@ def main(argv: list[str]) -> int:
         print(json.dumps({"name": spec.get("name"), "status": "skip", "reason": f"not available here: {', '.join(missing)}",
                           "step": 0, "seconds": 0, "replies": 0}))
         return 0
-    attempts = 1 + int(spec.get("retries", 0))
     result = {}
-    try:
-        for attempt in range(1, attempts + 1):
-            if attempt > 1:  # a fresh state for the retry
-                drop_collections(gateway.settings.qdrant_base_url, args.prefix)
-                shutil.rmtree("/workspace", ignore_errors=True)
-                Path("/workspace").mkdir(exist_ok=True)
-                gateway.CHECKIN_PENDING.clear()
-                gateway.NIGHT_PENDING.clear()
-            result = Harness(gateway, spec).run()
-            result["attempts"] = attempt
-            if result["status"] == "pass":
-                break
+    try:  # one attempt per sandbox: bin/verify retries in a fresh one ("retries:" in the scenario)
+        result = Harness(gateway, spec).run()
     finally:
         drop_collections(gateway.settings.qdrant_base_url, args.prefix)
     print(json.dumps(result, ensure_ascii=False))

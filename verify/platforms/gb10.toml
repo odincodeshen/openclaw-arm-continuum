@@ -1,0 +1,21 @@
+# NVIDIA GB10 (DGX Spark class): vLLM on the GPU.
+name = "gb10"
+description = "NVIDIA GB10 with vLLM"
+priority = 30
+
+[match]
+gpu = "GB10"
+
+[run]
+long_prompt_tokens = 12000
+
+# Below a minimum / above a maximum is a warning, not a failure: a slower
+# answer still works. Correctness checks always fail hard.
+[thresholds]
+# Calibrated 2026-10-06 (Qwen3.6-27B-FP8 on vLLM): writes 7.9 tokens/s, reads 1,426 tokens/s,
+# a 12k-token prompt in 9.7 s, image text in 4.1 s. Limits leave ~30% room.
+generation_tokens_per_s_min = 5.5
+prompt_tokens_per_s_min = 1000
+long_prompt_seconds_max = 20
+vision_seconds_max = 15
+embedding_ms_max = 1000

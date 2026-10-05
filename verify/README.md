@@ -1,10 +1,12 @@
 # bin/verify: self-verification without personal data
 
 ```bash
-bin/verify                # standard: unit tests, then every scenario
+bin/verify                # standard: unit tests, platform check, then every scenario
 bin/verify quick          # unit tests and ci_validate only (no services needed)
+bin/verify platform       # what this machine's services can do, against its profile
 bin/verify scenarios      # scenarios only
 bin/verify scenarios --only checkin_skip_fillin rag_keywords_chinese
+bin/verify platform --platform orion-o6   # use a profile instead of detecting one
 ```
 
 It runs on any machine with Docker and a running bot: a GB10, an Orion O6,
@@ -34,6 +36,64 @@ or anything else. Each run:
 The sandbox only knows a made-up chat ID. A real-looking bot token stops
 the run, and `api.telegram.org` resolves to `127.0.0.1`.
 
+## Platform check and profiles
+
+`bin/verify platform` (`verify/platform_check.py`) checks this machine's
+services, whatever the hardware.
+
+**Pass or fail.** These checks must pass:
+
+- the model answers;
+- its context window (llama.cpp `/props` or vLLM `/v1/models`) is at least
+  the configured one;
+- no reasoning leaks into answers;
+- the bots' JSON schemas come back complete;
+- a long prompt is answered from its middle;
+- the vision model reads the fixture receipt word for word in English,
+  Traditional and Simplified Chinese;
+- embeddings, Qdrant, Whisper and TTS work where present.
+
+**Measured.** Speeds are compared with a profile in `verify/platforms/`, and
+a slow number is a warning, not a failure:
+
+- generation and prompt-reading speed;
+- the long prompt's time;
+- image-text time;
+- embedding time.
+
+Each timed prompt starts with a random line, so a prompt cache can't make
+reading look faster than it is.
+
+The profile is the highest-`priority` one whose `[match]` fits the host:
+
+- `board` and `gpu` are substrings of the board name (device tree or DMI)
+  and the `nvidia-smi` GPU name; `gpu = "none"` means no GPU;
+- `arch` must equal the CPU architecture exactly.
+
+`gb10` and `orion-o6` are calibrated on real machines. `nvidia-gpu` and
+`cpu-only` are loose fallbacks. Set `VERIFY_PLATFORM=<name>` in
+`.verify.local`, or pass `--platform`, to choose one.
+
+To add a machine, copy a profile, set its `[match]` and
+`run.long_prompt_tokens`, and leave the thresholds at 0 (no limit). Run
+`bin/verify platform`, then set the limits from what it measured, with
+about 30% room.
+
+```toml
+name = "my-box"
+priority = 30
+[match]
+board = "My Board"          # or gpu = "RTX 4090", arch = "x86_64"
+[run]
+long_prompt_tokens = 6000
+[thresholds]
+generation_tokens_per_s_min = 11
+prompt_tokens_per_s_min = 30
+long_prompt_seconds_max = 400
+vision_seconds_max = 120
+embedding_ms_max = 1000
+```
+
 ## Writing a scenario
 
 One file per feature. Every new feature gets one.
@@ -41,7 +101,7 @@ One file per feature. Every new feature gets one.
 ```yaml
 name: work log -- skip, then fill in an earlier day
 requires: [model, embeddings, qdrant]   # skipped where one is missing (also: vision, whisper, tts)
-retries: 1                              # rerun once from scratch, for answers a CPU model may vary on
+retries: 1                              # rerun once in a fresh sandbox (earlier failures are still reported)
 timeout: 900                            # seconds (default 900)
 clock: "2026-10-01T17:55"               # the scenario clock (Europe/London unless timezone: is set)
 checkins: [worklog]                     # templates copied into the check-in folder

@@ -284,8 +284,11 @@ Still open, re-baselined against v1.27:
     - the nightly backup skips throwaway collections;
     - the unit tests refuse to run next to a real bot token.
 - **Next for `bin/verify`:**
-  - phase 2: platform capability checks for every host (`o6_validate`
-    generalised), plus per-platform thresholds;
+  - phase 2 -- **done**: `bin/verify platform`. It generalises
+    `o6_validate` to every host, with profiles in `verify/platforms/`
+    chosen from the board, GPU and architecture. `gb10` and `orion-o6` are
+    calibrated; `nvidia-gpu` and `cpu-only` are fallbacks. Timed prompts
+    start with a random line, so the prompt cache can't flatter them.
   - phase 3: a fixed gold set (RAG, cross-language, image text) and
     performance, compared with the last run on that host;
   - phase 4: `bin/release` and the weekly timers run it, and a coverage

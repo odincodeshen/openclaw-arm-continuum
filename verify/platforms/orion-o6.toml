@@ -1,0 +1,20 @@
+# Radxa Orion O6 (CIX P1, Arm CPU only): llama.cpp on the CPU.
+name = "orion-o6"
+description = "Radxa Orion O6, CPU-only llama.cpp"
+priority = 30
+
+[match]
+board = "Orion O6"
+
+[run]
+long_prompt_tokens = 6000
+
+[thresholds]
+# Calibrated 2026-10-06 (ERNIE 4.5 21B-A3B Q4_0 + Qwen2-VL-7B on llama.cpp, 8 threads): writes
+# 16.4 tokens/s, reads 44.8 tokens/s, a 6k-token prompt in 261 s, image text in 21-71 s,
+# embeddings in 114 ms. Limits leave ~30% room (more for image text, which varies).
+generation_tokens_per_s_min = 11
+prompt_tokens_per_s_min = 30
+long_prompt_seconds_max = 400
+vision_seconds_max = 120
+embedding_ms_max = 1000

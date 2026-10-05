@@ -154,14 +154,24 @@ export OPENCLAWCTL_MODEL_SERVICES=""
 ## 5. Validate
 
 ```bash
+bin/verify            # unit tests, platform check (profile orion-o6), every scenario
+bin/verify platform   # only the model and services check
+```
+
+`bin/verify` runs in throwaway sandboxes with no personal data
+(`verify/README.md`). The `orion-o6` profile holds this board's measured
+speeds:
+
+- writes 16.4 tokens/s and reads 44.8 tokens/s;
+- a 6k-token prompt in ~260 s;
+- image text in 21-71 s.
+
+The older in-container checks still work:
+
+```bash
 docker exec -i openclaw-telegram-<bot> python3 - < scripts/o6_validate.py
 docker exec -i openclaw-telegram-<bot> python3 - < scripts/e2e_run.py
 ```
-
-The O6 bots pass both: `o6_validate` 7/7, e2e 10/10. Before the bots exist,
-`o6_validate.py` can run in a throwaway `python:3.12-slim` container on the
-compose network with an env file and `--add-host
-host.docker.internal:host-gateway`.
 
 ## 6. Operations
 

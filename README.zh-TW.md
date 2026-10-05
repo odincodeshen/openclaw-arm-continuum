@@ -185,6 +185,7 @@ curl -I http://127.0.0.1:18789/
 ```bash
 bin/verify            # 單元測試，再把每個功能的情境在暫時沙盒裡實際跑一次
 bin/verify quick      # 只跑單元測試，不需要模型等服務
+bin/verify platform   # 模型、context、JSON、長 prompt、圖片辨識，速度和這台機器的設定檔比較
 bin/release v1.28 --title "..." --notes notes.md   # 測試、e2e、隱私掃描都通過才打 tag
 ```
 

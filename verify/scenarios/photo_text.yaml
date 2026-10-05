@@ -1,6 +1,10 @@
-name: a photo's text is read word for word in all three scripts
+name: a photo is analysed, then its text is read word for word in all three scripts
 requires: [model, vision, embeddings, qdrant]
 retries: 1
 steps:
+  # the bot first sends its analysis and asks which category to file the photo in
   - photo: receipt_three_scripts.png
-    expect: {contains: ["4417", "測試發票", "280", "电子发票", "612.5"]}
+    expect: {contains: ["選擇分類"]}
+  # /cancel keeps it in the general knowledge base; the word-for-word card follows
+  - say: /cancel
+    expect: {contains: ["【圖片文字】", "4417", "測試發票", "280", "电子发票", "612.5"]}

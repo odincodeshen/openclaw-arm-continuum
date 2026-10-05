@@ -18,6 +18,10 @@ It sends no Telegram messages and writes nothing to Qdrant. Checks:
   7. embeddings, Qdrant, Whisper and the pronunciation service.
 Prints a Markdown report; exit code 1 if anything failed. Then run the full
 L3 suite: scripts/e2e_run.py.
+
+Superseded by `bin/verify platform` (verify/platform_check.py), which runs
+the same checks for any host in a sandbox and compares speeds with a
+platform profile. Kept for checking from inside a bot container.
 """
 
 import base64

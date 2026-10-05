@@ -1,0 +1,17 @@
+# The fallback: any host without a matching profile, e.g. an Arm or x86 CPU
+# running llama.cpp. Loose limits; add a profile for your machine.
+name = "cpu-only"
+description = "a CPU-only host (fallback)"
+priority = 0
+
+[match]
+
+[run]
+long_prompt_tokens = 4000
+
+[thresholds]
+generation_tokens_per_s_min = 3
+prompt_tokens_per_s_min = 15
+long_prompt_seconds_max = 900
+vision_seconds_max = 300
+embedding_ms_max = 5000
