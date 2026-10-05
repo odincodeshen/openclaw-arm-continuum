@@ -92,7 +92,7 @@ class FakeLlm:
         return json.dumps({"done_this_week": ["Shipped the O6 setup"], "recurring_blockers": "None."})
 
 
-class WorklogFlowTest(unittest.TestCase):
+class WorklogHarness:
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -144,6 +144,19 @@ class WorklogFlowTest(unittest.TestCase):
         self.clock = datetime(2026, 10, day, hh, mm, tzinfo=LONDON)
         self.runtime.tick(self.clock, state)
 
+    def _tap(self, data):
+        gateway.handle_callback_query({"id": "q", "data": data, "message": {"message_id": 1, "chat": {"id": OWNER}}})
+
+    def _buttons(self):
+        """callback_data of the last message with buttons."""
+        markup = [p for m, p in self.api if m == "sendMessage" and p.get("reply_markup")][-1]["reply_markup"]
+        return [b["callback_data"] for row in markup["inline_keyboard"] for b in row]
+
+    def _entry(self, day):
+        return self.runtime.store_fn().load(str(OWNER), date(2026, 10, day) if isinstance(day, int) else day)
+
+
+class WorklogFlowTest(WorklogHarness, unittest.TestCase):
     def test_a_working_day_and_the_week(self) -> None:
         state: dict = {}
         self._tick(1, 18, 0, state)  # Thursday
@@ -200,6 +213,157 @@ class WorklogFlowTest(unittest.TestCase):
         self.assertFalse(self.runtime.handle_reply(5, {"text": "hi"}))
         with patch.dict("os.environ", {"OPENCLAW_CHECKIN_OWNER": ""}):
             self.assertIsNone(gateway._checkin_owner(WORKLOG))
+
+
+class SkipFillInTest(WorklogHarness, unittest.TestCase):
+    """Skip today / ahead, holidays, filling in an earlier day, editing an
+    answer, and the after-midnight question."""
+
+    def test_skip_button_counts_as_skipped_not_missed(self) -> None:
+        state: dict = {}
+        self._tick(1, 18, 0, state)  # Thursday
+        self.assertIn("ck:worklog:a:skip:2026-10-01", self._buttons())
+        self._tap("ck:worklog:a:skip:2026-10-01")
+        self.assertEqual(self._entry(1)["status"], "skipped")
+        self.assertIsNone(self.runtime.peek(OWNER))
+        sent = len(self.sent)
+        self._tick(1, 19, 0, state)
+        self.assertEqual(len(self.sent), sent)  # no reminder for a skipped day
+        self._tick(2, 18, 0, state)  # Friday: nothing to follow up, straight to question 1
+        self.assertIn("【收工紀錄 1/3】", self.sent[-1])
+        for answer in ["Shipped", "none", "Bots"]:
+            self._say(answer)
+        self._tick(2, 19, 30, state)
+        self.assertIn("Thu ⏸ Fri ✅", self.sent[-1])
+        self.assertIn("1 of 4 days · 1 skipped", self.sent[-1])
+
+    def test_reminder_has_skip_button(self) -> None:
+        state: dict = {}
+        self._tick(1, 18, 0, state)
+        self._tick(1, 19, 0, state)
+        self.assertIn("Last call", [p for m, p in self.api if m == "sendMessage"][-1]["text"])
+        self.assertIn("ck:worklog:a:skip:2026-10-01", self._buttons())
+
+    def test_skip_ahead_holidays_and_unskip(self) -> None:
+        folder = Path(self.tmp.name) / "checkins"
+        folder.mkdir()
+        (folder / "holidays.txt").write_text("# bank holidays\n2026-10-06\nnot-a-date\n", encoding="utf-8")
+        p = patch.object(gateway, "settings", dataclasses.replace(gateway.settings, checkin_dir=folder))
+        p.start()
+        self.addCleanup(p.stop)
+        self.clock = datetime(2026, 10, 2, 9, 0, tzinfo=LONDON)
+        self._say("/worklog skip 2026-10-05")
+        self.assertIn("Mon 5 Oct skipped", self.sent[-1])
+        state: dict = {}
+        sent = len(self.sent)
+        self._tick(5, 18, 0, state)  # skipped ahead
+        self._tick(6, 18, 0, state)  # holiday from the file
+        self.assertEqual(len(self.sent), sent)
+        self._say("/worklog")
+        self.assertIn("Mon 5 ⏸", self.sent[-1])
+        self.assertIn("Tue 6 ⏸", self.sent[-1])
+        self._say("/worklog unskip 2026-10-05")
+        self.assertIn("no longer skipped", self.sent[-1])
+        self.assertIsNone(self._entry(5))
+        self.assertTrue(any("not-a-date" in problem for problem in gateway.checkin_holidays()[1]))
+
+    def test_fill_in_an_earlier_day_and_edit_an_answer(self) -> None:
+        state: dict = {}
+        self._tick(1, 18, 0, state)  # Thursday, left unanswered
+        self._tick(2, 0, 1, state)  # midnight: saved as missed
+        self.assertEqual(self._entry(1)["status"], "missed")
+        self.clock = datetime(2026, 10, 2, 9, 0, tzinfo=LONDON)
+        self._say("/worklog start 2026-10-01")
+        self.assertIn("Filling in Thu 1 Oct.", self.sent)
+        self._tick(2, 10, 0, state)  # still open: a filled-in day has 3 hours
+        self.assertEqual(self.runtime.peek(OWNER)["date"], "2026-10-01")
+        for answer in ["Wrote the spec", "none", "Deploy"]:
+            self._say(answer)
+        entry = self._entry(1)
+        self.assertEqual(entry["status"], "done")
+        self.assertIn("backfilled_at", entry)
+        self._say("/worklog edit 2026-10-01 2 Waiting on the Wi-Fi")
+        self.assertEqual(self._entry(1)["answers"]["blocked"], "Waiting on the Wi-Fi")
+        self.assertIn("Updated.", self.sent[-1])
+        self._say("/worklog edit 2026-10-01 9 x")
+        self.assertIn("Which question? 1=done, 2=blocked, 3=first", self.sent[-1])
+        self._say("/worklog start 2026-09-20")
+        self.assertIn("Only the last 7 days", self.sent[-1])
+
+    def test_fill_in_survives_schedule_ticks_between_answers(self) -> None:
+        state: dict = {}
+        self._tick(1, 18, 0, state)
+        self._tick(2, 0, 1, state)
+        self.clock = datetime(2026, 10, 2, 8, 39, tzinfo=LONDON)
+        self._say("/worklog start 2026-10-01")
+        for minute, answer in ((40, "Wrote the spec"), (42, "none"), (44, "Deploy")):
+            self._tick(2, 8, minute - 1, state)  # the 30-second schedule pass runs between replies
+            self.clock = datetime(2026, 10, 2, 8, minute, tzinfo=LONDON)
+            self._say(answer)
+        self.assertEqual(self._entry(1)["status"], "done")
+        self.assertEqual(len(self._entry(1)["answers"]), 3)
+
+    def test_unfinished_fill_in_closes_after_three_hours(self) -> None:
+        state: dict = {}
+        self.clock = datetime(2026, 10, 2, 9, 0, tzinfo=LONDON)
+        self._say("/worklog start 2026-10-01")
+        self._say("Half an answer")
+        self._tick(2, 12, 1, state)
+        self.assertIsNone(self.runtime.peek(OWNER))
+        self.assertEqual(self._entry(1)["status"], "partial")
+
+    def test_after_midnight_asks_which_day(self) -> None:
+        state: dict = {}
+        self._tick(1, 18, 0, state)  # Thursday, unanswered until after midnight
+        self._tick(2, 0, 1, state)
+        self.clock = datetime(2026, 10, 2, 0, 8, tzinfo=LONDON)
+        self._say("/worklog start")
+        self.assertIn("Which day?", [p for m, p in self.api if m == "sendMessage"][-1]["text"])
+        self.assertEqual(self._buttons(), ["ck:worklog:a:day:2026-10-01", "ck:worklog:a:day:2026-10-02"])
+        self._tap("ck:worklog:a:day:2026-10-01")
+        for answer in ["Late work", "none", "Sleep"]:
+            self._say(answer)
+        self.assertEqual(self._entry(1)["status"], "done")
+        self.assertIsNone(self._entry(2))
+
+    def test_after_midnight_choosing_today(self) -> None:
+        self.clock = datetime(2026, 10, 2, 0, 8, tzinfo=LONDON)  # Friday; Thursday has nothing
+        self._say("/worklog start")
+        self._tap("ck:worklog:a:day:2026-10-02")
+        self.assertEqual(self.runtime.peek(OWNER)["date"], "2026-10-02")
+
+    def test_no_question_in_the_daytime(self) -> None:
+        self.clock = datetime(2026, 10, 2, 9, 0, tzinfo=LONDON)
+        self._say("/worklog start")
+        self.assertEqual(self.runtime.peek(OWNER)["date"], "2026-10-02")
+
+
+class SkipDatesEngineTest(unittest.TestCase):
+    def test_parse_skip_dates_and_ranges(self) -> None:
+        days = ck.parse_skip_dates(["2026-12-25", "2026-08-03..2026-08-05"], "x")
+        self.assertEqual(len(days), 4)
+        with self.assertRaises(ck.SpecError):
+            ck.parse_skip_dates(["2026-08-05..2026-08-03"], "x")
+        spec = ck.parse_spec(MINIMAL.replace('start = "10:00"', 'start = "10:00"\nskip_dates = ["2026-10-03"]'))
+        self.assertIn(date(2026, 10, 3), spec.skip_dates)
+
+    def test_streak_and_follow_up_pass_over_skipped_days(self) -> None:
+        spec = dataclasses.replace(WORKLOG, skip_dates=frozenset({date(2026, 10, 1)}))
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ck.CheckinStore(Path(tmp), follow_source="first", noun="day")
+            for day, status in ((date(2026, 9, 29), "done"), (date(2026, 9, 30), "done"), (date(2026, 10, 2), "done")):
+                store.save("1", {"date": day.isoformat(), "status": status, "answers": {"first": "x"}})
+            self.assertEqual(ck.current_streak(spec, store, "1", date(2026, 10, 2)), 3)  # Thu is a holiday
+            store.save("1", ck.skipped_entry(date(2026, 10, 2), "t"))
+            found = store.previous_to_check("1", date(2026, 10, 5), 3, spec.skip_dates)
+            self.assertEqual(found["date"], "2026-09-30")  # Fri skipped, Thu holiday, weekend empty
+
+    def test_day_status(self) -> None:
+        holiday = frozenset({date(2026, 10, 1)})
+        self.assertEqual(ck.day_status(None, date(2026, 10, 1), {3}, date(2026, 10, 5), holiday), "skipped")
+        self.assertEqual(ck.day_status({"status": "missed"}, date(2026, 10, 1), {3}, date(2026, 10, 5), holiday),
+                         "skipped")
+        self.assertEqual(ck.day_status(None, date(2026, 10, 1), {3}, date(2026, 10, 5)), "missed")
 
 
 class LoadRuntimesTest(unittest.TestCase):

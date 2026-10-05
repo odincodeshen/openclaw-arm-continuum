@@ -107,7 +107,12 @@ from openclaw_runtime.checkins import (
 from openclaw_runtime.checkins import build_report as ck_build_report
 from openclaw_runtime.checkins import PRESET_DIR as CK_PRESET_DIR
 from openclaw_runtime.checkins import SpecError as CkSpecError
+from openclaw_runtime.checkins import BACKFILL_DAYS as CK_BACKFILL_DAYS
 from openclaw_runtime.checkins import close_status as ck_close_status
+from openclaw_runtime.checkins import day_label as ck_day_label
+from openclaw_runtime.checkins import load_holidays as ck_load_holidays
+from openclaw_runtime.checkins import skipped_entry as ck_skipped_entry
+from openclaw_runtime.checkins import title_line as ck_title_line
 from openclaw_runtime.checkins import parse_spec as ck_parse_spec
 from openclaw_runtime.checkins import preset_names as ck_preset_names
 from openclaw_runtime.checkins import follow_up_lookback as ck_follow_up_lookback
@@ -1017,7 +1022,10 @@ def handle_callback_query(query: dict) -> None:
         if data.startswith(runtime.schedule_prefix):
             runtime.handle_schedule(chat_id, message_id, data, answer)
             return
-    if data.startswith((NIGHT_CALLBACK_PREFIX, NIGHT_SCHEDULE_PREFIX, "ck:")):
+        if data.startswith(runtime.action_prefix):
+            runtime.handle_action(chat_id, message_id, data, answer)
+            return
+    if data.startswith((NIGHT_CALLBACK_PREFIX, NIGHT_SCHEDULE_PREFIX, NIGHT_ACTION_PREFIX, "ck:")):
         answer()  # a check-in that is switched off here
         return
     if data.startswith("vq:") and settings.dictionary_enabled:
@@ -3560,6 +3568,7 @@ NIGHT_PENDING: dict[int, dict] = {}
 NIGHT_LOCK = threading.Lock()
 NIGHT_CALLBACK_PREFIX = "night_first:"
 NIGHT_SCHEDULE_PREFIX = "night_sched:"
+NIGHT_ACTION_PREFIX = "night_act:"
 # open check-ins other than the night ritual: check-in id -> {chat_id: item}
 CHECKIN_PENDING: dict[str, dict[int, dict]] = {}
 
@@ -3575,7 +3584,7 @@ class CheckinRuntime:
     changed setting or a patched clock takes effect immediately."""
 
     def __init__(self, spec_fn, *, pending: dict, lock, owner_fn, now_fn, store_fn, state_path_fn,
-                 follow_prefix: str, schedule_prefix: str) -> None:
+                 follow_prefix: str, schedule_prefix: str, action_prefix: str = "") -> None:
         self.spec_fn = spec_fn
         self.pending = pending
         self.lock = lock
@@ -3586,6 +3595,9 @@ class CheckinRuntime:
         self.state_path_fn = state_path_fn
         self.follow_prefix = follow_prefix
         self.schedule_prefix = schedule_prefix
+        # "skip:<date>" (the Skip button) and "day:<date>" (which day an
+        # after-midnight start is for)
+        self.action_prefix = action_prefix or schedule_prefix + "act:"
         self.stopped = threading.Event()  # set by /checkins reload to end this loop
         self.thread: threading.Thread | None = None
 
@@ -3616,19 +3628,53 @@ class CheckinRuntime:
             return dict(item) if item else None
 
     # conversation --------------------------------------------------------
-    def send_question(self, chat_id: int, step: str) -> None:
-        send_html(chat_id, ck_render_question(self.spec, step))
+    def skip_row(self, day: date) -> list[dict]:
+        return [{"text": "⏭ Skip today" if day == self.now_fn().date() else f"⏭ Skip {ck_day_label(day)}",
+                 "callback_data": f"{self.action_prefix}skip:{day.isoformat()}"}]
 
-    def send_follow_up(self, chat_id: int, previous: dict) -> None:
+    def send_question(self, chat_id: int, step: str, skip_day: date | None = None) -> None:
+        """A question card; the first one of a scheduled day carries the Skip button."""
+        html = ck_render_question(self.spec, step)
+        if skip_day is not None:
+            send_card_with_buttons(chat_id, html, [self.skip_row(skip_day)])
+        else:
+            send_html(chat_id, html)
+
+    def send_follow_up(self, chat_id: int, previous: dict, skip_day: date | None = None) -> None:
         data = self.follow_prefix + "{}:" + previous["date"]
-        markup = {"inline_keyboard": [[{"text": "✅ Done", "callback_data": data.format("y")},
-                                       {"text": "❌ Not yet", "callback_data": data.format("n")}]]}
+        rows = [[{"text": "✅ Done", "callback_data": data.format("y")},
+                 {"text": "❌ Not yet", "callback_data": data.format("n")}]]
+        if skip_day is not None:
+            rows.append(self.skip_row(skip_day))
         telegram("sendMessage", {"chat_id": chat_id, "text": ck_render_follow_up(self.spec, previous),
-                                 "parse_mode": "HTML", "reply_markup": markup})
+                                 "parse_mode": "HTML", "reply_markup": {"inline_keyboard": rows}})
 
-    def start(self, chat_id: int, *, manual: bool) -> bool:
+    def _ask_which_day(self, chat_id: int, today: date) -> bool:
+        """Started by hand after midnight while yesterday's is unfinished: ask
+        which day the answers are for, instead of quietly starting today."""
+        spec = self.spec
+        if self.now_fn().time() >= dt_time(5, 0):
+            return False
+        yesterday = today - timedelta(days=1)
+        if yesterday.weekday() not in spec.days or yesterday in spec.skip_dates:
+            return False
+        store = self.store_fn()
+        if (store.load(str(chat_id), yesterday) or {}).get("status") in ("done", "skipped"):
+            return False
+        if any(((store.load(str(chat_id), today) or {}).get("answers") or {}).values()):
+            return False
+        rows = [[{"text": f"Last night · {ck_day_label(yesterday)}",
+                  "callback_data": f"{self.action_prefix}day:{yesterday.isoformat()}"},
+                 {"text": f"Today · {ck_day_label(today)}",
+                  "callback_data": f"{self.action_prefix}day:{today.isoformat()}"}]]
+        send_card_with_buttons(chat_id, ck_title_line(spec.title, "Which day?") + "\n"
+                               f"It's after midnight. Are these answers for last night ({ck_day_label(yesterday)}) "
+                               f"or for today ({ck_day_label(today)})?", rows)
+        return True
+
+    def start(self, chat_id: int, *, manual: bool, ask_day: bool = True) -> bool:
         """Open today's check-in (or pick it up where it stopped). False when
-        today's is already done."""
+        today's is already done, or skipped and not started by hand."""
         spec = self.spec
         store = self.store_fn()
         owner = str(chat_id)
@@ -3638,22 +3684,152 @@ class CheckinRuntime:
             if manual:
                 send_message(chat_id, f"{spec.subject} is already done. /{spec.command} shows it.")
             return False
+        if entry and entry.get("status") == "skipped" and not manual:
+            return False
+        if manual and ask_day and self._ask_which_day(chat_id, today):
+            return True
         if entry is None:
             entry = ck_new_entry(today, self.now_fn().isoformat())
         entry["status"] = "open"
+        entry.pop("skipped_at", None)
         store.save(owner, entry)
         previous = None
         if spec.follow_up and not entry.get("checked_previous"):
-            previous = store.previous_to_check(owner, today, ck_follow_up_lookback(spec, today))
+            previous = store.previous_to_check(owner, today, ck_follow_up_lookback(spec, today), spec.skip_dates)
+        fresh = not any((entry.get("answers") or {}).values())
         if previous is not None:
             self.set_pending(chat_id, {"date": today.isoformat(), "step": "check"})
-            self.send_follow_up(chat_id, previous)
+            self.send_follow_up(chat_id, previous, skip_day=today if fresh else None)
         else:
             step = ck_next_step(spec, entry) or spec.steps[-1]
             self.set_pending(chat_id, {"date": today.isoformat(), "step": step})
-            self.send_question(chat_id, step)
+            self.send_question(chat_id, step, skip_day=today if fresh else None)
         log(f"{self.tag} started date={today} manual={manual}")
         return True
+
+    def backfill(self, chat_id: int, day: date) -> None:
+        """Answer an earlier day's questions now (within BACKFILL_DAYS). It
+        stays open for 3 hours, then is saved as it is."""
+        spec = self.spec
+        store = self.store_fn()
+        owner = str(chat_id)
+        now = self.now_fn()
+        today = now.date()
+        if day >= today:
+            self.start(chat_id, manual=True, ask_day=False)
+            return
+        if (today - day).days > CK_BACKFILL_DAYS:
+            send_message(chat_id, f"Only the last {CK_BACKFILL_DAYS} days can be filled in.")
+            return
+        pending = self.peek(chat_id)
+        if pending and pending.get("date") != day.isoformat():
+            send_message(chat_id, f"{ck_day_label(date.fromisoformat(pending['date']))} is still open -- "
+                                  "finish it first.")
+            return
+        entry = store.load(owner, day) or ck_new_entry(day, now.isoformat())
+        if entry.get("status") == "done":
+            send_message(chat_id, f"{ck_day_label(day)} is already done. /{spec.command} edit changes one answer.")
+            return
+        entry["status"] = "open"
+        entry["backfilled_at"] = now.isoformat()
+        entry.pop("skipped_at", None)
+        store.save(owner, entry)
+        step = ck_next_step(spec, entry) or spec.steps[-1]
+        self.set_pending(chat_id, {"date": day.isoformat(), "step": step,
+                                   "until": (now + timedelta(hours=3)).isoformat()})
+        send_message(chat_id, f"Filling in {ck_day_label(day)}.")
+        self.send_question(chat_id, step)
+        log(f"{self.tag} backfill started date={day}")
+
+    def skip(self, chat_id: int, day: date) -> str:
+        """Mark a day skipped: no questions or reminders, not counted as
+        missed, the streak carries on. Answers already given are kept."""
+        spec = self.spec
+        store = self.store_fn()
+        owner = str(chat_id)
+        entry = store.load(owner, day)
+        if entry and entry.get("status") == "done":
+            return f"{ck_day_label(day)} is already done, so there's nothing to skip."
+        store.save(owner, ck_skipped_entry(day, self.now_fn().isoformat(), entry))
+        pending = self.peek(chat_id)
+        if pending and pending.get("date") == day.isoformat():
+            self.set_pending(chat_id, None)
+        log(f"{self.tag} skipped date={day}")
+        return (f"⏸ {ck_day_label(day)} skipped -- it won't count as missed. "
+                f"/{spec.command} unskip {day.isoformat()} undoes it.")
+
+    def unskip(self, chat_id: int, day: date) -> str:
+        spec = self.spec
+        store = self.store_fn()
+        owner = str(chat_id)
+        entry = store.load(owner, day)
+        if not entry or entry.get("status") != "skipped":
+            return f"{ck_day_label(day)} isn't skipped."
+        if any((entry.get("answers") or {}).values()):
+            entry.pop("skipped_at", None)
+            entry["status"] = "open" if day >= self.now_fn().date() else ck_close_status(entry)
+            store.save(owner, entry)
+        else:
+            store.delete(owner, day)
+        log(f"{self.tag} unskipped date={day}")
+        hint = f" /{spec.command} start picks it up." if day == self.now_fn().date() else ""
+        return f"{ck_day_label(day)} is no longer skipped.{hint}"
+
+    def edit(self, chat_id: int, day: date, which: str, text: str) -> None:
+        """Change one answer of an earlier day (question id or number)."""
+        spec = self.spec
+        store = self.store_fn()
+        owner = str(chat_id)
+        entry = store.load(owner, day)
+        if not entry:
+            send_message(chat_id, f"Nothing recorded on {ck_day_label(day)}. /{spec.command} start {day.isoformat()} "
+                                  "fills it in.")
+            return
+        steps = spec.steps
+        step = steps[int(which) - 1] if which.isdigit() and 1 <= int(which) <= len(steps) else which.lower()
+        if step not in steps:
+            names = ", ".join(f"{i + 1}={s}" for i, s in enumerate(steps))
+            send_message(chat_id, f"Which question? {names}. E.g. /{spec.command} edit {day.isoformat()} 1 <answer>.")
+            return
+        if not text.strip():
+            send_message(chat_id, f"Add the new answer: /{spec.command} edit {day.isoformat()} {step} <answer>.")
+            return
+        entry.setdefault("answers", {})[step] = text.strip()
+        entry["edited_at"] = self.now_fn().isoformat()
+        if ck_next_step(spec, entry) is None and entry.get("status") != "done":
+            entry["status"] = "done"
+        elif entry.get("status") in ("missed", "skipped"):
+            entry["status"] = "partial" if day < self.now_fn().date() else "open"
+        store.save(owner, entry)
+        send_html(chat_id, ck_render_closing(spec, entry, entry.get("closing") or "") + "\n\n<i>Updated.</i>")
+        log(f"{self.tag} edited date={day} step={step}")
+
+    def handle_action(self, chat_id: int, message_id: int | None, data: str, answer) -> None:
+        if not self.is_owner(chat_id):
+            answer()
+            return
+        try:
+            action, day_text = data[len(self.action_prefix):].split(":", 1)
+            day = date.fromisoformat(day_text)
+        except ValueError:
+            answer()
+            return
+        if action == "skip":
+            text = self.skip(chat_id, day)
+            answer("Skipped" if text.startswith("⏸") else "")
+            if message_id:
+                _edit_card(chat_id, message_id, ck_title_line(self.spec.title, ck_day_label(day)) + "\n" + esc(text))
+            return
+        if action == "day":
+            answer()
+            if message_id:
+                _edit_card(chat_id, message_id, ck_title_line(self.spec.title, ck_day_label(day)))
+            if day < self.now_fn().date():
+                self.backfill(chat_id, day)
+            else:
+                self.start(chat_id, manual=True, ask_day=False)
+            return
+        answer()
 
     def handle_follow_up(self, chat_id: int, message_id: int | None, data: str, answer) -> None:
         spec = self.spec
@@ -3686,7 +3862,7 @@ class CheckinRuntime:
         today_entry["checked_previous"] = True
         store.save(owner, today_entry)
         step = ck_next_step(spec, today_entry) or spec.steps[-1]
-        self.set_pending(chat_id, {"date": pending["date"], "step": step})
+        self.set_pending(chat_id, {**pending, "step": step})
         self.send_question(chat_id, step)
 
     def answer(self, chat_id: int, text: str, spoken: str = "") -> None:
@@ -3705,7 +3881,8 @@ class CheckinRuntime:
             following = ck_next_step(spec, entry)
             if following is not None:
                 store.save(owner, entry)
-                self.set_pending(chat_id, {"date": pending["date"], "step": following})
+                # keep the rest of the pending item (a filled-in day's "until")
+                self.set_pending(chat_id, {**pending, "step": following})
                 self.send_question(chat_id, following)
                 return
             entry["status"] = "done"
@@ -3822,7 +3999,9 @@ class CheckinRuntime:
         if not pending:
             return
         day = date.fromisoformat(pending["date"])
-        if not ck_deadline_passed(self.spec, day, now.date(), now.time()):
+        if pending.get("until") and now < datetime.fromisoformat(pending["until"]):
+            return  # a day being filled in (/<command> start <date>) has until then
+        if not pending.get("until") and not ck_deadline_passed(self.spec, day, now.date(), now.time()):
             return
         store = self.store_fn()
         entry = store.load(str(owner_id), day) or ck_new_entry(day, now.isoformat())
@@ -3844,6 +4023,9 @@ class CheckinRuntime:
             f"/{c} 2026-09-28 One {spec.unit}\n"
             f"/{c} week       Last week's report · /{c} month  last month's · /{c} year\n"
             f"/{c} move 2026-09-29 2026-09-28   Re-date a {spec.unit} (e.g. one you wrote about yesterday)\n"
+            f"/{c} skip [2026-10-10]   Skip today (or a coming day): not counted as missed · /{c} unskip\n"
+            f"/{c} start 2026-10-02   Fill in a {spec.unit} from the last {CK_BACKFILL_DAYS} days\n"
+            f"/{c} edit 2026-10-02 2 <answer>   Change one answer (question number or id)\n"
         )
 
     def command(self, chat_id: int, text: str) -> bool:
@@ -3854,12 +4036,40 @@ class CheckinRuntime:
         if not self.is_owner(chat_id):
             send_message(chat_id, f"/{c} isn't set up for this chat.")
             return True
-        arg = text[len(c) + 1:].strip().lower()
+        raw = text[len(c) + 1:].strip()
+        arg = raw.lower()
         store = self.store_fn()
         owner = str(chat_id)
         today = self.now_fn().date()
         if arg == "start":
             self.start(chat_id, manual=True)
+            return True
+        words = arg.split()
+        if words and words[0] in ("skip", "unskip") or (words and words[0] == "start" and len(words) == 2):
+            try:
+                day = date.fromisoformat(words[1]) if len(words) > 1 else today
+            except ValueError:
+                send_message(chat_id, f"Use a date like 2026-10-10: /{c} {words[0]} 2026-10-10.")
+                return True
+            if words[0] == "start":
+                self.backfill(chat_id, day)
+            elif words[0] == "unskip":
+                send_message(chat_id, self.unskip(chat_id, day))
+            elif day < today - timedelta(days=CK_BACKFILL_DAYS) or day > today + timedelta(days=366):
+                send_message(chat_id, f"Skip a day from the last {CK_BACKFILL_DAYS} days up to a year ahead.")
+            else:
+                send_message(chat_id, self.skip(chat_id, day))
+            return True
+        if words and words[0] == "edit":
+            parts = raw.split(maxsplit=3)
+            try:
+                day = date.fromisoformat(parts[1])
+                which = parts[2]
+            except (IndexError, ValueError):
+                send_message(chat_id, f"Use /{c} edit <date> <question> <answer>, e.g. /{c} edit "
+                                      f"{(today - timedelta(days=1)).isoformat()} 2 <answer>.")
+                return True
+            self.edit(chat_id, day, which, parts[3] if len(parts) > 3 else "")
             return True
         if arg.startswith("move"):
             parts = arg.split()
@@ -3951,7 +4161,10 @@ class CheckinRuntime:
         if today.weekday() in spec.days and _hhmm(spec.start) <= clock < last_start and state.get("started") != iso:
             state["started"] = iso
             pending = self.peek(owner_id)
-            if not (pending and pending.get("date") == iso):
+            skipped = today in spec.skip_dates or (store.load(owner, today) or {}).get("status") == "skipped"
+            if skipped:
+                log(f"{self.tag} {iso} skipped (holiday or skipped ahead)")
+            elif not (pending and pending.get("date") == iso):
                 self.start(owner_id, manual=False)
 
         for index, at in enumerate(reminders):
@@ -3961,7 +4174,9 @@ class CheckinRuntime:
                 state[key] = iso
                 pending = self.peek(owner_id)
                 if pending and pending.get("date") == iso:
-                    send_html(owner_id, ck_render_reminder(spec, pending.get("step"), last=index == len(reminders) - 1))
+                    send_card_with_buttons(owner_id, ck_render_reminder(spec, pending.get("step"),
+                                                                        last=index == len(reminders) - 1),
+                                           [self.skip_row(today)])
 
         if spec.morning:
             if _hhmm(spec.morning.time) <= clock < dt_time(12, 0) and state.get("morning") != iso:
@@ -4018,6 +4233,29 @@ class CheckinRuntime:
 # --- the night ritual: the built-in preset + OPENCLAW_NIGHT_RITUAL_* -----------
 
 
+HOLIDAYS_FILE = "holidays.txt"
+_HOLIDAYS: dict = {"key": None, "days": frozenset(), "problems": []}
+
+
+def checkin_holidays() -> tuple[frozenset[date], list[str]]:
+    """The bot's shared holidays (<OPENCLAW_CHECKIN_DIR>/holidays.txt), for
+    every check-in including the night ritual; re-read when the file changes."""
+    path = settings.checkin_dir / HOLIDAYS_FILE
+    try:
+        key = (str(path), path.stat().st_mtime_ns)
+    except OSError:
+        return frozenset(), []
+    if _HOLIDAYS["key"] != key:
+        days, problems = ck_load_holidays(path)
+        _HOLIDAYS.update(key=key, days=days, problems=problems)
+    return _HOLIDAYS["days"], _HOLIDAYS["problems"]
+
+
+def with_holidays(spec: CheckinSpec) -> CheckinSpec:
+    days = checkin_holidays()[0]
+    return dataclasses.replace(spec, skip_dates=spec.skip_dates | days) if days else spec
+
+
 def night_spec() -> CheckinSpec:
     s = settings
     reminders = tuple(t.strip() for t in s.night_ritual_reminder_times.split(",") if t.strip())
@@ -4029,6 +4267,7 @@ def night_spec() -> CheckinSpec:
         morning=dataclasses.replace(NIGHT_PRESET.morning, time=s.night_ritual_morning_time),
         reports={kind: dataclasses.replace(plan, time=s.night_ritual_report_time) for kind, plan in NIGHT_PRESET.reports.items()},
         prepare=s.night_ritual_prepare_time.strip(),
+        skip_dates=NIGHT_PRESET.skip_dates | checkin_holidays()[0],
     )
 
 
@@ -4062,6 +4301,7 @@ NIGHT_RUNTIME = CheckinRuntime(
     state_path_fn=lambda: settings.night_ritual_dir / "state.json",
     follow_prefix=NIGHT_CALLBACK_PREFIX,
     schedule_prefix=NIGHT_SCHEDULE_PREFIX,
+    action_prefix=NIGHT_ACTION_PREFIX,
 )
 
 
@@ -4127,7 +4367,7 @@ def checkin_runtime(spec: CheckinSpec) -> CheckinRuntime:
     owner = _checkin_owner(spec)
     follow = spec.follow_up.source if spec.follow_up else "first"
     return CheckinRuntime(
-        lambda: spec,
+        lambda: with_holidays(spec),
         pending=CHECKIN_PENDING.setdefault(spec.id, {}),
         lock=threading.Lock(),
         owner_fn=lambda: owner,
@@ -4136,6 +4376,7 @@ def checkin_runtime(spec: CheckinSpec) -> CheckinRuntime:
         state_path_fn=lambda: data_dir / "state.json",
         follow_prefix=f"ck:{spec.id}:f:",
         schedule_prefix=f"ck:{spec.id}:s:",
+        action_prefix=f"ck:{spec.id}:a:",
     )
 
 
@@ -4144,6 +4385,7 @@ def load_checkin_runtimes() -> list[CheckinRuntime]:
     ritual already covers (id "night" while OPENCLAW_NIGHT_RITUAL_ENABLED)
     is skipped; a bad file is logged, never fatal."""
     specs, problems = ck_load_specs(settings.checkin_dir)
+    problems += checkin_holidays()[1]
     runtimes = []
     for spec in specs:
         if spec.id == "night" and settings.night_ritual_enabled:
@@ -4205,6 +4447,10 @@ def checkins_overview() -> str:
         lines.append(f"/{spec.command} -- {spec.title}, {days} {spec.start} ({source})")
     if CHECKIN_PROBLEMS:
         lines += ["", "Skipped:"] + [f"- {problem}" for problem in CHECKIN_PROBLEMS]
+    holidays = checkin_holidays()[0]
+    upcoming = sorted(d for d in holidays if d >= datetime.now().date())
+    lines += ["", f"Holidays ({HOLIDAYS_FILE}): " + (", ".join(d.isoformat() for d in upcoming[:5])
+              + (f" and {len(upcoming) - 5} more" if len(upcoming) > 5 else "") if upcoming else "none coming up")]
     in_use = {rt.spec.id for rt in runtimes}
     available = [name for name in ck_preset_names() if name not in in_use]
     if available:

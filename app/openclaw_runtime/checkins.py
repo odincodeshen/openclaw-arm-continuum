@@ -26,7 +26,8 @@ from pathlib import Path
 from openclaw_runtime.message_cards import RULE, bold, esc
 
 WEEKDAY_CODES = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
-STATUS_MARKS = {"done": "✅", "partial": "◐", "missed": "❌", "open": "…"}
+STATUS_MARKS = {"done": "✅", "partial": "◐", "missed": "❌", "open": "…", "skipped": "⏸"}
+BACKFILL_DAYS = 7  # how far back /<command> start <date> may fill in a day
 PERIODS = {"last_7_days", "week_to_date", "previous_month", "previous_year"}
 REPORT_KINDS = ("week", "month", "year")
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
@@ -128,6 +129,7 @@ class CheckinSpec:
     prepare: str = "04:00"
     timezone: str = ""  # empty: the bot's OPENCLAW_CRON_TIMEZONE
     data_dir: str = ""  # empty: /workspace/.openclaw/checkins/<id>
+    skip_dates: frozenset[date] = frozenset()  # holidays: no questions, not counted as missed
 
     @property
     def steps(self) -> list[str]:
@@ -161,6 +163,45 @@ def _days(values, where: str) -> frozenset[int]:
     if not days:
         raise SpecError(f"{where}: at least one day is needed")
     return frozenset(days)
+
+
+def parse_skip_dates(values, where: str) -> frozenset[date]:
+    """["2026-12-25", "2026-08-03..2026-08-14"] -> those days (a ".." range
+    includes both ends)."""
+    days: set[date] = set()
+    for value in values or []:
+        text = str(value).strip()
+        try:
+            if ".." in text:
+                first, last = (date.fromisoformat(part.strip()) for part in text.split("..", 1))
+                if last < first or (last - first).days > 366:
+                    raise ValueError
+                days.update(first + timedelta(days=n) for n in range((last - first).days + 1))
+            else:
+                days.add(date.fromisoformat(text))
+        except ValueError:
+            raise SpecError(f"{where}: expected YYYY-MM-DD or YYYY-MM-DD..YYYY-MM-DD, got {value!r}") from None
+    return frozenset(days)
+
+
+def load_holidays(path: Path) -> tuple[frozenset[date], list[str]]:
+    """A shared holiday file: one date or range per line, "#" starts a
+    comment. Returns (days, problems); a bad line is reported and skipped."""
+    days: set[date] = set()
+    problems: list[str] = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return frozenset(), problems
+    for number, line in enumerate(lines, start=1):
+        text = line.split("#", 1)[0].strip()
+        if not text:
+            continue
+        try:
+            days |= parse_skip_dates([text.split()[0]], f"{path.name} line {number}")
+        except SpecError as exc:
+            problems.append(str(exc))
+    return frozenset(days), problems
 
 
 def parse_spec(text: str, *, source: str = "check-in") -> CheckinSpec:
@@ -265,6 +306,7 @@ def parse_spec(text: str, *, source: str = "check-in") -> CheckinSpec:
         report_subject=str(report_raw.get("subject", "check-in notes")), report_closing=str(report_raw.get("closing", "")),
         sections=tuple(sections), prepare=_hhmm(report_raw.get("prepare", "04:00"), "reports.prepare"),
         timezone=str(head.get("timezone", "")), data_dir=str(head.get("data_dir", "")),
+        skip_dates=parse_skip_dates(sched.get("skip_dates"), f"{source}: [schedule] skip_dates"),
     )
     for at in spec.reminders:
         if at <= spec.start:
@@ -336,6 +378,15 @@ def new_entry(day: date, now_iso: str) -> dict:
     return {"date": day.isoformat(), "status": "open", "answers": {}, "started_at": now_iso}
 
 
+def skipped_entry(day: date, now_iso: str, entry: dict | None = None) -> dict:
+    """The day marked skipped (by the button, /<command> skip, or ahead of
+    time). Answers already given are kept."""
+    entry = dict(entry) if entry else {"date": day.isoformat(), "answers": {}}
+    entry["status"] = "skipped"
+    entry["skipped_at"] = now_iso
+    return entry
+
+
 def close_status(entry: dict) -> str:
     """Status for a day that reached the deadline unfinished."""
     return "partial" if any((entry.get("answers") or {}).values()) else "missed"
@@ -390,17 +441,28 @@ class CheckinStore:
             day += timedelta(days=1)
         return entries
 
-    def previous_to_check(self, owner: str, day: date, lookback_days: int = 3) -> dict | None:
+    def previous_to_check(self, owner: str, day: date, lookback_days: int = 3,
+                          skip_dates: frozenset[date] = frozenset()) -> dict | None:
         """The most recent earlier entry (within lookback_days) whose
-        follow-up answer hasn't been marked done / not done yet."""
-        for back in range(1, lookback_days + 1):
-            entry = self.load(owner, day - timedelta(days=back))
+        follow-up answer hasn't been marked done / not done yet. Skipped days
+        and holidays don't use up the look-back."""
+        remaining, back = lookback_days, 0
+        while remaining > 0 and back < 60:
+            back += 1
+            earlier = day - timedelta(days=back)
+            entry = self.load(owner, earlier)
+            if (entry or {}).get("status") == "skipped" or (entry is None and earlier in skip_dates):
+                continue
+            remaining -= 1
             if entry is None:
                 continue
             if (entry.get("answers") or {}).get(self.follow_source) and entry.get(f"{self.follow_source}_done") is None:
                 return entry
             return None  # only the latest earlier entry is asked about
         return None
+
+    def delete(self, owner: str, day: date) -> None:
+        self._path(owner, day).unlink(missing_ok=True)
 
     def move(self, owner: str, source: date, target: date) -> dict:
         """Re-date an entry. Refuses to overwrite an existing one."""
@@ -497,14 +559,20 @@ def render_morning(spec: CheckinSpec, answer: str) -> str:
     return "\n".join([title_line(m.title, m.label), m.intro, bold(answer), "", m.outro])
 
 
-def day_status(entry: dict | None, day: date, days: set[int] | frozenset[int], today: date) -> str | None:
-    """done / partial / missed / open for a day, or None for a day with no
-    check-in and no entry (e.g. a weekend for a work log)."""
+def day_status(entry: dict | None, day: date, days: set[int] | frozenset[int], today: date,
+               skip_dates: frozenset[date] = frozenset()) -> str | None:
+    """done / partial / missed / open / skipped for a day, or None for a day
+    with no check-in and no entry (e.g. a weekend for a work log). A holiday
+    (skip_dates) with nothing answered counts as skipped."""
     if entry:
         status = entry.get("status", "open")
         if status == "open" and day < today:
-            return close_status(entry)
+            status = close_status(entry)
+        if status == "missed" and day in skip_dates:
+            return "skipped"
         return status
+    if day.weekday() in days and day in skip_dates and day <= today:
+        return "skipped"
     if day.weekday() in days and day < today:
         return "missed"
     return None
@@ -518,7 +586,7 @@ def render_history(spec: CheckinSpec, entries_by_day: dict[date, dict], days: li
                    *, detail: list[dict]) -> str:
     statuses = [
         (day, status) for day in days
-        if (status := day_status(entries_by_day.get(day), day, spec.days, today)) is not None
+        if (status := day_status(entries_by_day.get(day), day, spec.days, today, spec.skip_dates)) is not None
     ]
     lines = [title_line(spec.history_title, f"/{spec.command}")]
     lines.append(status_line(statuses) if statuses else f"No {spec.unit}s recorded yet.")
@@ -534,7 +602,7 @@ def render_history(spec: CheckinSpec, entries_by_day: dict[date, dict], days: li
         if spec.follow_up and entry.get(spec.done_field) is not None:
             lines.append(f"{spec.follow_up.short} done: {'✅' if entry[spec.done_field] else '❌'}")
     c = spec.command
-    lines += ["", f"<i>/{c} 7d · /{c} 2026-09-28 · /{c} start · /{c} week · /{c} month · /{c} move</i>"]
+    lines += ["", f"<i>/{c} 7d · /{c} 2026-09-28 · /{c} start · /{c} skip · /{c} edit · /{c} week · /{c} month</i>"]
     return "\n".join(lines)
 
 
@@ -635,17 +703,18 @@ class PeriodStats:
     statuses: list[tuple[date, str]]
     done: int
     partial: int
-    nights: int  # days the check-in was due (named for the night ritual)
+    nights: int  # days the check-in was due, skipped days left out (named for the night ritual)
     first_written: int  # follow-up answers given
     first_done: int
     first_not_done: int
+    skipped: int = 0
 
 
 def period_stats(spec: CheckinSpec, entries_by_day: dict[date, dict], start: date, end: date, today: date) -> PeriodStats:
     statuses = []
     day = start
     while day <= end:
-        status = day_status(entries_by_day.get(day), day, spec.days, today)
+        status = day_status(entries_by_day.get(day), day, spec.days, today, spec.skip_dates)
         if status is not None:
             statuses.append((day, status))
         day += timedelta(days=1)
@@ -656,7 +725,8 @@ def period_stats(spec: CheckinSpec, entries_by_day: dict[date, dict], start: dat
         statuses=statuses,
         done=sum(1 for _, s in statuses if s == "done"),
         partial=sum(1 for _, s in statuses if s == "partial"),
-        nights=len(statuses),
+        nights=sum(1 for _, s in statuses if s != "skipped"),
+        skipped=sum(1 for _, s in statuses if s == "skipped"),
         first_written=len(firsts),
         first_done=sum(1 for e in firsts if e.get(spec.done_field) is True),
         first_not_done=sum(1 for e in firsts if e.get(spec.done_field) is False),
@@ -687,13 +757,18 @@ def follow_up_lookback(spec: CheckinSpec, day: date) -> int:
 
 
 def current_streak(spec: CheckinSpec, store: CheckinStore, owner: str, end: date, max_days: int = 400) -> int:
-    """Done days in a row, counting back from end over check-in days only."""
+    """Done days in a row, counting back from end over check-in days only.
+    Skipped days and holidays neither count nor break it."""
     streak = 0
     day = end
     for _ in range(max_days):
         if day.weekday() in spec.days:
             entry = store.load(owner, day)
-            if not entry or entry.get("status") != "done":
+            status = (entry or {}).get("status")
+            if status == "skipped" or (status != "done" and day in spec.skip_dates):
+                day -= timedelta(days=1)
+                continue
+            if status != "done":
                 break
             streak += 1
         day -= timedelta(days=1)
@@ -738,7 +813,8 @@ def _period_label(start: date, end: date) -> str:
 def monthly_rates(stats: PeriodStats) -> list[str]:
     months: dict[int, list[str]] = {}
     for day, status in stats.statuses:
-        months.setdefault(day.month, []).append(status)
+        if status != "skipped":
+            months.setdefault(day.month, []).append(status)
     parts = [
         f"{date(2000, month, 1).strftime('%b')} {round(100 * sum(s == 'done' for s in found) / len(found))}%"
         for month, found in sorted(months.items())
@@ -770,6 +846,8 @@ def render_report(spec: CheckinSpec, kind: str, start: date, end: date, stats: P
     done_text = f"{stats.done} of {stats.nights} {spec.unit}s"
     if stats.partial:
         done_text += f" · {stats.partial} partly"
+    if stats.skipped:
+        done_text += f" · {stats.skipped} skipped"
     lines.append(done_text)
     if trend is not None:
         lines += ["", bold("Trend")] + [esc(line) for line in trend_lines(spec, trend, kind)]
@@ -792,7 +870,8 @@ def render_report_markdown(spec: CheckinSpec, kind: str, start: date, end: date,
         "year": f"{spec.report_heading} — {start.year}",
     }[kind]
     lines = [f"# {title}", "", f"- Done: {stats.done} of {stats.nights} {spec.unit}s"
-             + (f" ({stats.partial} partly)" if stats.partial else "")]
+             + (f" ({stats.partial} partly)" if stats.partial else "")
+             + (f", {stats.skipped} skipped" if stats.skipped else "")]
     if spec.follow_up and stats.first_written:
         lines.append(f"- {spec.follow_up.report_label}: {stats.first_written} written, {stats.first_done} done, "
                      f"{stats.first_not_done} not yet")

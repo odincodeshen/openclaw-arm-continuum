@@ -102,7 +102,30 @@ times, without any file in the check-in folder.
   - `/<command> start`: start now, or pick up where it stopped;
   - `/<command> 7d` or `/<command> YYYY-MM-DD`: past entries;
   - `/<command> week|month|year`: a report now;
-  - `/<command> move <from> <to>`: re-date an entry.
+  - `/<command> move <from> <to>`: re-date an entry;
+  - `/<command> skip [date]` / `unskip [date]`: skip today, or a day up to a year ahead;
+  - `/<command> start <date>`: fill in a day from the last 7;
+  - `/<command> edit <date> <question> <answer>`: change one answer (question number or id).
+- **Skipping**:
+  - The first card of a scheduled day and each reminder carry a ⏭ Skip button.
+  - A skipped day gets no questions or reminders and doesn't count as missed.
+  - Reports leave it out of "N of M days" and show "· N skipped"; the
+    streak carries on over it.
+  - The next day's follow-up looks past it to the last real entry.
+- **Holidays**:
+  - `[schedule] skip_dates = ["2026-12-25", "2026-08-03..2026-08-14"]` in a
+    check-in file covers that check-in.
+  - `holidays.txt` in the bot's check-in folder covers every check-in on
+    the bot, including the built-in night ritual. Put one date or `from..to`
+    range per line; `#` starts a comment.
+  - Holidays are skipped automatically. `/checkins` lists the next ones, and
+    a bad line shows there as skipped.
+- **Filling in**:
+  - A day filled in with `start <date>` stays open for 3 hours, then is
+    saved as it is.
+  - Started by hand before 05:00 while last night's is unfinished,
+    `/<command> start` first asks which day the answers are for: last night
+    or today.
 - **Restarts**: an open check-in resumes at the same question.
 
 Answers are stored as one JSON file per day under

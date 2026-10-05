@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+# release -- cut a GitHub release only after unit tests, e2e and a privacy
+# scan pass. See scripts/release.py for the steps and .release.local.
+#
+#   bin/release v1.28 --title "Check-in skip days" --notes notes.md [--dry-run]
+cd "$(dirname "$0")/.." || exit 1
+exec python3 scripts/release.py "$@"

@@ -191,3 +191,44 @@ Both run inside a bot's Telegram container, like the e2e.
 docker exec -i openclaw-telegram-<bot> python3 - --rounds 2 < scripts/perf_probe.py
 docker exec -i openclaw-telegram-<bot> python3 - --budgets 1200/300,1500/400 < scripts/rag_budget_eval.py
 ```
+
+## Releasing -- `bin/release`
+
+A release is cut only after the checks pass, in this order. It stops at the
+first failure:
+
+1. **git:** on `main`, nothing uncommitted, in step with `origin`, and a new
+   tag later than the last one.
+2. **Unit tests and `scripts/ci_validate.py`.**
+3. **e2e** (`scripts/e2e_run.py`) in the bots listed in `.release.local`:
+   - `RELEASE_E2E` must pass;
+   - `RELEASE_E2E_OPTIONAL` only warns, which suits a CPU-only bot whose
+     model answers less steadily;
+   - each failed run is retried once.
+4. **Privacy scan** of everything added since the previous tag. It looks
+   for:
+   - chat IDs and tokens taken from `profiles/*/.env`;
+   - home paths, e-mail addresses and private IPs;
+   - tracked `.env` or bot compose files.
+
+   Findings name the file and the kind of leak, never the value.
+5. **Publish:**
+   - the version in both READMEs and `docs/FUTURE_TODO.md`;
+   - a `release: <tag> - <title>` commit, then push;
+   - the GitHub release, whose notes end with a "Release checks" list of the
+     results.
+
+```bash
+bin/release v1.28 --title "Check-in skip days" --notes notes.md --dry-run   # checks only
+bin/release v1.28 --title "Check-in skip days" --notes notes.md
+```
+
+`.release.local` is gitignored, so bot names and hosts stay out of the
+repo. It holds `KEY=VALUE` lines:
+
+```
+RELEASE_E2E=openclaw-telegram-<bot>
+RELEASE_E2E_OPTIONAL=ssh:<host>:openclaw-telegram-<bot>
+RELEASE_PYTHON=.cache/test-venv/bin/python   # a Python with pytest (python3 -m venv .cache/test-venv; pip install pytest pypdf ruff)
+```
+

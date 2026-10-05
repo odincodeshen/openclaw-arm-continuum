@@ -268,9 +268,16 @@ Still open, re-baselined against v1.27:
      log a count instead.
   4. *`/checkins add <template>` / `/checkins remove <id>`* -- **done**. Set up a
      check-in from Telegram, without copying files on the host.
-- Later: a check-in "skip today" button, editing a past answer, holidays;
-  a read-only role (`OPENCLAW_READONLY_CHAT_IDS`); a watchdog temperature
-  alert; e2e on tags from a GB10 runner.
+- **Done after v1.27:**
+  - Check-in skip days: a Skip button, `/<command> skip|unskip`, and
+    holidays via `skip_dates` or `checkins/holidays.txt`.
+  - Filling in a past day (`start <date>`), `edit`, and an after-midnight
+    "which day?" question.
+  - `bin/release`: tests, e2e, privacy scan, then the tag. It runs locally,
+    not on a GitHub self-hosted runner, which would let pull requests to a
+    public repo run on the GB10.
+- Later: a read-only role (`OPENCLAW_READONLY_CHAT_IDS`); a watchdog
+  temperature alert.
 - Image text (OCR) -- **done in v1.24** with the vision model itself: a
   separate verbatim transcription call per image (own language/script, long
   limit, continuation), photos outside categories indexed into the

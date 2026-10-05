@@ -67,6 +67,10 @@ card repeats last night's first thing. No ritual last night, no card.
 /night 2026-09-28  one night
 /night start       start or pick up tonight
 /night move 2026-09-29 2026-09-28   re-date a night (the target must be empty)
+/night skip [2026-10-10]   skip tonight (or a coming night): no questions, not counted as missed
+/night unskip [date]       undo a skip
+/night start 2026-10-02    fill in a night from the last 7 days
+/night edit 2026-10-02 2 <answer>   change one answer
 /night week        last week's report now · /night month  last month's · /night year
 ```
 

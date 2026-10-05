@@ -75,3 +75,6 @@ scripts/*.exp
 # Personal-information audit reports -- name the repo owner's identity
 # details, so never git-tracked.
 /private.md
+
+# bin/release: which bots to run the e2e in (local, see scripts/release.py)
+.release.local
