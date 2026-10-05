@@ -10,6 +10,38 @@ maintenance = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(maintenance)
 
 
+class SnapshotSelectionTest(unittest.TestCase):
+    def test_throwaway_collections_are_not_backed_up(self) -> None:
+        names = ["apa_tracker_memory", "verify_1791000000_ab12cd_knowledge", "e2e_1234_cat_x", "perf_9_tracker",
+                 "evalcopy_1_0", "oc_cat_trip"]
+        snapshotted = []
+
+        def fake_qdrant(method, path):
+            if path == "/collections":
+                return {"result": {"collections": [{"name": n} for n in names]}}
+            if method == "POST":
+                snapshotted.append(path.split("/")[2])
+                return {"result": {"name": "s"}}
+            return {}
+
+        class Body:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self, *args):
+                return b""
+
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp, patch.object(maintenance, "_qdrant", fake_qdrant), \
+                patch.object(maintenance.urllib.request, "urlopen", lambda *a, **k: Body()):
+            kept = maintenance.snapshot_collections(Path(tmp))
+        self.assertEqual(kept, ["apa_tracker_memory", "oc_cat_trip"])
+        self.assertEqual(snapshotted, kept)
+
+
 class BackupFilesTest(unittest.TestCase):
     def test_archive_keeps_data_and_skips_rebuildable_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

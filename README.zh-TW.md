@@ -178,6 +178,16 @@ curl http://127.0.0.1:8000/v1/models
 curl -I http://127.0.0.1:18789/
 ```
 
+### 自我驗證與發布
+
+在這台機器上檢查改動，不會用到任何個人資料（見 `verify/README.md`）。GB10、Orion O6 或其他有 Docker 的主機都用同一個指令：
+
+```bash
+bin/verify            # 單元測試，再把每個功能的情境在暫時沙盒裡實際跑一次
+bin/verify quick      # 只跑單元測試，不需要模型等服務
+bin/release v1.28 --title "..." --notes notes.md   # 測試、e2e、隱私掃描都通過才打 tag
+```
+
 ## Telegram 指令
 
 在 Telegram 輸入：

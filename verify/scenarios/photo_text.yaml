@@ -1,0 +1,6 @@
+name: a photo's text is read word for word in all three scripts
+requires: [model, vision, embeddings, qdrant]
+retries: 1
+steps:
+  - photo: receipt_three_scripts.png
+    expect: {contains: ["4417", "測試發票", "280", "电子发票", "612.5"]}

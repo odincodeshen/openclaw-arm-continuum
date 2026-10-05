@@ -1,0 +1,15 @@
+name: holidays.txt skips a day for every check-in
+clock: "2026-10-05T09:00"
+checkins: [worklog]
+files:
+  checkins/holidays.txt: |
+    # sample bank holiday
+    2026-10-06
+steps:
+  - say: /checkins
+    expect: {contains: ["/worklog", "2026-10-06"]}
+  - clock: "2026-10-06T18:00"
+    tick: true
+    expect: {none: true}
+  - say: /worklog
+    expect: {contains: ["Tue 6 ⏸"]}

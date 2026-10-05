@@ -1,0 +1,9 @@
+name: /rag answers from an indexed document, with its source
+requires: [model, embeddings, qdrant]
+retries: 1
+steps:
+  - inbox: {file: claw_debugger_manual.md, to: knowledge}
+  - inbox: {file: garden_notes.md, to: knowledge}
+  - ingest: true
+  - say: "/rag What is the default value of CLAW.Option.ResetDelay?"
+    expect: {contains: ["7", "Sources:", "CLAW debugger reference"], not_contains: ["Garden notes"]}

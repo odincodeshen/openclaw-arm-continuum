@@ -1,0 +1,10 @@
+name: /rag keyword search finds an English option from a Chinese question
+requires: [model, embeddings, qdrant]
+retries: 1
+env:
+  OPENCLAW_RAG_KEYWORD_SEARCH: "true"
+steps:
+  - inbox: {file: claw_debugger_manual.md, to: knowledge}
+  - ingest: true
+  - say: "/rag CLAW.Option.WatchPeriod 的預設值是多少？"
+    expect: {contains: ["250", "CLAW debugger reference"]}

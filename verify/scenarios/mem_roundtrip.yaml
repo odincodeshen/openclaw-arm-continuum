@@ -1,0 +1,9 @@
+name: /mem write, upcoming, list by tag, done
+requires: [embeddings, qdrant]
+steps:
+  - say: "/mem Renew the sample passport due:{today+1} tag:admin"
+    expect: {contains: ["Saved to"]}
+  - say: /mem upcoming
+    expect: {contains: ["Renew the sample passport"]}
+  - say: /mem list tag:admin
+    expect: {contains: ["Renew the sample passport"]}

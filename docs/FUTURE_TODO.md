@@ -276,6 +276,20 @@ Still open, re-baselined against v1.27:
   - `bin/release`: tests, e2e, privacy scan, then the tag. It runs locally,
     not on a GitHub self-hosted runner, which would let pull requests to a
     public repo run on the GB10.
+  - `bin/verify` phase 1, self-verification with no personal data:
+    - throwaway sandboxes with a fake Telegram;
+    - services found from a running bot through a fixed allowlist;
+    - only git-tracked files copied in;
+    - 12 YAML scenarios, all passing on the GB10 and the O6;
+    - the nightly backup skips throwaway collections;
+    - the unit tests refuse to run next to a real bot token.
+- **Next for `bin/verify`:**
+  - phase 2: platform capability checks for every host (`o6_validate`
+    generalised), plus per-platform thresholds;
+  - phase 3: a fixed gold set (RAG, cross-language, image text) and
+    performance, compared with the last run on that host;
+  - phase 4: `bin/release` and the weekly timers run it, and a coverage
+    check lists commands without a scenario.
 - Later: a read-only role (`OPENCLAW_READONLY_CHAT_IDS`); a watchdog
   temperature alert.
 - Image text (OCR) -- **done in v1.24** with the vision model itself: a

@@ -1,0 +1,33 @@
+name: check-in skip, fill in an earlier day with schedule passes between answers, edit
+clock: "2026-10-01T17:55"
+checkins: [worklog]
+steps:
+  - clock: "2026-10-01T18:00"
+    tick: true
+  - tap: "Skip today"
+    expect: {contains: ["skipped"]}
+  - clock: "2026-10-01T19:00"
+    tick: true
+    expect: {none: true}
+  - clock: "2026-10-02T18:00"
+    tick: true
+  - clock: "2026-10-03T00:01"
+    tick: true
+    expect: {status: {checkin: worklog, date: "2026-10-02", status: missed}}
+  - clock: "2026-10-03T08:39"
+    say: /worklog start 2026-10-02
+    expect: {contains: ["Filling in Fri 2 Oct."]}
+  - clock: "2026-10-03T08:40"
+    tick: true
+  - say: "Shipped the sample build"
+  - clock: "2026-10-03T08:42"
+    tick: true
+  - say: "none"
+  - clock: "2026-10-03T08:44"
+    tick: true
+  - say: "Plan the sample week"
+    expect: {contains: ["【今日收工】"], status: {checkin: worklog, date: "2026-10-02", status: done}}
+  - say: "/worklog edit 2026-10-02 2 Waiting on the sample review"
+    expect: {contains: ["Updated."]}
+  - say: /worklog week
+    expect: {contains: ["skipped"]}

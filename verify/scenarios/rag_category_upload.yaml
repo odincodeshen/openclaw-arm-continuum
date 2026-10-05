@@ -1,0 +1,8 @@
+name: upload a document into a new category and ask that category
+requires: [model, embeddings, qdrant]
+retries: 1
+steps:
+  - upload: {file: battery_cells.md, caption: "#batteries"}
+  - ingest: true
+  - say: "/rag #batteries Which cell chemistry does the sample pack use?"
+    expect: {contains_any: ["phosphate", "LFP", "磷酸"], contains: ["battery_cells.md"]}

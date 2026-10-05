@@ -1,0 +1,6 @@
+name: plain chat answers
+requires: [model]
+retries: 1
+steps:
+  - say: "What is 17 plus 25? Reply with just the number."
+    expect: {contains: ["42"]}

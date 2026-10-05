@@ -1,0 +1,6 @@
+name: help and menu
+steps:
+  - say: /help
+    expect: {contains: ["/mem", "/rag", "/cron"]}
+  - say: /menu
+    expect: {buttons: ["Help"]}

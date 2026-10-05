@@ -1,0 +1,16 @@
+name: a check-in started after midnight asks which day
+clock: "2026-10-01T17:55"
+checkins: [worklog]
+steps:
+  - clock: "2026-10-01T18:00"
+    tick: true
+  - clock: "2026-10-02T00:01"
+    tick: true
+  - clock: "2026-10-02T00:08"
+    say: /worklog start
+    expect: {contains: ["Which day?"], buttons: ["Last night", "Today"]}
+  - tap: "Last night"
+  - say: "Late sample work"
+  - say: "none"
+  - say: "Sleep"
+    expect: {status: {checkin: worklog, date: "2026-10-01", status: done, answered: 3}}

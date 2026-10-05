@@ -1,0 +1,18 @@
+name: the built-in night ritual, a full night with an English closing line
+requires: [model]
+retries: 1
+clock: "2026-10-05T21:55"
+env:
+  OPENCLAW_NIGHT_RITUAL_ENABLED: "true"
+  OPENCLAW_NIGHT_RITUAL_TIME: "22:00"
+steps:
+  - clock: "2026-10-05T22:00"
+    tick: true
+    expect: {contains: ["1/4"], buttons: ["Skip today"]}
+  - say: "Finished the sample report"
+  - say: "Asked for help early"
+  - say: "Stop work earlier"
+  - say: "Write the sample plan"
+    expect: {language: en, buttons: ["Add to tomorrow's schedule"]}
+  - say: /night
+    expect: {contains: ["Mon 5 ✅"]}

@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+# verify -- check this checkout on this machine without personal data:
+# unit tests, then scenario tests in throwaway sandboxes. See verify/host.py.
+#
+#   bin/verify [quick|scenarios|standard] [--only <scenario> ...]
+cd "$(dirname "$0")/.." || exit 1
+exec python3 verify/host.py "$@"

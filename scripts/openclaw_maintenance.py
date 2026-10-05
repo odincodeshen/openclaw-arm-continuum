@@ -76,9 +76,15 @@ def _qdrant(method: str, path: str) -> dict:
         return json.loads(response.read() or b"{}")
 
 
+# Collections that bin/verify, the e2e run and the probes create and delete
+# again; one left behind by a crash is not worth backing up.
+THROWAWAY_PREFIXES = ("verify_", "e2e_", "perf_", "evalcopy_", "kwmigtest_")
+
+
 def snapshot_collections(target: Path) -> list[str]:
     target.mkdir(parents=True, exist_ok=True)
-    names = [c["name"] for c in _qdrant("GET", "/collections")["result"]["collections"]]
+    names = [c["name"] for c in _qdrant("GET", "/collections")["result"]["collections"]
+             if not c["name"].startswith(THROWAWAY_PREFIXES)]
     for name in names:
         snapshot = _qdrant("POST", f"/collections/{name}/snapshots?wait=true")["result"]["name"]
         try:

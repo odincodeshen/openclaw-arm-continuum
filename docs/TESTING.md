@@ -9,6 +9,7 @@ first.
 | **L1** contract / golden | `tests/test_golden.py` | every PR (in the L0 `pytest` run) | nothing | seconds |
 | **L2** integration scenarios | `tests/test_scenarios_integration.py` | every PR (`integration.yml`) | Qdrant | ~1 min |
 | **L3** full functional e2e | `scripts/e2e_run.py` | manual (on the host) | GB10 + real models | ~1 min |
+| **V** self-verification | `bin/verify` (`verify/`) | before a release, after a change | Docker + this machine's services; no personal data | ~2-40 min |
 
 ## Running locally
 
@@ -191,6 +192,24 @@ Both run inside a bot's Telegram container, like the e2e.
 docker exec -i openclaw-telegram-<bot> python3 - --rounds 2 < scripts/perf_probe.py
 docker exec -i openclaw-telegram-<bot> python3 - --budgets 1200/300,1500/400 < scripts/rag_budget_eval.py
 ```
+
+## Self-verification -- `bin/verify`
+
+`bin/verify` runs the unit tests and then one scenario per feature, each in
+its own throwaway sandbox:
+
+- the real gateway code with a fake Telegram;
+- this machine's real model and services;
+- made-up fixtures, and no profile, chat ID or token.
+
+It works the same on a GB10, an Orion O6 or any other host, and it is how a
+change is checked before it ships. A new feature adds a scenario. See
+`verify/README.md` for the scenario format.
+
+Its first run (October 2026) passed all 12 scenarios on both the GB10 and
+the O6. With the fill-in bug of 2026-10-05 put back,
+`checkin_skip_fillin` failed at the step where the answer went to chat
+instead.
 
 ## Releasing -- `bin/release`
 

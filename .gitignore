@@ -78,3 +78,4 @@ scripts/*.exp
 
 # bin/release: which bots to run the e2e in (local, see scripts/release.py)
 .release.local
+.verify.local

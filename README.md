@@ -190,6 +190,15 @@ bin/openclawctl start model     # vLLM, when you need chat / RAG summaries
 bin/openclawctl stop  model     # free the GPU, Telegram stays up
 ```
 
+Check a change on this machine, without personal data (`verify/README.md`).
+It works the same on a GB10, an Orion O6 or any Docker host:
+
+```bash
+bin/verify            # unit tests, then one scenario per feature in throwaway sandboxes
+bin/verify quick      # unit tests only, no services needed
+bin/release v1.28 --title "..." --notes notes.md   # tag only after tests, e2e and a privacy scan pass
+```
+
 ## Telegram Commands
 
 ### Multi-model engineering review (v1.3 development)
