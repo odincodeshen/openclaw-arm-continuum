@@ -185,6 +185,7 @@ the script from the repo, plus a `.timer`:
 | `openclaw-watchdog` | `*:0/5` | `scripts/openclaw_watchdog.py` |
 | `openclaw-backup` | `*-*-* 03:15:00 Europe/London` | `scripts/openclaw_maintenance.py backup` |
 | `openclaw-e2e` | `Mon *-*-* 03:40:00 Europe/London` | `scripts/openclaw_maintenance.py e2e --container openclaw-telegram-<bot>` |
+| `openclaw-verify` | `Mon *-*-* 01:00:00 Europe/London` | `scripts/openclaw_maintenance.py verify`, with `OPENCLAW_VERIFY_DIR=~/openclaw-verify` (refreshed by `bin/verify --remote` and `bin/release`); `TimeoutStartSec=4h` |
 
 Make sure the repo's `.cache/` belongs to your user. The TTS container
 creates `.cache/tts` as root, and the watchdog writes its state next to it.

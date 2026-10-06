@@ -1,0 +1,12 @@
+name: categories -- upload into one, list them, delete it after confirming
+requires: [embeddings, qdrant]
+steps:
+  - upload: {file: garden_notes.md, caption: "#garden"}
+  - ingest: true
+  - say: /cat list
+    expect: {contains: ["garden"]}
+  - say: /cat delete garden
+    expect: {contains: ["分類｜刪除確認", "#garden"], buttons: ["Delete #garden", "Keep it"]}
+  - tap: "Delete #garden"
+  - say: /cat list
+    expect: {not_contains: ["garden"]}

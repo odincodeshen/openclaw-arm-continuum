@@ -1,0 +1,13 @@
+name: chat memory -- pin a fact, see it in /history, clear it with /new
+requires: [model]
+retries: 1
+steps:
+  - say: "/keep My sample project is called Bluefinch."
+    expect: {contains_any: ["Pinned", "pinned", "Kept", "kept"]}
+  - say: "What is my sample project called? Reply with the name only."
+    expect: {contains: ["Bluefinch"]}
+  - say: /history
+    expect: {contains: ["Bluefinch"]}
+  - say: /new
+  - say: /history
+    expect: {not_contains: ["Bluefinch"]}

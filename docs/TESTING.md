@@ -211,7 +211,7 @@ change is checked before it ships. A new feature adds a scenario. See
 `verify/README.md` for the scenario format.
 
 Its first run (October 2026) passed all 12 scenarios on both the GB10 and
-the O6. With the fill-in bug of 2026-10-05 put back,
+the O6; with four more for coverage, all 16 pass on both. With the fill-in bug of 2026-10-05 put back,
 `checkin_skip_fillin` failed at the step where the answer went to chat
 instead.
 
@@ -225,6 +225,25 @@ The gold set's first runs:
 A second GB10 run matched its baseline exactly. Cross-language questions
 are the weak spot: 70% on the GB10 and 60% on the O6.
 
+### Every week, coverage, other machines
+
+- **Weekly:** `scripts/openclaw_maintenance.py verify` runs `bin/verify full`
+  every Monday at 01:00. That is after the night ritual, before the 03:15
+  backup and the 04:00 off-peak preparation, so it never competes with the
+  bots for the model.
+  - It keeps `.cache/openclaw-verify-status.json` for the watchdog's weekly
+    summary and alerts on Telegram when it fails.
+  - On the O6 a systemd user timer runs it, on the copy in
+    `~/openclaw-verify` (`OPENCLAW_VERIFY_DIR`).
+- **Coverage:** `bin/verify coverage` lists bot commands and check-in
+  templates that no scenario uses; `standard` and `full` print the same
+  line. Commands a sandbox can't run are listed with the reason:
+  - `/doc` and `/search` need the internet;
+  - `/review` is a long multi-model run;
+  - `/w`, `/vocab` and `/say` need the dictionary database.
+- **Other machines:** `bin/verify <mode> --remote HOST:DIR` copies the
+  checkout's files to another machine and runs `bin/verify` there.
+
 ## Releasing -- `bin/release`
 
 A release is cut only after the checks pass, in this order. It stops at the
@@ -233,11 +252,14 @@ first failure:
 1. **git:** on `main`, nothing uncommitted, in step with `origin`, and a new
    tag later than the last one.
 2. **Unit tests and `scripts/ci_validate.py`.**
-3. **e2e** (`scripts/e2e_run.py`) in the bots listed in `.release.local`:
-   - `RELEASE_E2E` must pass;
-   - `RELEASE_E2E_OPTIONAL` only warns, which suits a CPU-only bot whose
-     model answers less steadily;
-   - each failed run is retried once.
+3. **`bin/verify standard`** on this machine must pass: the unit tests,
+   the platform check and every feature scenario, in sandboxes with no
+   personal data. Each machine in `RELEASE_VERIFY_REMOTE` (`HOST:DIR`) gets
+   a copy of the files and runs the same check there through
+   `bin/verify --remote`; a failure there is only a warning, since a
+   CPU-only model's answers vary more. The older live e2e
+   (`scripts/e2e_run.py`) can run too, in the bots named in `RELEASE_E2E`
+   (must pass) or `RELEASE_E2E_OPTIONAL` (warn), retried once.
 4. **Privacy scan** of everything added since the previous tag. It looks
    for:
    - chat IDs and tokens taken from `profiles/*/.env`;
@@ -260,7 +282,9 @@ bin/release v1.28 --title "Check-in skip days" --notes notes.md
 repo. It holds `KEY=VALUE` lines:
 
 ```
-RELEASE_E2E=openclaw-telegram-<bot>
+RELEASE_VERIFY=standard                       # bin/verify mode here ("none" to skip)
+RELEASE_VERIFY_REMOTE=<host>:openclaw-verify  # optional, space-separated
+RELEASE_E2E=openclaw-telegram-<bot>           # optional live e2e
 RELEASE_E2E_OPTIONAL=ssh:<host>:openclaw-telegram-<bot>
 RELEASE_PYTHON=.cache/test-venv/bin/python   # a Python with pytest (python3 -m venv .cache/test-venv; pip install pytest pypdf ruff)
 ```

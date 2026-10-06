@@ -8,6 +8,8 @@ bin/verify scenarios      # scenarios only
 bin/verify gold           # answer quality on the fixed gold set, against this machine's baseline
 bin/verify full           # standard, then gold (the weekly run)
 bin/verify gold --accept  # take this run as the new baseline, after an intended change
+bin/verify coverage       # bot commands and check-in templates no scenario uses
+bin/verify standard --remote o6:openclaw-verify   # copy the files to another machine and run it there
 bin/verify scenarios --only checkin_skip_fillin rag_keywords_chinese
 bin/verify platform --platform orion-o6   # use a profile instead of detecting one
 ```
@@ -144,6 +146,23 @@ First runs (October 2026):
 Both answer every same-language question; cross-language is the weak spot
 (70% on the GB10, 60% on the O6). The embedding model links Chinese and
 English poorly, and keyword search can't help when no words are shared.
+
+## Where it runs
+
+- **Releases:** `bin/release` runs `bin/verify standard` here, where it must
+  pass, and on the machines in `RELEASE_VERIFY_REMOTE` through `--remote`,
+  where a failure only warns.
+- **Every week:** `scripts/openclaw_maintenance.py verify` runs
+  `bin/verify full` on Monday at 01:00, a quiet hour for the model. The
+  watchdog's weekly summary reports it, and a failure alerts on Telegram
+  (`docs/RUNTIME_LIFECYCLE.md`).
+- **Coverage:** `standard` and `full` end with the commands and templates
+  no scenario uses. Today none are left; `/doc`, `/search`, `/review`,
+  `/w`, `/vocab` and `/say` are exempt with a stated reason in
+  `verify/host.py`.
+- **Outside a git checkout:** for a deployed copy, or a `--remote` target,
+  the sandboxes get a fixed list instead: the code, tests, scripts, docs
+  and examples. `profiles/` is never part of it.
 
 ## Writing a scenario
 

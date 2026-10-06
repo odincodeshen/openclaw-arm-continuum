@@ -54,6 +54,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import re
 import json
 import platform as host_platform
 import secrets
@@ -105,11 +106,31 @@ def local_config() -> dict[str, str]:
     return config
 
 
+# Outside a git checkout (a deployed copy), only these are sent: code, tests,
+# docs and examples -- never profiles/, .env files or data.
+FALLBACK_DIRS = ("app", "verify", "tests", "scripts", "bin", "docs", "deploy", "runtime", "tts", "whisper", "scraper")
+FALLBACK_FILES = ("pyproject.toml", "README.md", "README.zh-TW.md", ".gitignore", ".env.example")
+
+
+def source_files() -> list[str]:
+    """The files git tracks or would track (working-tree versions), or the
+    fallback set outside a git checkout."""
+    listed = subprocess.run(["git", "ls-files", "-co", "--exclude-standard", "-z"], cwd=REPO, capture_output=True)
+    if listed.returncode == 0:
+        return [name for name in listed.stdout.decode().split("\0") if name]
+    files = [name for name in FALLBACK_FILES if (REPO / name).is_file()]
+    files += [p.name for p in REPO.glob("compose*.yaml") if "persona" not in p.name or ".example." in p.name]
+    files += [p.name for p in REPO.glob(".env*.example")]
+    for folder in FALLBACK_DIRS:
+        for path in (REPO / folder).rglob("*") if (REPO / folder).is_dir() else []:
+            if path.is_file() and "__pycache__" not in path.parts and ".cache" not in path.parts:
+                files.append(str(path.relative_to(REPO)))
+    return sorted(set(files))
+
+
 def source_tar() -> Path:
-    """The files git tracks or would track (working-tree versions): what the
-    sandbox gets instead of the checkout."""
-    files = subprocess.run(["git", "ls-files", "-co", "--exclude-standard", "-z"], cwd=REPO, capture_output=True,
-                           check=True).stdout.decode().split("\0")
+    """What the sandbox gets instead of the checkout (see source_files)."""
+    files = source_files()
     REPORTS.mkdir(parents=True, exist_ok=True)
     path = REPORTS / "source.tar"
     with tarfile.open(path, "w") as tar:
@@ -194,6 +215,51 @@ def compare(metrics: dict, thresholds: dict) -> list[tuple[str, str, str]]:
                      f"ok ({'≥' if kind == 'min' else '≤'} {limit})" if ok else
                      f"**slow** (wants {'≥' if kind == 'min' else '≤'} {limit})"))
     return rows
+
+
+# Commands a sandbox can't exercise, and why. Covered elsewhere: unit tests,
+# or the e2e run inside a real bot (scripts/e2e_run.py).
+COVERAGE_EXEMPT = {
+    "doc": "imports a public web document (needs the internet)",
+    "search": "searches the web (needs the internet)",
+    "review": "a long multi-model engineering review",
+    "w": "needs the English bot's local dictionary database",
+    "vocab": "needs the English bot's local dictionary database",
+    "say": "needs the dictionary and a recorded voice",
+}
+
+
+def coverage() -> tuple[list[str], list[str]]:
+    """(bot commands, check-in templates) that no scenario uses: what a new
+    feature still needs a scenario for. Read from the source, no YAML needed."""
+    gateway = (REPO / "app" / "openclaw_telegram_gateway.py").read_text(encoding="utf-8")
+    commands = sorted(set(re.findall(r'\{"command": "([a-z_]+)"', gateway)))
+    used_text = "\n".join(p.read_text(encoding="utf-8") for p in SCENARIOS.glob("*.yaml"))
+    used = set(re.findall(r"/([a-z_]+)", used_text))
+    templates = sorted(p.stem for p in (REPO / "app" / "openclaw_runtime" / "checkin_presets").glob("*.toml"))
+    used_templates = set(re.findall(r"checkins: \[([^\]]*)\]", used_text))
+    named = {name.strip() for group in used_templates for name in group.split(",")}
+    named |= set(re.findall(r"/checkins add ([a-z_]+)", used_text))
+    named |= {"night"} if "OPENCLAW_NIGHT_RITUAL_ENABLED" in used_text else set()
+    return [c for c in commands if c not in used and c not in COVERAGE_EXEMPT], [t for t in templates if t not in named]
+
+
+def remote(target: str, argv: list[str]) -> int:
+    """Copy this checkout's files to HOST:DIR and run bin/verify there."""
+    host, _, folder = target.partition(":")
+    if not host or not folder:
+        raise SystemExit("--remote wants HOST:DIR, e.g. o6:openclaw-verify")
+    source = source_tar()
+    quoted = shlex.quote(folder)
+    # a plain copy (no .git): the remote side then sends its sandboxes the fallback file list
+    unpack = (f"mkdir -p {quoted} && cd {quoted} && rm -rf .git && "
+              "find . -path ./.cache -prune -o -type f -print0 | xargs -0 rm -f; tar -x -f -")
+    with source.open("rb") as stdin:
+        sent = subprocess.run(["ssh", host, unpack], stdin=stdin)
+    if sent.returncode != 0:
+        raise SystemExit(f"copying to {target} failed")
+    print(f"== on {host} ({folder})", flush=True)
+    return subprocess.run(["ssh", host, f"cd {quoted} && python3 verify/host.py {shlex.join(argv)}"]).returncode
 
 
 def image() -> str:
@@ -371,11 +437,21 @@ def run_scenario(tag, env, network, hosts, path: Path, source: Path) -> dict:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Verify this checkout here, with no personal data.")
     parser.add_argument("mode", nargs="?", default="standard",
-                        choices=["quick", "platform", "scenarios", "standard", "gold", "full"])
+                        choices=["quick", "platform", "scenarios", "standard", "gold", "full", "coverage"])
+    parser.add_argument("--remote", default="", help="HOST:DIR -- copy the files there and run bin/verify on that host")
     parser.add_argument("--accept", action="store_true", help="gold: save this run as the baseline")
     parser.add_argument("--platform", default="", help="a profile name in verify/platforms/ (default: detect)")
     parser.add_argument("--only", nargs="*", default=[], help="scenario names (file stems)")
     args = parser.parse_args(argv)
+    if args.remote:
+        forward = [a for a in argv if a != "--remote" and a != args.remote]
+        return remote(args.remote, forward)
+    if args.mode == "coverage":
+        commands, templates = coverage()
+        print("Bot commands without a scenario: " + (", ".join(f"/{c}" for c in commands) or "none"))
+        print("Check-in templates without a scenario: " + (", ".join(templates) or "none"))
+        print("Not run in a sandbox: " + "; ".join(f"/{c} ({why})" for c, why in COVERAGE_EXEMPT.items()))
+        return 0
     config = local_config()
     tag = image()
     source = source_tar()
@@ -476,6 +552,12 @@ def main(argv: list[str]) -> int:
                 baseline_path.write_text(json.dumps(run, ensure_ascii=False, indent=1), encoding="utf-8")
                 print(f"   saved as the baseline for {profile['name']}", flush=True)
                 lines.append(f"- saved as the baseline for {profile['name']}")
+    if args.mode in ("standard", "full"):
+        commands, templates = coverage()
+        if commands or templates:
+            note = ("not covered by any scenario: " + ", ".join([f"/{c}" for c in commands] + templates))
+            print(f"   coverage: {note}", flush=True)
+            lines += ["", f"Coverage: {note}"]
     REPORTS.mkdir(parents=True, exist_ok=True)
     report = REPORTS / f"{time.strftime('%Y%m%d-%H%M%S')}-{args.mode}.md"
     report.write_text("\n".join(lines) + "\n", encoding="utf-8")

@@ -204,6 +204,12 @@ def maintenance_lines(root: Path = ROOT, now: float | None = None) -> list[str]:
             lines.append(f"Last backup FAILED {when}: {backup.get('error', '')}")
     else:
         lines.append("Last backup: none yet")
+    checked = _read_json(root / ".cache" / "openclaw-verify-status.json")
+    if checked:
+        lines.append(f"Verify ({checked.get('mode', 'full')}): "
+                     + ("passed" if checked.get("ok") else "FAILED -- " + (", ".join(checked.get("failed") or [])
+                                                                           or "see .cache/verify/"))
+                     + (f" · {len(checked.get('warnings') or [])} warning(s)" if checked.get("warnings") else ""))
     e2e = _read_json(root / ".cache" / "openclaw-e2e-status.json")
     if e2e:
         lines.append(f"E2E: {e2e.get('passed', 0)}/{e2e.get('total', 0)} on {e2e.get('bot', '?')}"

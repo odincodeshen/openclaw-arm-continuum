@@ -198,6 +198,7 @@ bin/verify            # unit tests, then one scenario per feature in throwaway s
 bin/verify quick      # unit tests only, no services needed
 bin/verify platform   # model, context, JSON, long prompt, image text, speed vs this machine's profile
 bin/verify full       # all of the above plus the gold set: answer and image-text quality vs this machine's baseline
+bin/verify coverage   # commands and check-in templates that no scenario tests yet
 bin/release v1.28 --title "..." --notes notes.md   # tag only after tests, e2e and a privacy scan pass
 ```
 

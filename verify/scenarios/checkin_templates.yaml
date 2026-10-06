@@ -1,0 +1,18 @@
+name: every check-in template can be added from Telegram and asks its first question
+clock: "2026-10-05T07:00"
+steps:
+  - say: /checkins add weekgoals
+    expect: {contains: ["Added 本週目標 (/weekgoals)"]}
+  - say: /checkins add reading
+    expect: {contains: ["Added 閱讀筆記 (/reading)"]}
+  - say: /checkins add health
+    expect: {contains: ["Added 運動健康 (/health)"]}
+  - say: /checkins add mood
+    expect: {contains: ["Added 心情紀錄 (/mood)"]}
+  - clock: "2026-10-05T08:30"
+    tick: true
+    expect: {contains: ["【本週目標 1/4】"]}
+  - say: /checkins
+    expect: {contains: ["/weekgoals", "/reading", "/health", "/mood"]}
+  - say: /checkins remove mood
+    expect: {contains: ["Stopped mood"]}

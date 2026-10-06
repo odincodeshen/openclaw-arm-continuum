@@ -116,5 +116,42 @@ class E2eTest(unittest.TestCase):
         self.assertTrue(lines[0].startswith("e2e (optional) FAILED: 9/10 passed"))
 
 
+
+class VerifyStepTest(unittest.TestCase):
+    OUT_OK = ("== platform: gb10 (NVIDIA GB10; services from x)\n   PASS help_menu  0.0s\n   PASS mem  0.1s\n"
+              "All passed -- report: r\n")
+    OUT_FAIL = ("== platform: orion-o6 (Radxa)\n   FAIL photo_text  25s  step 1\n   PASS help_menu  0.0s\n"
+                "   generation_tokens_per_s: 9 tokens/s -- **slow** (wants ≥ 11)\nFAILED -- report: r\n")
+
+    def fake(self, outputs):
+        calls = []
+
+        def run(cmd, cwd=None, capture_output=True, text=True, timeout=None):
+            calls.append(cmd)
+            code, out = outputs[len(calls) - 1]
+            return subprocess.CompletedProcess(cmd, code, out, "")
+
+        return run, calls
+
+    def test_local_must_pass_remote_only_warns(self):
+        run, calls = self.fake([(0, self.OUT_OK), (1, self.OUT_FAIL)])
+        with patch.object(release.subprocess, "run", run):
+            lines = release.check_verify("standard", ["o6:openclaw-verify"])
+        self.assertEqual(calls[1][-2:], ["--remote", "o6:openclaw-verify"])
+        self.assertEqual(lines[0], "bin/verify standard passed on this machine (gb10): 2 scenarios passed")
+        self.assertEqual(lines[1], "bin/verify standard FAILED (optional) on o6 (orion-o6): FAILED (photo_text), "
+                                   "1 speed warning(s)")
+
+    def test_local_failure_stops_the_release(self):
+        run, _ = self.fake([(1, self.OUT_FAIL)])
+        with patch.object(release.subprocess, "run", run), self.assertRaises(release.Failed):
+            release.check_verify("standard", [])
+
+    def test_none_skips_the_local_run(self):
+        run, calls = self.fake([])
+        with patch.object(release.subprocess, "run", run):
+            self.assertEqual(release.check_verify("none", []), [])
+        self.assertEqual(calls, [])
+
 if __name__ == "__main__":
     unittest.main()

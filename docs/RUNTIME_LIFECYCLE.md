@@ -132,19 +132,27 @@ keeps copies:
   never touched. To restore a collection, upload its `.snapshot` through
   Qdrant's snapshot API; unpack the archive over the repo for the files.
 - `e2e` (weekly, Monday 03:40): runs `scripts/e2e_run.py` inside a bot's
-  Telegram container (`--bot`, or `OPENCLAW_E2E_BOT`, default
-  `lc9-dgx2-apa`; `--container` / `OPENCLAW_E2E_CONTAINER` for any other
-  container name) and keeps the report in `.cache/e2e-latest.md`.
+  Telegram container and keeps the report in `.cache/e2e-latest.md`. It
+  uses `--bot` or `OPENCLAW_E2E_BOT`, `--container` or
+  `OPENCLAW_E2E_CONTAINER`, or else the first running `openclaw-telegram-*`
+  container. It checks the live bot: its token, Gateway and services.
+- `verify` (weekly, Monday 01:00): runs `bin/verify full` (`--mode`). That
+  is unit tests, the platform check, every feature scenario and the gold
+  set, in sandboxes with no personal data (`verify/README.md`).
+  - `--dir` / `OPENCLAW_VERIFY_DIR` names the checkout, for a deployed copy
+    without tests.
+  - The weekly summary shows the result, and a failure alerts.
 
 Both alert on Telegram when they fail. Crontab:
 
 ```text
 15 3 * * * cd /path/to/repo && /usr/bin/python3 scripts/openclaw_maintenance.py backup >> .cache/openclaw-maintenance.log 2>&1
 40 3 * * 1 cd /path/to/repo && /usr/bin/python3 scripts/openclaw_maintenance.py e2e >> .cache/openclaw-maintenance.log 2>&1
+0 1 * * 1 cd /path/to/repo && /usr/bin/python3 scripts/openclaw_maintenance.py verify >> .cache/openclaw-maintenance.log 2>&1
 ```
 
 Where cron isn't available, systemd user timers do the same (no root, with
-`loginctl enable-linger`) -- the O6 runs the watchdog, backup and e2e that
+`loginctl enable-linger`) -- the O6 runs the watchdog, backup, e2e and verify that
 way; see `docs/O6_SETUP.md`, "Operations".
 
 Cleanup runs inside each bot's Telegram container (the files belong to

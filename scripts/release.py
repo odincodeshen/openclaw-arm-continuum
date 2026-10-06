@@ -8,10 +8,11 @@ In order, stopping at the first failure:
 
 1. git: on main, nothing uncommitted, in step with origin, tag not used yet.
 2. Unit tests and scripts/ci_validate.py.
-3. L3 e2e (scripts/e2e_run.py) in the bots named in .release.local:
-   - required ones must pass;
-   - optional ones only warn;
-   - a failed run is retried once, as a CPU-only model's answer can vary.
+3. bin/verify standard on this machine (must pass), and with --remote on the
+   machines in RELEASE_VERIFY_REMOTE (only warn): unit tests, the platform
+   check and every feature scenario, in sandboxes with no personal data. The
+   older live e2e (scripts/e2e_run.py) runs too in any bots named in
+   RELEASE_E2E (must pass) or RELEASE_E2E_OPTIONAL (warn), retried once.
 4. Privacy scan of everything since the previous tag:
    - chat IDs and tokens found in profiles/*/.env;
    - home paths, e-mail addresses and private IPs;
@@ -23,8 +24,10 @@ In order, stopping at the first failure:
 Which bots to test is local, so bot names and hosts stay out of the public
 repo. .release.local (gitignored) holds KEY=VALUE lines:
 
-    RELEASE_E2E=openclaw-telegram-bot-a                  # required, space-separated
-    RELEASE_E2E_OPTIONAL=ssh:o6:openclaw-telegram-bot-b  # warn only; ssh:<host>:<container> runs remotely
+    RELEASE_VERIFY=standard                              # the bin/verify mode on this machine (or "none")
+    RELEASE_VERIFY_REMOTE=o6:openclaw-verify             # HOST:DIR, space-separated; warn only
+    RELEASE_E2E=openclaw-telegram-bot-a                  # optional live e2e, must pass
+    RELEASE_E2E_OPTIONAL=ssh:o6:openclaw-telegram-bot-b  # optional live e2e, warn only
     RELEASE_PYTHON=/path/to/venv/bin/python              # has pytest; default: python3
 """
 
@@ -153,8 +156,38 @@ def check_e2e(required: list[str], optional: list[str]) -> list[str]:
             raise Failed(f"e2e failed in {name}: {detail}")
         lines.append(f"e2e {'(optional) ' if not must_pass else ''}{'passed' if ok else 'FAILED'}: "
                      f"{detail}{note}")
-    if not lines:
-        lines.append("e2e: no bots configured (RELEASE_E2E in .release.local)")
+    return lines
+
+
+def verify_once(mode: str, remote: str = "") -> tuple[bool, str]:
+    cmd = [sys.executable, "verify/host.py", mode] + (["--remote", remote] if remote else [])
+    result = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True, timeout=6 * 3600)
+    output = result.stdout + result.stderr
+    platform = next((line.split("platform:", 1)[1].split("(")[0].strip() for line in output.splitlines()
+                     if "== platform:" in line), "")
+    scenarios = sum(1 for line in output.splitlines() if line.strip().startswith(("PASS ", "SKIP ")))
+    failed = [line.split()[1] for line in output.splitlines() if line.strip().startswith("FAIL ")]
+    warnings = sum(1 for line in output.splitlines() if "**slow**" in line or line.strip().startswith("warning:"))
+    where = remote.split(":")[0] if remote else "this machine"
+    detail = (f"{where}{f' ({platform})' if platform else ''}: " +
+              (f"{scenarios} scenarios passed" if result.returncode == 0 else
+               "FAILED" + (f" ({', '.join(failed)})" if failed else "")) +
+              (f", {warnings} speed warning(s)" if warnings else ""))
+    return result.returncode == 0, detail
+
+
+def check_verify(mode: str, remotes: list[str]) -> list[str]:
+    lines = []
+    if mode and mode != "none":
+        ok, detail = verify_once(mode)
+        print(f"   {detail}", flush=True)
+        if not ok:
+            raise Failed(f"bin/verify {mode} failed on {detail}")
+        lines.append(f"bin/verify {mode} passed on {detail}")
+    for target in remotes:
+        ok, detail = verify_once(mode or "standard", target)
+        print(f"   {detail}", flush=True)
+        lines.append(f"bin/verify {mode or 'standard'} {'passed' if ok else 'FAILED (optional)'} on {detail}")
     return lines
 
 
@@ -259,12 +292,16 @@ def main(argv: list[str]) -> int:
         step("unit tests and ci_validate")
         results.append(check_tests(config.get("RELEASE_PYTHON", "python3")))
         print(f"   {results[-1]}")
-        step("e2e")
+        step("verify and e2e")
         if args.skip_e2e:
-            results.append("e2e skipped (--skip-e2e)")
+            results.append("verify and e2e skipped (--skip-e2e)")
             print("   skipped")
         else:
-            results += check_e2e(config.get("RELEASE_E2E", "").split(), config.get("RELEASE_E2E_OPTIONAL", "").split())
+            results += check_verify(config.get("RELEASE_VERIFY", "standard"),
+                                    config.get("RELEASE_VERIFY_REMOTE", "").split())
+            if config.get("RELEASE_E2E") or config.get("RELEASE_E2E_OPTIONAL"):
+                results += check_e2e(config.get("RELEASE_E2E", "").split(),
+                                     config.get("RELEASE_E2E_OPTIONAL", "").split())
         step("privacy scan")
         results.append(check_privacy(previous))
         print(f"   {results[-1]}")

@@ -298,8 +298,14 @@ Still open, re-baselined against v1.27:
     - O6: 89% / 86% / 99%.
     - Cross-language is the measured weak spot (70% / 60%), and the case for
       trying a multilingual embedding model.
-  - phase 4: `bin/release` and the weekly timers run it, and a coverage
-    check lists commands without a scenario.
+  - phase 4 -- **done**:
+    - `bin/release` gates on `bin/verify standard` here, and runs it on the
+      O6 through `--remote`;
+    - `openclaw_maintenance.py verify` runs `bin/verify full` every Monday
+      at 01:00 on both machines;
+    - `bin/verify coverage`, with 4 more scenarios (16 in all), leaves no
+      command or template uncovered; six sandbox-unfriendly commands are
+      exempt with reasons.
 - Later: a read-only role (`OPENCLAW_READONLY_CHAT_IDS`); a watchdog
   temperature alert.
 - Image text (OCR) -- **done in v1.24** with the vision model itself: a

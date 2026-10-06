@@ -1,0 +1,8 @@
+name: /start, /agents and /tasks answer
+steps:
+  - say: /start
+    expect: {contains: ["/help"]}
+  - say: /agents
+    expect: {contains_any: ["rag", "memory", "agent"]}
+  - say: /tasks
+    expect: {count: 1}

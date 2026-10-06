@@ -2,7 +2,8 @@
 """Host-side maintenance: nightly backup and a weekly L3 e2e run.
 
     python3 scripts/openclaw_maintenance.py backup
-    python3 scripts/openclaw_maintenance.py e2e [--bot lc9-dgx2-apa | --container openclaw-telegram]
+    python3 scripts/openclaw_maintenance.py e2e [--bot <bot> | --container openclaw-telegram-<bot>]
+    python3 scripts/openclaw_maintenance.py verify [--mode full] [--dir <checkout>]
 
 backup -- everything that exists only on this host, into
 OPENCLAW_BACKUP_DIR/<YYYY-MM-DD_HHMM>/ (default ~/openclaw-backups):
@@ -16,14 +17,20 @@ OPENCLAW_BACKUP_DIR/<YYYY-MM-DD_HHMM>/ (default ~/openclaw-backups):
   Keeps the newest OPENCLAW_BACKUP_KEEP (default 14) backups.
 
 e2e -- runs scripts/e2e_run.py inside a bot's Telegram container and keeps
-the report in .cache/e2e-latest.md.
+the report in .cache/e2e-latest.md. Without --bot / --container it uses
+OPENCLAW_E2E_CONTAINER, else the first running openclaw-telegram-* container.
+
+verify -- runs bin/verify (default: full) and keeps its report under
+.cache/verify/. Every feature runs in throwaway sandboxes with no personal
+data (verify/README.md). --dir / OPENCLAW_VERIFY_DIR names the checkout to
+verify, for a deployed copy that has no tests (default: this repo).
 
 Both write a status file under .cache/ that the watchdog's weekly summary
 reports, and alert on Telegram (same sender as the watchdog) on failure.
 Standard library only; suggested crontab:
 
     15 3 * * * cd /path/to/repo && /usr/bin/python3 scripts/openclaw_maintenance.py backup >> .cache/openclaw-maintenance.log 2>&1
-    40 3 * * 1 cd /path/to/repo && /usr/bin/python3 scripts/openclaw_maintenance.py e2e >> .cache/openclaw-maintenance.log 2>&1
+    0 1 * * 1 cd /path/to/repo && /usr/bin/python3 scripts/openclaw_maintenance.py verify >> .cache/openclaw-maintenance.log 2>&1
 """
 
 import json
@@ -48,6 +55,7 @@ QDRANT_URL = os.environ.get("OPENCLAW_BACKUP_QDRANT_URL", "http://127.0.0.1:6333
 BACKUP_STATUS = ROOT / ".cache" / "openclaw-backup-status.json"
 E2E_STATUS = ROOT / ".cache" / "openclaw-e2e-status.json"
 E2E_REPORT = ROOT / ".cache" / "e2e-latest.md"
+VERIFY_STATUS = ROOT / ".cache" / "openclaw-verify-status.json"
 BACKUP_NAME = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{4}$")
 
 # Rebuildable or short-lived -- not worth a nightly copy.
@@ -150,8 +158,18 @@ def backup() -> int:
     return 0
 
 
+def first_bot_container() -> str:
+    names = subprocess.run(["docker", "ps", "--format", "{{.Names}}"], capture_output=True, text=True).stdout.split()
+    bots = sorted(n for n in names if n.startswith("openclaw-telegram"))
+    return bots[0] if bots else ""
+
+
 def e2e(bot: str, container: str = "") -> int:
-    container = container or f"openclaw-telegram-{bot}"
+    container = container or (f"openclaw-telegram-{bot}" if bot else first_bot_container())
+    bot = bot or container.removeprefix("openclaw-telegram-")
+    if not container:
+        print("e2e: no openclaw-telegram-* container is running")
+        return 1
     started = time.time()
     with (ROOT / "scripts" / "e2e_run.py").open("rb") as script:
         run = subprocess.run(["docker", "exec", "-i", container, "python3", "-"], stdin=script,
@@ -170,13 +188,39 @@ def e2e(bot: str, container: str = "") -> int:
     return 0 if ok else 1
 
 
+def verify(mode: str = "full", checkout: str = "") -> int:
+    """bin/verify, with the result kept for the weekly summary and an alert
+    when it fails."""
+    folder = Path(checkout or os.environ.get("OPENCLAW_VERIFY_DIR", "") or ROOT).expanduser()
+    started = time.time()
+    run = subprocess.run([sys.executable, "verify/host.py", mode], cwd=folder, capture_output=True, text=True,
+                         timeout=4 * 3600)
+    output = run.stdout + run.stderr
+    print(output[-4000:])
+    failed = [line.split()[1] for line in output.splitlines() if line.strip().startswith("FAIL ")]
+    slow = [line.strip() for line in output.splitlines() if "**slow**" in line or line.strip().startswith("warning:")]
+    ok = run.returncode == 0
+    _write_status(VERIFY_STATUS, {"at": started, "ok": ok, "mode": mode, "failed": failed, "warnings": slow[:5],
+                                  "minutes": round((time.time() - started) / 60, 1)})
+    if not ok:
+        reason = ", ".join(failed) or next((line.strip() for line in output.splitlines()
+                                            if "FAILED" in line or "below the minimum" in line or "dropped" in line),
+                                           "see .cache/verify/")
+        _alert(f"The weekly bin/verify {mode} failed: {reason}")
+    return 0 if ok else 1
+
+
 def main(argv: list[str]) -> int:
-    if not argv or argv[0] not in ("backup", "e2e"):
+    if not argv or argv[0] not in ("backup", "e2e", "verify"):
         print(__doc__)
         return 2
     if argv[0] == "backup":
         return backup()
-    bot = argv[argv.index("--bot") + 1] if "--bot" in argv else os.environ.get("OPENCLAW_E2E_BOT", "lc9-dgx2-apa")
+    if argv[0] == "verify":
+        mode = argv[argv.index("--mode") + 1] if "--mode" in argv else "full"
+        checkout = argv[argv.index("--dir") + 1] if "--dir" in argv else ""
+        return verify(mode, checkout)
+    bot = argv[argv.index("--bot") + 1] if "--bot" in argv else os.environ.get("OPENCLAW_E2E_BOT", "")
     container = argv[argv.index("--container") + 1] if "--container" in argv else os.environ.get("OPENCLAW_E2E_CONTAINER", "")
     return e2e(bot, container)
 
