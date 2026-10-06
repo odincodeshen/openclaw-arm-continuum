@@ -67,7 +67,7 @@ class PrivacyScanTest(unittest.TestCase):
             self.assertIn(expected, text)
         self.assertNotIn("example.yaml", text)
         self.assertNotIn("777888999", text)
-        self.assertNotIn("me@somewhere.org", text)
+        self.assertNotIn("me@somewhere.org", text)  # privacy-scan: fake data
 
 
 class VersionBumpTest(unittest.TestCase):
