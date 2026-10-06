@@ -268,7 +268,7 @@ Still open, re-baselined against v1.27:
      log a count instead.
   4. *`/checkins add <template>` / `/checkins remove <id>`* -- **done**. Set up a
      check-in from Telegram, without copying files on the host.
-- **Done after v1.27:**
+- **v1.28 — check-in skip days, self-verification (`bin/verify`, `bin/release`):**
   - Check-in skip days: a Skip button, `/<command> skip|unskip`, and
     holidays via `skip_dates` or `checkins/holidays.txt`.
   - Filling in a past day (`start <date>`), `edit`, and an after-midnight
