@@ -108,8 +108,11 @@ def local_config() -> dict[str, str]:
 
 # Outside a git checkout (a deployed copy), only these are sent: code, tests,
 # docs and examples -- never profiles/, .env files or data.
-FALLBACK_DIRS = ("app", "verify", "tests", "scripts", "bin", "docs", "deploy", "runtime", "tts", "whisper", "scraper")
-FALLBACK_FILES = ("pyproject.toml", "README.md", "README.zh-TW.md", ".gitignore", ".env.example")
+FALLBACK_DIRS = ("app", "verify", "tests", "scripts", "bin", "docs", "deploy", "runtime", "tts", "whisper", "scraper",
+                 "examples", ".github")
+FALLBACK_FILES = ("pyproject.toml", "README.md", "README.zh-TW.md", ".gitignore", ".env.example", "LICENSE", "VERSION",
+                  "GITHUB.md")
+MANIFEST = ".verify-files"  # written by --remote: the sender's exact git file list
 
 
 def source_files() -> list[str]:
@@ -118,6 +121,10 @@ def source_files() -> list[str]:
     listed = subprocess.run(["git", "ls-files", "-co", "--exclude-standard", "-z"], cwd=REPO, capture_output=True)
     if listed.returncode == 0:
         return [name for name in listed.stdout.decode().split("\0") if name]
+    manifest = REPO / MANIFEST
+    if manifest.is_file():
+        names = [line for line in manifest.read_text(encoding="utf-8").splitlines() if line]
+        return [name for name in names if (REPO / name).is_file() and not name.startswith("profiles/")]
     files = [name for name in FALLBACK_FILES if (REPO / name).is_file()]
     files += [p.name for p in REPO.glob("compose*.yaml") if "persona" not in p.name or ".example." in p.name]
     files += [p.name for p in REPO.glob(".env*.example")]
@@ -250,6 +257,12 @@ def remote(target: str, argv: list[str]) -> int:
     if not host or not folder:
         raise SystemExit("--remote wants HOST:DIR, e.g. o6:openclaw-verify")
     source = source_tar()
+    with tarfile.open(source, "a") as tar:  # the exact list, for the far side's sandboxes
+        names = "\n".join(source_files()).encode("utf-8")
+        info = tarfile.TarInfo(MANIFEST)
+        info.size = len(names)
+        import io
+        tar.addfile(info, io.BytesIO(names))
     quoted = shlex.quote(folder)
     # a plain copy (no .git): the remote side then sends its sandboxes the fallback file list
     unpack = (f"mkdir -p {quoted} && cd {quoted} && rm -rf .git && "

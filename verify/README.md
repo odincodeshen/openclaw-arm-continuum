@@ -160,9 +160,12 @@ English poorly, and keyword search can't help when no words are shared.
   no scenario uses. Today none are left; `/doc`, `/search`, `/review`,
   `/w`, `/vocab` and `/say` are exempt with a stated reason in
   `verify/host.py`.
-- **Outside a git checkout:** for a deployed copy, or a `--remote` target,
-  the sandboxes get a fixed list instead: the code, tests, scripts, docs
-  and examples. `profiles/` is never part of it.
+- **Outside a git checkout:**
+  - A `--remote` target receives the sender's exact git file list
+    (`.verify-files`) and uses it.
+  - A deployed copy without that list falls back to the code, tests,
+    scripts, docs and examples.
+  - `profiles/` is never included.
 
 ## Writing a scenario
 

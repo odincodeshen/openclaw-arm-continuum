@@ -47,12 +47,18 @@ class PrivacyScanTest(unittest.TestCase):
         values = release.private_values()
         self.assertEqual(values, ["111222333", "123:abcdefghijklmnop", "444555666", "777888999"])
 
+    def test_marker_allows_fake_contact_data_but_never_real_secrets(self):
+        marker = release.ALLOW_MARKER
+        self.assertIn("clean", self.scan([f"mail me@somewhere.org  # {marker}"]))  # privacy-scan: fake data
+        with self.assertRaises(release.Failed):
+            self.scan([f"owner 777888999  # {marker}"])
+
     def test_clean_diff_passes(self):
         self.assertIn("privacy scan clean", self.scan(["Bind to 172.17.0.1", "noreply@anthropic.com", "chat_id=…175"]))
 
     def test_each_kind_of_leak_is_caught_without_printing_it(self):
         with self.assertRaises(release.Failed) as caught:
-            self.scan(["owner 777888999", f"path {Path.home()}/x", "mail me@somewhere.org", "lan 192.168.1.20"],
+            self.scan(["owner 777888999", f"path {Path.home()}/x", "mail me@somewhere.org", "lan 192.168.1.20"],  # privacy-scan: fake data
                       tracked=("app/x.py", "profiles/bot/.env", "compose.persona.bot.yaml",
                                "compose.persona.o6.example.yaml"))
         text = str(caught.exception)
@@ -118,7 +124,8 @@ class E2eTest(unittest.TestCase):
 
 
 class VerifyStepTest(unittest.TestCase):
-    OUT_OK = ("== platform: gb10 (NVIDIA GB10; services from x)\n   PASS help_menu  0.0s\n   PASS mem  0.1s\n"
+    OUT_OK = ("== platform: gb10 (NVIDIA GB10; services from x)\n   PASS Text model and context  0.3s\n"
+              "== scenarios (services from x)\n   PASS help_menu  0.0s\n   PASS mem  0.1s\n"
               "All passed -- report: r\n")
     OUT_FAIL = ("== platform: orion-o6 (Radxa)\n   FAIL photo_text  25s  step 1\n   PASS help_menu  0.0s\n"
                 "   generation_tokens_per_s: 9 tokens/s -- **slow** (wants ≥ 11)\nFAILED -- report: r\n")

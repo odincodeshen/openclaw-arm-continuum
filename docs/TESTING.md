@@ -266,7 +266,10 @@ first failure:
    - home paths, e-mail addresses and private IPs;
    - tracked `.env` or bot compose files.
 
-   Findings name the file and the kind of leak, never the value.
+   Findings name the file and the kind of leak, never the value. A line
+   marked `privacy-scan: fake data` may hold made-up e-mail addresses, IPs
+   or home paths, such as the scan's own tests. Real chat IDs and tokens are
+   never let through.
 5. **Publish:**
    - the version in both READMEs and `docs/FUTURE_TODO.md`;
    - a `release: <tag> - <title>` commit, then push;

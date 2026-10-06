@@ -51,6 +51,9 @@ LOCAL_ONLY = (r"(^|/)\.env$", r"^profiles/[^/]+/\.env$", r"^compose\.persona\.(?
               r"(^|/)\.release\.local$")
 ALLOWED_EMAILS = ("noreply@anthropic.com", "noreply@github.com")
 ALLOWED_IPS = ("172.17.0.1", "127.0.0.1", "0.0.0.0")
+# A line carrying this marker may hold made-up e-mail addresses, IPs or home
+# paths (e.g. the tests of this scan). Real chat IDs and tokens are never let through.
+ALLOW_MARKER = "privacy-scan: fake data"
 
 
 class Failed(Exception):
@@ -114,7 +117,8 @@ def check_git(tag: str) -> str:
 # --- 2. tests -------------------------------------------------------------------
 def check_tests(python: str) -> str:
     run([python, "-m", "pytest", "-q", "tests"], timeout=3600)
-    count = run([python, "-m", "pytest", "--collect-only", "-q", "tests"], check=False).stdout
+    # the project's addopts already add -q; reset them so each test is listed as file::test
+    count = run([python, "-m", "pytest", "--collect-only", "-q", "-o", "addopts=", "tests"], check=False).stdout
     collected = len([line for line in count.splitlines() if "::" in line])
     # no ruff cache: a container may have left a root-owned one in the checkout
     run([python, "scripts/ci_validate.py"], env={"RUFF_NO_CACHE": "true",
@@ -165,8 +169,12 @@ def verify_once(mode: str, remote: str = "") -> tuple[bool, str]:
     output = result.stdout + result.stderr
     platform = next((line.split("platform:", 1)[1].split("(")[0].strip() for line in output.splitlines()
                      if "== platform:" in line), "")
-    scenarios = sum(1 for line in output.splitlines() if line.strip().startswith(("PASS ", "SKIP ")))
+    in_scenarios = output.split("== scenarios", 1)[1] if "== scenarios" in output else ""
+    scenarios = sum(1 for line in in_scenarios.splitlines() if line.strip().startswith(("PASS ", "SKIP ")))
     failed = [line.split()[1] for line in output.splitlines() if line.strip().startswith("FAIL ")]
+    if result.returncode != 0 and not failed:  # unit tests, the platform check or the copy failed
+        failed = [next((line.strip()[:120] for line in output.splitlines()
+                        if "FAILED" in line or "below the minimum" in line or "failed" in line), "see its report")]
     warnings = sum(1 for line in output.splitlines() if "**slow**" in line or line.strip().startswith("warning:"))
     where = remote.split(":")[0] if remote else "this machine"
     detail = (f"{where}{f' ({platform})' if platform else ''}: " +
@@ -223,6 +231,8 @@ def check_privacy(previous: str) -> str:
     for path, line in added:
         if any(secret in line for secret in secrets):
             problems.append(f"{path}: a chat ID or token from profiles/*/.env")
+        if ALLOW_MARKER in line:
+            continue
         if home in line:
             problems.append(f"{path}: a home directory path")
         for email in re.findall(r"[\w.+-]+@[\w-]+\.[\w.]+", line):
