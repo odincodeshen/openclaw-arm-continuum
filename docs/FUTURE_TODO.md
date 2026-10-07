@@ -290,7 +290,8 @@ Still open, re-baselined against v1.28:
     calibrated; `nvidia-gpu` and `cpu-only` are fallbacks. Timed prompts
     start with a random line, so the prompt cache can't flatter them.
   - phase 3 -- **done**: `bin/verify gold` / `full`. The fixed made-up
-    gold set has 36 questions across same-language, cross-language and
+    gold set has 48 questions (12 added on 2026-10-07: cross-language and
+    paraphrased) across same-language, cross-language and
     paraphrase, plus 7 images, all scored by code. A run fails below the
     minimums or on a drop from the machine's baseline; slower answers only
     warn.
@@ -306,6 +307,25 @@ Still open, re-baselined against v1.28:
     - `bin/verify coverage`, with 4 more scenarios (16 in all), leaves no
       command or template uncovered; six sandbox-unfriendly commands are
       exempt with reasons.
+- **Embedding model evaluation (2026-10-07):** the gold set was run with
+  each candidate through `bin/verify --env`, in sandboxes only.
+
+  | Model | GB10 retrieval | GB10 answers | O6 answers | O6 embed time |
+  | --- | --- | --- | --- | --- |
+  | `nomic-embed-text` (current) | 73% | 73% | 67% | 129 ms |
+  | `qwen3-embedding:0.6b` | 100% | 100% | 90% | 441 ms |
+  | `embeddinggemma` | 100% | 100% | -- | 669 ms |
+  | `nomic-embed-text-v2-moe` | 98% | 98% | -- | -- |
+  | `bge-m3` | indexing failed | | | |
+
+  - `bge-m3` returned NaN for some texts, so indexing failed.
+  - `nomic-embed-text-v2-moe` reads only ~512 tokens per passage, which
+    cuts long Chinese passages.
+  - Recommended: `qwen3-embedding:0.6b`. It scored best and was fastest of
+    the multilingual models on both machines, and is Apache 2.0. All 16
+    scenarios pass with it on both machines.
+  - Switching needs every collection re-embedded (1024 dimensions):
+    another one-off migration like `qdrant_add_keywords.py`.
 - Later: a read-only role (`OPENCLAW_READONLY_CHAT_IDS`); a watchdog
   temperature alert.
 - Image text (OCR) -- **done in v1.24** with the vision model itself: a

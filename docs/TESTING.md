@@ -197,7 +197,7 @@ docker exec -i openclaw-telegram-<bot> python3 - --budgets 1200/300,1500/400 < s
 
 `bin/verify` runs the unit tests and a platform check, then one scenario
 per feature, each in its own throwaway sandbox. `bin/verify full` adds the
-gold set: 36 fixed questions and 7 images, scored by code against minimums
+gold set: 48 fixed questions and 7 images, scored by code against minimums
 and this machine's last accepted run. The platform check covers
 model, context, JSON output, a long prompt, image text and services, and
 compares speeds with `verify/platforms/<machine>.toml`. Each scenario gets:

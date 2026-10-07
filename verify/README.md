@@ -109,8 +109,11 @@ made-up set in `verify/gold/`.
 - five documents in English, Traditional and Simplified Chinese, among them
   a manual and a log full of near-identical sections. They are filed into
   the knowledge base and three categories, as a bot would file them.
-- 36 questions in `gold.yaml`: 16 asked in the document's language, 10 across
-  languages (Chinese about English and the reverse) and 10 paraphrased.
+- 48 questions in `gold.yaml`:
+  - 16 asked in the document's language;
+  - 22 across languages (Chinese about English and the reverse), 12 of them
+    also paraphrased, the hardest kind;
+  - 10 paraphrased in the same language.
 - 7 images, each with its exact text: clean, rotated, blurred,
   low-contrast, small print, a Traditional Chinese notice and a Simplified
   Chinese table. `make_images.py` regenerates them on a host with CJK fonts.
@@ -136,16 +139,29 @@ made-up set in `verify/gold/`.
 - answers or images more than 1.5x slower;
 - a different model.
 
-First runs (October 2026):
+With the 48 questions (October 2026; the baselines are this set):
 
-| | Retrieval | Answers | Image text | Answer time | Image time |
-| --- | --- | --- | --- | --- | --- |
-| GB10 | 92% | 92% | 100% | 5 s | 4 s |
-| Orion O6 | 89% | 86% | 99% | 20 s | 48 s |
+| | Retrieval | Answers | Cross-language answers |
+| --- | --- | --- | --- |
+| GB10, nomic-embed-text | 73% | 73% | 41% |
+| GB10, qwen3-embedding:0.6b | 100% | 100% | 100% |
+| O6, nomic-embed-text | 71% | 67% | 32% |
+| O6, qwen3-embedding:0.6b | 100% | 90% | 82% |
 
-Both answer every same-language question; cross-language is the weak spot
-(70% on the GB10, 60% on the O6). The embedding model links Chinese and
+Same-language questions are answered either way. Cross-language ones need
+a multilingual embedding model: `nomic-embed-text` links Chinese and
 English poorly, and keyword search can't help when no words are shared.
+
+## Trying a setting before switching to it
+
+`--env OPENCLAW_KEY=VALUE` changes a setting in the sandboxes only, never
+in the bots. A run with it is compared with the baseline but never saved
+as one. This is how the embedding models were compared:
+
+```bash
+bin/verify gold --env OPENCLAW_EMBEDDING_MODEL=qwen3-embedding:0.6b --env OPENCLAW_EMBEDDING_VECTOR_SIZE=1024
+bin/verify standard --env OPENCLAW_EMBEDDING_MODEL=qwen3-embedding:0.6b --env OPENCLAW_EMBEDDING_VECTOR_SIZE=1024
+```
 
 ## Where it runs
 

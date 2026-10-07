@@ -8,6 +8,8 @@
     bin/verify gold            # answer quality on the fixed gold set, against this machine's baseline
     bin/verify full            # standard, then gold (the weekly run)
     bin/verify gold --accept   # take this run as the new baseline (after an intended change)
+    bin/verify gold --env OPENCLAW_EMBEDDING_MODEL=bge-m3 --env OPENCLAW_EMBEDDING_VECTOR_SIZE=1024
+                               # try a setting in the sandboxes only (compared, never saved as the baseline)
     bin/verify platform --platform orion-o6   # pick the profile instead of detecting it
     bin/verify scenarios --only checkin_skip rag_keywords
 
@@ -20,7 +22,7 @@ files, .cache/ and the local settings.
 
 - quick: the unit tests, with no services and Telegram unreachable.
 - gold (verify/gold_check.py): files the made-up gold corpus as a bot would,
-  then for 36 questions checks whether /rag sent the right document
+  then for 48 questions checks whether /rag sent the right document
   (retrieval) and whether the answer has an expected string (answers). It
   also scores 7 images character by character (ocr). It fails below the
   minimums in verify/gold/gold.yaml, or on a drop beyond the tolerances from
@@ -453,6 +455,8 @@ def main(argv: list[str]) -> int:
                         choices=["quick", "platform", "scenarios", "standard", "gold", "full", "coverage"])
     parser.add_argument("--remote", default="", help="HOST:DIR -- copy the files there and run bin/verify on that host")
     parser.add_argument("--accept", action="store_true", help="gold: save this run as the baseline")
+    parser.add_argument("--env", action="append", default=[], metavar="OPENCLAW_KEY=VALUE",
+                        help="a setting for the sandboxes only, e.g. another embedding model to try")
     parser.add_argument("--platform", default="", help="a profile name in verify/platforms/ (default: detect)")
     parser.add_argument("--only", nargs="*", default=[], help="scenario names (file stems)")
     args = parser.parse_args(argv)
@@ -466,6 +470,14 @@ def main(argv: list[str]) -> int:
         print("Not run in a sandbox: " + "; ".join(f"/{c} ({why})" for c, why in COVERAGE_EXEMPT.items()))
         return 0
     config = local_config()
+    overrides = {}
+    for item in args.env:
+        key, _, value = item.partition("=")
+        if not key.startswith("OPENCLAW_") or any(w in key for w in ("TOKEN", "CHAT_IDS", "OWNER", "PROMPT")):
+            raise SystemExit(f"--env may only set OPENCLAW_* service settings, not {key}")
+        overrides[key] = value
+    if overrides:
+        print("== trying in the sandboxes: " + ", ".join(f"{k}={v}" for k, v in overrides.items()), flush=True)
     tag = image()
     source = source_tar()
     lines = [f"# OpenClaw verify -- {time.strftime('%Y-%m-%d %H:%M %Z')} -- {args.mode}", ""]
@@ -480,6 +492,7 @@ def main(argv: list[str]) -> int:
         facts = host_facts()
         profile = pick_profile(facts, args.platform or config.get("VERIFY_PLATFORM", ""))
         name, env, network, hosts = reference(config)
+        env = {**env, **overrides}
         print(f"== platform: {profile['name']} ({facts.get('board') or facts['arch']}"
               f"{', ' + facts['gpu'] if facts.get('gpu') else ''}; services from {name})", flush=True)
         outcome = run_platform(tag, env, network, hosts, source, (profile.get("run") or {}).get("long_prompt_tokens", 6000))
@@ -502,6 +515,7 @@ def main(argv: list[str]) -> int:
         lines.append("")
     if args.mode in ("scenarios", "standard", "full") and (ok or args.mode == "scenarios"):
         name, env, network, hosts = reference(config)
+        env = {**env, **overrides}
         print(f"== scenarios (services from {name}, network {network})", flush=True)
         with source.open("rb") as stdin:
             sweep = sh(sandbox_cmd(tag, env, network, hosts, ["--sweep", "--prefix", "verify_"]), timeout=120, stdin=stdin)
@@ -533,6 +547,7 @@ def main(argv: list[str]) -> int:
         facts = host_facts()
         profile = pick_profile(facts, args.platform or config.get("VERIFY_PLATFORM", ""))
         name, env, network, hosts = reference(config)
+        env = {**env, **overrides}
         print(f"== gold set ({profile['name']}; services from {name}) -- this takes a while", flush=True)
         run = run_gold(tag, env, network, hosts, source)
         if "error" in run:
@@ -561,7 +576,7 @@ def main(argv: list[str]) -> int:
             REPORTS.mkdir(parents=True, exist_ok=True)
             (REPORTS / f"{time.strftime('%Y%m%d-%H%M%S')}-gold.json").write_text(
                 json.dumps(run, ensure_ascii=False, indent=1), encoding="utf-8")
-            if args.accept or (baseline is None and passed):
+            if args.accept or (baseline is None and passed and not overrides):
                 baseline_path.write_text(json.dumps(run, ensure_ascii=False, indent=1), encoding="utf-8")
                 print(f"   saved as the baseline for {profile['name']}", flush=True)
                 lines.append(f"- saved as the baseline for {profile['name']}")

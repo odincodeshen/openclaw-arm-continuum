@@ -5,6 +5,7 @@
 # answer contains (answer: checked by code, not by a model). Groups:
 #   same        question and document in the same language
 #   cross       a Chinese question about an English document, or the reverse
+#               (the xp- ones are also paraphrased: the hardest)
 #   paraphrase  worded so that it shares few or no words with the document
 #
 # minimums apply on every platform: quality is not discounted for a slower
@@ -70,6 +71,19 @@ questions:
   - {id: p-rules-2, group: paraphrase, source: community_rules_zh_tw.md, q: "朋友開車來玩，車子能放多久？", a: ["兩小時", "2小時", "2 小時"]}
   - {id: p-travel-1, group: paraphrase, source: travel_policy_zh_cn.md, q: "出差回来以后，单据最晚什么时候交？", a: ["十个工作日", "10个工作日", "10 个工作日", "十个"]}
   - {id: p-travel-2, group: paraphrase, source: travel_policy_zh_cn.md, q: "坐火车可以直接报销什么座位？", a: ["二等座"]}
+  # --- cross language and paraphrased: the hardest kind ----------------------------
+  - {id: xp-report-1, group: cross, source: northwind_fleet_report.md, q: "海邊那些裝置主要是什麼原因壞掉？", a: ["corrosion", "腐蝕", "connector", "接頭"]}
+  - {id: xp-report-2, group: cross, source: northwind_fleet_report.md, q: "這批監測設備明年的保養經費有多少？", a: ["86,500", "86500", "八萬六千五百", "8.65"]}
+  - {id: xp-report-3, group: cross, source: northwind_fleet_report.md, q: "最新上線的據點叫什麼名字？", a: ["Harbour North"]}
+  - {id: xp-report-4, group: cross, source: northwind_fleet_report.md, q: "八月推送給所有裝置的軟體版本是幾號？", a: ["4.7.2"]}
+  - {id: xp-green-1, group: cross, source: greenhouse_log.md, q: "溫室四月哪一天晚上最冷？", a: ["20 April", "April 20", "4月20", "四月二十", "4 月 20"]}
+  - {id: xp-green-2, group: cross, source: greenhouse_log.md, q: "溫室四月二十四號白天最高到幾度？", a: ["27"]}
+  - {id: xp-manual-1, group: cross, source: claw_debugger_manual.md, q: "除錯器跟目標板的連線速度預設是多少？", a: ["40 MHz", "40MHz", "40 兆赫"]}
+  - {id: xp-rules-1, group: cross, source: community_rules_zh_tw.md, q: "How long may a friend leave their car at the community?", a: ["two hours", "2 hours", "兩小時", "2-hour", "two-hour"]}
+  - {id: xp-rules-2, group: cross, source: community_rules_zh_tw.md, q: "What do residents pay each month per ping of floor area?", a: ["60", "sixty", "六十"]}
+  - {id: xp-rules-3, group: cross, source: community_rules_zh_tw.md, q: "When is the swimming pool shut for cleaning?", a: ["Monday", "週一"]}
+  - {id: xp-travel-1, group: cross, source: travel_policy_zh_cn.md, q: "Which train seat class can be claimed without asking first?", a: ["second class", "second-class", "二等座", "second-tier"]}
+  - {id: xp-travel-2, group: cross, source: travel_policy_zh_cn.md, q: "How many days ahead must a flight be requested?", a: ["three days", "3 days", "三天", "3 天"]}
 
 images:                 # verify/gold/images/<name>.png against <name>.txt
   - receipt_clean

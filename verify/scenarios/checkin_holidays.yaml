@@ -2,12 +2,15 @@ name: holidays.txt skips a day for every check-in
 clock: "2026-10-05T09:00"
 checkins: [worklog]
 files:
+  # 2026-10-06 is skipped on the scenario clock; /checkins lists upcoming
+  # holidays by the real date, so it is checked with one far in the future
   checkins/holidays.txt: |
-    # sample bank holiday
+    # sample bank holidays
     2026-10-06
+    2099-12-25
 steps:
   - say: /checkins
-    expect: {contains: ["/worklog", "2026-10-06"]}
+    expect: {contains: ["/worklog", "2099-12-25"]}
   - clock: "2026-10-06T18:00"
     tick: true
     expect: {none: true}
