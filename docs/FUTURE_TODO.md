@@ -1,7 +1,7 @@
 # Future TODO List
 
 This document tracks candidate work items for `openclaw-arm-continuum`.
-Current release: **v1.28**.
+Current release: **v1.29**.
 
 The runtime is intentionally stable and text-first. The items below are
 future-facing and should be implemented incrementally without breaking the
@@ -220,7 +220,7 @@ v1.2 baseline. What has actually shipped since then:
   - Chat IDs masked in logs.
   - `rag_retrieval_eval.py`, `qdrant_add_keywords.py`.
 
-Still open, re-baselined against v1.28:
+Still open, re-baselined against v1.29:
 
 **Platform / runtime**
 
