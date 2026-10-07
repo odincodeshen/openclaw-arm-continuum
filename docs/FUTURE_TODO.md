@@ -307,7 +307,7 @@ Still open, re-baselined against v1.28:
     - `bin/verify coverage`, with 4 more scenarios (16 in all), leaves no
       command or template uncovered; six sandbox-unfriendly commands are
       exempt with reasons.
-- **Embedding model evaluation (2026-10-07):** the gold set was run with
+- **v1.29 — embedding model evaluation (2026-10-07):** the gold set was run with
   each candidate through `bin/verify --env`, in sandboxes only.
 
   | Model | GB10 retrieval | GB10 answers | O6 answers | O6 embed time |
@@ -324,8 +324,11 @@ Still open, re-baselined against v1.28:
   - Recommended: `qwen3-embedding:0.6b`. It scored best and was fastest of
     the multilingual models on both machines, and is Apache 2.0. All 16
     scenarios pass with it on both machines.
-  - Switching needs every collection re-embedded (1024 dimensions):
-    another one-off migration like `qdrant_add_keywords.py`.
+  - Switching needs every collection re-embedded at 1024 dimensions. That
+    migration is ready and tested on throwaway collections:
+    `scripts/qdrant_reembed.py`, with the steps and the way back in
+    `docs/EMBEDDINGS.md`. The bots have not been switched yet; the GB10
+    goes first, then the O6.
 - Later: a read-only role (`OPENCLAW_READONLY_CHAT_IDS`); a watchdog
   temperature alert.
 - Image text (OCR) -- **done in v1.24** with the vision model itself: a

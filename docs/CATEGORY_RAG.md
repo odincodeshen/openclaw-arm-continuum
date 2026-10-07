@@ -297,6 +297,9 @@ sampled passages and compares answers with and without the budget.
 
 ## Keyword search
 
+The embedding model matters as much: see `docs/EMBEDDINGS.md` for the
+multilingual one and how to switch.
+
 `nomic-embed-text` is weak in two cases:
 
 - **Near-identical passages.** It can't tell apart passages from one long

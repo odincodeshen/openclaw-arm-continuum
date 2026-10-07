@@ -353,7 +353,8 @@ category with a `#<name>` caption or by replying with the name; query it
 with `/rag #<name> <question>` or `/rag #all <question>`. Photos are indexed
 via the configured vision model (`OPENCLAW_VLM_MODEL`). Rename or merge
 categories without touching Qdrant by hand. See
-[docs/CATEGORY_RAG.md](docs/CATEGORY_RAG.md).
+[docs/CATEGORY_RAG.md](docs/CATEGORY_RAG.md). The embedding model behind `/rag`,
+and how to switch to a multilingual one: [docs/EMBEDDINGS.md](docs/EMBEDDINGS.md).
 
 ```text
 #工作筆記                     (caption on the upload)

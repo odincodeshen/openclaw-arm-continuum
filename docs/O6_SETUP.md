@@ -95,7 +95,10 @@ prompts 16% slower and ran only 1-4 °C cooler, so keep 8.
 ## 2. Embeddings and Qdrant
 
 Ollama with `nomic-embed-text` and Qdrant on 6333, as in
-`docs/ERNIE_LLAMA_CPP.md`. Ollama listens on `127.0.0.1` by default, which
+`docs/ERNIE_LLAMA_CPP.md`. `qwen3-embedding:0.6b` answers cross-language questions far
+better. On the O6 it scored 100% retrieval on the gold set against 71%, at
+441 ms per passage. Switching an existing bot means re-embedding its data:
+see `docs/EMBEDDINGS.md`. Ollama listens on `127.0.0.1` by default, which
 containers can't reach. Make it listen on the Docker bridge with a systemd
 drop-in, so the stock unit is unchanged:
 

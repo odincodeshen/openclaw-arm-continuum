@@ -316,7 +316,7 @@ memory watcher 索引。
 上傳照片或文件時，用 `#<名稱>` 當 caption，或傳完檔案後直接回覆分類名稱；
 查詢時用 `/rag #<名稱> <問題>` 或 `/rag #all <問題>`。照片會用設定好的
 vision model（`OPENCLAW_VLM_MODEL`）辨識。分類可以改名或合併，不用手動
-操作 Qdrant。詳見 [docs/CATEGORY_RAG.md](docs/CATEGORY_RAG.md)。
+操作 Qdrant。詳見 [docs/CATEGORY_RAG.md](docs/CATEGORY_RAG.md)。`/rag` 背後的向量模型，以及如何換成多語言模型，見 [docs/EMBEDDINGS.md](docs/EMBEDDINGS.md)。
 
 ```text
 #工作筆記                     （上傳時的 caption）
