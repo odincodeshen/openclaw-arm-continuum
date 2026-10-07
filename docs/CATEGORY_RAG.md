@@ -349,6 +349,27 @@ The default stays:
 - fewer keyword hits lose some;
 - the Chinese misses are questions neither kind of search finds.
 
+**Translating the question was tried and dropped (October 2026).** The idea
+was to have the model put each question into English, Traditional and
+Simplified Chinese, search with every version, and merge the results. On
+the same real documents, with the same questions:
+
+| Right passage sent to the model | As is | With translation |
+| --- | --- | --- |
+| Same language, keywords first | 90% | 60% |
+| Chinese, keywords first | 77% | 50% |
+| Same language, vector only | 63% | 63% |
+| Chinese, vector only | 77% | 70% |
+
+The translations themselves were fine; the results got worse for two
+reasons:
+
+- translated questions share common character pairs with many unrelated
+  passages, and those take the keyword slots;
+- the multilingual embedding model already matches across languages.
+
+Each question also cost 7-9 s more on the GB10. The code was removed.
+
 `OPENCLAW_RAG_KEYWORD_HITS` / `OPENCLAW_RAG_VECTOR_HITS` change the split
 per bot. Check a change on your own documents with
 `scripts/rag_retrieval_eval.py` before keeping it.

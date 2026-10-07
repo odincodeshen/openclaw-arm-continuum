@@ -347,6 +347,13 @@ Still open, re-baselined against v1.30:
       4+2 stays. More vector hits don't add right passages, and fewer
       keyword hits lose some. The Chinese misses are questions neither kind
       of search finds.
+    - **Query translation tried and dropped (2026-10-08).** Searching with
+      the question also in English, Traditional and Simplified Chinese
+      (one model call, 7-9 s on the GB10) lowered keywords-first from 90%
+      to 60% and Chinese from 77% to 50% on bot2's real documents.
+      Translated questions share common character pairs with unrelated
+      passages, and the multilingual model already matches across
+      languages. Details in `docs/CATEGORY_RAG.md`; the code was not kept.
 - Later: a read-only role (`OPENCLAW_READONLY_CHAT_IDS`); a watchdog
   temperature alert.
 - Image text (OCR) -- **done in v1.24** with the vision model itself: a
