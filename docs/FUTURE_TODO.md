@@ -334,8 +334,19 @@ Still open, re-baselined against v1.29:
       (was 87%) and 77% of Chinese ones (was 70%).
     - Gold set after the switch: GB10 100% / 100%, O6 100% / 90%; both are
       the new baselines.
-    - Next: try 3 keyword + 3 vector hits, since with the stronger vectors,
-      vector-only already matches keywords-first on Chinese questions.
+    - Tried other keyword + vector splits on bot2's real documents (30
+      questions each, same language / Chinese):
+
+      | Split | Same language | Chinese | Median tokens sent |
+      | --- | --- | --- | --- |
+      | 4+2 (kept) | 90% | 77% | 2,691 / 3,081 |
+      | 3+3 | 87% | 77% | 2,342 / 2,641 |
+      | 2+4 | 80% | 63% | 1,845 / 2,066 |
+      | 4+4 | 90% | 77% | 2,871 / 3,370 |
+
+      4+2 stays. More vector hits don't add right passages, and fewer
+      keyword hits lose some. The Chinese misses are questions neither kind
+      of search finds.
 - Later: a read-only role (`OPENCLAW_READONLY_CHAT_IDS`); a watchdog
   temperature alert.
 - Image text (OCR) -- **done in v1.24** with the vision model itself: a

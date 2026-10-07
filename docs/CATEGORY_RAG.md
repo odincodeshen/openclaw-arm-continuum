@@ -331,6 +331,28 @@ search changed how often the right passage was in what `/rag` sent the model
 | In the passage's language | 27% (4 passages, ~1,600 tokens) | **87%** (6 passages, ~2,800 tokens) |
 | In Chinese, about English notes | 13% (14 passages, ~11,000 tokens) | **70%** (6 passages, ~3,700 tokens) |
 
+After the switch to the multilingual `qwen3-embedding:0.6b`
+(`docs/EMBEDDINGS.md`, October 2026), other splits were compared on the
+same bot's real documents: 30 questions each, in the documents' language
+and in Chinese.
+
+| Keyword + vector hits | Same language | Chinese | Median tokens sent |
+| --- | --- | --- | --- |
+| **4 + 2 (default)** | **90%** | **77%** | 2,691 / 3,081 |
+| 3 + 3 | 87% | 77% | 2,342 / 2,641 |
+| 2 + 4 | 80% | 63% | 1,845 / 2,066 |
+| 4 + 4 | 90% | 77% | 2,871 / 3,370 |
+
+The default stays:
+
+- more vector hits add tokens but no right passages;
+- fewer keyword hits lose some;
+- the Chinese misses are questions neither kind of search finds.
+
+`OPENCLAW_RAG_KEYWORD_HITS` / `OPENCLAW_RAG_VECTOR_HITS` change the split
+per bot. Check a change on your own documents with
+`scripts/rag_retrieval_eval.py` before keeping it.
+
 Collections created since keyword search was added have the `kw` vector.
 Older ones need a one-off migration. It copies the points, adding keyword
 vectors without re-embedding, and recreates each collection under the same
