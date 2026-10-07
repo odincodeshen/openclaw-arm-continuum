@@ -327,8 +327,15 @@ Still open, re-baselined against v1.29:
   - Switching needs every collection re-embedded at 1024 dimensions. That
     migration is ready and tested on throwaway collections:
     `scripts/qdrant_reembed.py`, with the steps and the way back in
-    `docs/EMBEDDINGS.md`. The bots have not been switched yet; the GB10
-    goes first, then the O6.
+    `docs/EMBEDDINGS.md`. **Switched on 2026-10-07**, the GB10 first, then
+    the O6.
+    - GB10: 722 points in about 1.5 minutes; e2e 10/10. On bot2's real
+      documents, the right passage reached the model for 90% of questions
+      (was 87%) and 77% of Chinese ones (was 70%).
+    - Gold set after the switch: GB10 100% / 100%, O6 100% / 90%; both are
+      the new baselines.
+    - Next: try 3 keyword + 3 vector hits, since with the stronger vectors,
+      vector-only already matches keywords-first on Chinese questions.
 - Later: a read-only role (`OPENCLAW_READONLY_CHAT_IDS`); a watchdog
   temperature alert.
 - Image text (OCR) -- **done in v1.24** with the vision model itself: a

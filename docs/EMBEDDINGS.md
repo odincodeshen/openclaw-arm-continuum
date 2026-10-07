@@ -31,6 +31,11 @@ with the right passage in front of it. The cost of the switch:
 - indexing a 100-passage document takes about 44 s instead of 13 s, in the
   background.
 
+Both machines' bots use `qwen3-embedding:0.6b` since 2026-10-07. On
+bot2's real documents, the right passage reached the model for 90% of
+questions (87% before) and 77% of Chinese questions (70% before); the
+rest of the gain shows on the gold set's cross-language questions.
+
 ## Switching a bot
 
 Do one machine first (the GB10), check it, then the next. Pick a quiet time:
