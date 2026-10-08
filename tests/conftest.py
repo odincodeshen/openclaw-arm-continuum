@@ -10,6 +10,10 @@ import re
 
 import pytest
 
+# Off-peak jobs wait for a quiet model in production (model_gate.py); tests
+# must not sleep. Set before any test module loads its settings.
+os.environ.setdefault("OPENCLAW_PREPARE_WAIT_MINUTES", "0")
+
 _REAL_TOKEN = re.compile(r"^\d{6,}:[A-Za-z0-9_-]{30,}$")
 
 

@@ -45,6 +45,7 @@ def build_settings(**overrides) -> Settings:
         tracker_collection="tracker_coll",
         knowledge_collection="knowledge_coll",
         retrieval_limit=1,
+        prepare_wait_minutes=0,
         inbox_path=Path("inbox"),
         watcher_state_path=Path("watcher_state.json"),
         watcher_poll_seconds=1,

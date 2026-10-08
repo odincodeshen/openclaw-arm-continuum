@@ -207,6 +207,10 @@ class Settings:
     rag_keyword_search: bool = False
     rag_keyword_hits: int = 4
     rag_vector_hits: int = 2
+    # Off-peak preparation waits up to this long for the shared model to be
+    # idle before each job (model_gate.py), so bots don't all start at once.
+    # 0 = don't wait.
+    prepare_wait_minutes: int = 30
     image_ocr_max_tokens: int = 4096
     index_chat_photos: bool = True
     # Scanned PDFs: pages with no text layer are read by the vision model,
@@ -378,6 +382,7 @@ def load_settings() -> Settings:
         rag_keyword_search=env_bool("OPENCLAW_RAG_KEYWORD_SEARCH", False),
         rag_keyword_hits=env_int("OPENCLAW_RAG_KEYWORD_HITS", 4),
         rag_vector_hits=env_int("OPENCLAW_RAG_VECTOR_HITS", 2),
+        prepare_wait_minutes=env_int("OPENCLAW_PREPARE_WAIT_MINUTES", 30),
         image_ocr_max_tokens=env_int("OPENCLAW_IMAGE_OCR_MAX_TOKENS", 4096),
         index_chat_photos=env_bool("OPENCLAW_INDEX_CHAT_PHOTOS", True),
         pdf_ocr_max_pages=env_int("OPENCLAW_PDF_OCR_MAX_PAGES", 40),

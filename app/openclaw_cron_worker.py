@@ -12,6 +12,7 @@ from openclaw_runtime.alerts import Alerter
 from openclaw_runtime.config import Settings, load_settings
 from openclaw_runtime.cron_jobs import is_due, load_jobs, mark_ran, validate_time, validate_weekday
 from openclaw_runtime.logsafe import redact_ids
+from openclaw_runtime.model_gate import before_preparing
 from openclaw_runtime.gateway_cron import (
     append_gateway_run_log,
     gateway_job_to_runtime,
@@ -133,12 +134,15 @@ def preparable_jobs(jobs: list[dict], now: datetime, prompts: tuple[str, ...]) -
     return chosen
 
 
-def prepare_jobs(router: SkillRouter, jobs: list[dict], now: datetime, state: dict) -> int:
+def prepare_jobs(router: SkillRouter, jobs: list[dict], now: datetime, state: dict, before_each=None) -> int:
     """Generate each job's result now and keep it in state for delivery at
-    the job's own time. A job that fails here is simply generated live."""
+    the job's own time. A job that fails here is simply generated live.
+    before_each(job) runs first: the wait for a quiet model."""
     prepared = state.setdefault("prepared_jobs", {})
     count = 0
     for job in jobs:
+        if before_each is not None:
+            before_each(job)
         try:
             result = router.route(str(job.get("prompt", "")).strip())
         except Exception as exc:
@@ -362,7 +366,8 @@ def main() -> int:
                 write_json(settings.cron_state_path, state)
                 chosen = preparable_jobs(jobs, now, settings.cron_prepare_prompts)
                 if chosen:
-                    count = prepare_jobs(router, chosen, now, state)
+                    count = prepare_jobs(router, chosen, now, state, before_each=lambda job: before_preparing(
+                        settings, f"cron {job.get('name', job.get('id'))}", log=log))
                     write_json(settings.cron_state_path, state)
                     log(f"[cron] prepared {count} of {len(chosen)} job(s) for later today")
             for job in jobs:

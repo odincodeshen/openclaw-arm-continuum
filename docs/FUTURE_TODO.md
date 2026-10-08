@@ -354,6 +354,11 @@ Still open, re-baselined against v1.30:
       Translated questions share common character pairs with unrelated
       passages, and the multilingual model already matches across
       languages. Details in `docs/CATEGORY_RAG.md`; the code was not kept.
+- **Off-peak jobs take turns (2026-10-08):** each off-peak job waits for the
+  shared model to be idle (`model_gate.py`, `OPENCLAW_PREPARE_WAIT_MINUTES`),
+  after a stable per-bot offset. This followed the English bot's timeout on
+  2026-10-05. Live on the GB10: during a 38 s generation the gate reported 1
+  request in flight and opened at 45 s.
 - Later: a read-only role (`OPENCLAW_READONLY_CHAT_IDS`); a watchdog
   temperature alert.
 - Image text (OCR) -- **done in v1.24** with the vision model itself: a

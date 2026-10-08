@@ -105,7 +105,10 @@ needs the model, Whisper or audio clipping for is generated then (any time in
 the 90 minutes after it), and the finished cards, clips and task are held in
 the state file until `PUSH_TIME`, when they are sent and the task opens. The
 learner sees no difference. Preparation is tried once a day; if it fails, or
-the bot was down, the push is generated at `PUSH_TIME` as usual.
+the bot was down, the push is generated at `PUSH_TIME` as usual. Before
+it starts, it waits for the shared model to be idle (up to
+`OPENCLAW_PREPARE_WAIT_MINUTES`), so it doesn't run at the same minute as
+other bots' off-peak jobs; see `docs/RUNTIME_LIFECYCLE.md`.
 
 Open tasks (and open `/vocab review`s) are also saved to
 `OPENCLAW_PENDING_STATE_PATH` (default `/workspace/.openclaw/pending_answers.json`),

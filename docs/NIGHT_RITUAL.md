@@ -90,7 +90,9 @@ improvement that shows up most, the adjustment that keeps coming back,
 how many "first things" were written and done, and a closing line. The
 counts are computed in code; the wording comes from the local model. They
 are generated off-peak at `OPENCLAW_NIGHT_RITUAL_PREPARE_TIME` (default
-04:00) and sent at report time (generated live if that failed). A Markdown
+04:00) and sent at report time (generated live if that failed). Like every
+off-peak job, the preparation first waits for the shared model to be idle
+(`docs/RUNTIME_LIFECYCLE.md`). A Markdown
 copy with every night in full is saved under
 `<dir>/<owner>/reports/week-YYYY-MM-DD.md` / `month-YYYY-MM.md`.
 

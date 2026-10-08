@@ -68,6 +68,7 @@ def prepare_environment(spec: dict, prefix: str) -> None:
         "OPENCLAW_KNOWLEDGE_COLLECTION": f"{prefix}knowledge",
         "OPENCLAW_CATEGORY_COLLECTION_PREFIX": f"{prefix}cat_",
         "OPENCLAW_PENDING_STATE_PATH": "/workspace/.openclaw/pending.json",
+        "OPENCLAW_PREPARE_WAIT_MINUTES": "0",  # the scenario clock drives schedules; never sleep for real
     })
     for key, value in (spec.get("env") or {}).items():
         if not str(key).startswith("OPENCLAW_") or any(word in key for word in ("TOKEN", "CHAT_IDS", "OWNER")):

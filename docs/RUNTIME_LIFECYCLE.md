@@ -114,6 +114,34 @@ their health check, crash restarts and alerts over the week, host reboots,
 disk use, and the GPU (from `nvidia-smi`, when there is one) -- plus the
 last backup, the last weekly e2e run and how much the daily cleanup freed.
 
+
+## Off-peak preparation takes turns
+
+Bots prepare their morning messages off-peak (04:00): the cron worker's
+digests, the English bot's daily task and the check-in reports. They share
+one model. On 2026-10-05 three bots' jobs started within the same minute,
+every request slowed down, and the English bot's preparation timed out, so
+its task was generated late, at push time.
+
+Containers share no files, but they share the model server, and it can say
+how busy it is: vLLM's `/metrics` (requests running and waiting),
+llama.cpp's `/slots`. So before each off-peak job (`model_gate.py`):
+
+1. the bot waits a short offset of 0-2 minutes, the same for that bot every
+   day, so bots ask in turn;
+2. then it waits until the model reports nothing in flight twice in a row,
+   15 s apart;
+3. after `OPENCLAW_PREPARE_WAIT_MINUTES` (default 30) it goes ahead anyway.
+   `0` turns the wait off.
+
+The log shows `[prepare] <job>: waited Ns for a quiet model`. It is not a
+lock: two jobs that find the model idle at the same moment both start. The
+offsets and the double check make that rare.
+
+A server that can't report its load counts as quiet. The English bot's
+preparation still isn't retried after a failure, because a half-finished run
+may already have recorded progress; its push then generates live, as before.
+
 ## Backup, cleanup and the weekly e2e run
 
 Everything personal -- memory, knowledge, categories, the English bot's

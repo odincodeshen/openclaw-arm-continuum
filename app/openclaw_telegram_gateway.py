@@ -85,6 +85,7 @@ from openclaw_runtime.engineering_review import EngineeringReviewAgent
 from openclaw_runtime.http_client import post_multipart_file, request_json
 from openclaw_runtime.llm_client import VLLM_NOT_READY_MESSAGE
 from openclaw_runtime.logsafe import redact_ids
+from openclaw_runtime.model_gate import before_preparing
 from openclaw_runtime.alerts import Alerter
 from openclaw_runtime.dictionary import LocalDictionary
 from openclaw_runtime.message_cards import RULE, bold, esc, html_to_plain, split_html_message
@@ -4197,6 +4198,7 @@ class CheckinRuntime:
             if prepare_at and not covers_today and prepare_at <= clock < report_at \
                     and state.get(f"prepared_{kind}") != iso:
                 state[f"prepared_{kind}"] = iso
+                before_preparing(settings, f"{spec.id} {kind} report", log=log)
                 state.setdefault("reports", {})[kind] = {"date": iso, "html": ck_build_report(
                     spec, llm, store, owner, kind, today)[0]}
                 log(f"{self.tag} prepared report={kind}")
@@ -4734,6 +4736,7 @@ def _english_bot_scheduler_loop() -> None:
                 mark_prepare_attempted(now, state)
                 write_english_bot_state(settings.english_bot_state_path, state)
                 try:
+                    before_preparing(settings, f"english {day_code}", log=log)
                     items = prepare_todays_push(**generation)
                     store_prepared(now, day_code, items, state)
                     write_english_bot_state(settings.english_bot_state_path, state)
