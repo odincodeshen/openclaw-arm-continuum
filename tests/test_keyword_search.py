@@ -113,6 +113,14 @@ class KeywordsFirstTest(unittest.TestCase):
         kept = {h["id"]: h.get("rank") for _, hits in out for h in hits}
         self.assertEqual(kept, {"f": None, "k2": 0, "k1": 1, "v1": 2})
 
+    def test_keyword_hit_keeps_its_vector_place(self):
+        # the best vector match, also a weak keyword hit, still takes a vector place
+        sections = [("kb", [hit("k1", "kw one", 9.0, "keywords"), hit("k2", "kw two", 4.0, "keywords"),
+                            {**hit("k3", "best vector", 1.0, "keywords"), "vector_score": 0.9},
+                            hit("v1", "vec one", 0.8)])]
+        out = keywords_first(sections, keyword_hits=2, vector_hits=1)
+        self.assertEqual({h["id"]: h["rank"] for _, hits in out for h in hits}, {"k1": 0, "k2": 1, "k3": 2})
+
     def test_unchanged_without_keyword_hits(self):
         plain = [("kb", [hit("v1", "a", 0.8)])]
         self.assertIs(keywords_first(plain, keyword_hits=4, vector_hits=2), plain)
@@ -145,6 +153,8 @@ class RagSearchMergeTest(unittest.TestCase):
         skill = RagRetrieveSkill(settings, {}, None, self.FakeQdrant(), None)
         hits = skill._search("kb", [0.1], None, query="shared")
         self.assertEqual([(h["id"], h.get("via")) for h in hits], [("k1", "keywords"), ("v1", None)])
+        self.assertEqual(hits[0]["vector_score"], 0.7)  # k1 was a vector hit too
+        self.assertNotIn("vector_score", hits[1])
 
     def test_off_by_default(self):
         skill = RagRetrieveSkill(build_settings(), {}, None, self.FakeQdrant(), None)

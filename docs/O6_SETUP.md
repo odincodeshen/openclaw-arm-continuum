@@ -231,5 +231,6 @@ spin the fan up for several minutes.
 - Scheduled messages (07:00-07:30 reports, the English task) are prepared at
   04:00 and delivered on time. The bots take turns on the model: each
   off-peak job waits until llama.cpp is idle (`OPENCLAW_PREPARE_WAIT_MINUTES`,
-  `docs/RUNTIME_LIFECYCLE.md`). Week-to-date reports such as the work log's
+  `docs/RUNTIME_LIFECYCLE.md`). llama.cpp reports that through `/slots`,
+  which is on by default; checked on the O6 on 2026-10-10. Week-to-date reports such as the work log's
   are made at send time.

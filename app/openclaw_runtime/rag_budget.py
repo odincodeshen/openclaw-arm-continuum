@@ -161,8 +161,12 @@ def keywords_first(
                      key=lambda x: -float(x[2].get("score") or 0))
     if not keyword:
         return labelled_hits
-    vector = sorted((x for x in flat if x[2].get("via") != "keywords" and x[1] not in keep_labels),
-                    key=lambda x: -float(x[2].get("score") or 0))
+    # a keyword hit the vector search also found ("vector_score") competes
+    # here too: the best vector match shouldn't lose its place for also
+    # sharing a few words with the question
+    vector = sorted((x for x in flat if x[1] not in keep_labels
+                     and (x[2].get("via") != "keywords" or x[2].get("vector_score") is not None)),
+                    key=lambda x: -float(x[2].get("vector_score", x[2].get("score")) or 0))
     chosen: dict[int, int] = {}  # id(hit) -> rank
     seen: set[str] = set()
     for pool, count in ((keyword, keyword_hits), (vector, vector_hits)):

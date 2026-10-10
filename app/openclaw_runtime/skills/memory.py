@@ -679,7 +679,9 @@ class RagRetrieveSkill:
         keep the hits whose source matches, capped back to the usual size.
         With keyword search on and the question given, the collection's
         keyword hits come first ("via": "keywords"), then the vector hits
-        not already among them."""
+        not already among them. A keyword hit the vector search also found
+        keeps that score as "vector_score", so it still competes for the
+        vector places (keywords_first)."""
         limit = limit or self.settings.retrieval_limit
         fetch = limit * _SOURCE_FILTER_OVERFETCH if source else limit
         hits = self.qdrant.search(collection, vector, limit=fetch, **kwargs)
@@ -692,6 +694,9 @@ class RagRetrieveSkill:
             print(f"[rag] keyword search skipped {collection}: {exc}", flush=True)
             return hits
         keyword_hits = filter_hits_by_source(keyword_hits, source, limit) if source else keyword_hits
+        vector_scores = {str(h.get("id")): h.get("score") for h in hits}
+        keyword_hits = [{**h, "vector_score": vector_scores[str(h.get("id"))]}
+                        if str(h.get("id")) in vector_scores else h for h in keyword_hits]
         seen = {str(h.get("id")) for h in keyword_hits}
         return keyword_hits + [h for h in hits if str(h.get("id")) not in seen]
 

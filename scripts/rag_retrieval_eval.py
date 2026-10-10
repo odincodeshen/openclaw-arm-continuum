@@ -22,6 +22,9 @@ data: it copies the bot's collections into throwaway ones, embedding each
 passage again with the prefix, runs the check against the copies, and
 deletes them at the end.
 
+--why-missed adds, for the questions whose passage isn't sent, the step that
+dropped it and counts of what those passages and questions have in common.
+
 No model call writes an answer, so it is quick once the questions exist.
 Only counts are printed, unless --show.
 """
@@ -31,9 +34,11 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import math
+import re
 import statistics
 import sys
 import uuid
+from collections import Counter
 from pathlib import Path
 
 for candidate in (Path("/app"), Path(__file__).resolve().parent.parent / "app" if "__file__" in globals() else None):
@@ -49,6 +54,7 @@ from openclaw_runtime.rag_budget import drop_weak_hits, fit_passages, keywords_f
 from openclaw_runtime.rag_eval import bot_collections, make_questions  # noqa: E402
 from openclaw_runtime.skills.memory import RagRetrieveSkill  # noqa: E402
 
+_CJK_CHAR = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]")
 MARGINS = (0.05, 0.10, 0.15, 0.20)
 FAILED_EMBEDS: list[str] = []  # texts the embedding model refused (reported, then skipped)
 DEPTHS = (5, 10, 20, 50)
@@ -202,6 +208,9 @@ def main(argv: list[str]) -> int:
                         help='write the questions in this language, e.g. "Traditional Chinese"')
     parser.add_argument("--hybrid", action="store_true",
                         help="also rank by keywords (BM25) and by both fused, over all the bot's documents")
+    parser.add_argument("--why-missed", action="store_true",
+                        help="for questions whose passage /rag doesn't send: the step that dropped it, and "
+                             "counts of what those passages and questions have in common")
     parser.add_argument("--show", action="store_true", help="also print each question and where its passage ranked")
     args = parser.parse_args(argv)
 
@@ -226,6 +235,8 @@ def main(argv: list[str]) -> int:
     skill = RagRetrieveSkill(settings, {}, embeddings, qdrant, llm)
     try:
         report(args, settings, skill, qdrant, embeddings, samples)
+        if args.why_missed:
+            why_missed(settings, qdrant, embeddings, skill.llm, samples)
     finally:
         drop_copies(settings, mapping)
     return 0
@@ -343,6 +354,102 @@ def report(args, settings, skill, qdrant, embeddings, samples) -> None:
         for k, v in KEYWORD_FIRST:
             c = sum(1 for r in hybrid[f"first {k}+{v}"] if r)
             print(f"| {k} + {v} | {c}/{len(samples)} ({100 * c / n:.0f}%) |")
+
+
+def _ids(sections: list) -> set[str]:
+    return {str(h.get("id")) for _, hits in sections for h in hits}
+
+
+def _bucket(value: int | None, edges: tuple[int, ...], unit: str = "") -> str:
+    if value is None:
+        return f">{edges[-1]}{unit}"
+    low = 1
+    for edge in edges:
+        if value <= edge:
+            return f"{low}-{edge}{unit}" if low != edge else f"{edge}{unit}"
+        low = edge + 1
+    return f">{edges[-1]}{unit}"
+
+
+def why_missed(settings, qdrant, embeddings, llm, samples) -> None:
+    """Why the source passage didn't reach the model, with keyword search on.
+    Counts only: the step that dropped it, then traits of the missed
+    passages and questions."""
+    s_on = dataclasses.replace(settings, rag_keyword_search=True)
+    skill = RagRetrieveSkill(s_on, {}, embeddings, qdrant, llm)
+    by_id = {}
+    for collection in bot_collections(settings) + [settings.tracker_collection]:
+        try:
+            for point in qdrant.scroll_by_filters(collection, {}, limit=512):
+                by_id[str(point["id"])] = point.get("payload") or {}
+        except Exception:  # noqa: BLE001
+            continue
+    steps, traits, missed, rows = Counter(), Counter(), 0, []
+    for s in samples:
+        sections = skill.default_sections(s.question)
+        margin = drop_weak_hits(sections, s_on.rag_relevance_margin)
+        picked = keywords_first(margin, keyword_hits=s_on.rag_keyword_hits, vector_hits=s_on.rag_vector_hits)
+        sent = fit_passages(picked, s.question, context_tokens=s_on.rag_context_tokens,
+                            passage_tokens=s_on.rag_passage_tokens)
+        if s.point_id in _ids(sent):
+            continue
+        missed += 1
+        step = ("not retrieved at all" if s.point_id not in _ids(sections)
+                else "dropped by the relevance margin" if s.point_id not in _ids(margin)
+                else "dropped by the keyword/vector split" if s.point_id not in _ids(picked)
+                else "dropped by the token budget")
+        steps[step] += 1
+        flat = [h for _, hits in sections for h in hits]
+        pooled = {via: [str(h.get("id")) for h in sorted((h for h in flat if (h.get("via") == "keywords") == (via == "kw")),
+                                                         key=lambda h: -float(h.get("score") or 0))]
+                  for via in ("kw", "vec")}
+        found = [h for _, hits in sections for h in hits if str(h.get("id")) == s.point_id]
+        if found:
+            traits["retrieved via: " + "+".join(sorted({h.get("via") or "vector" for h in found}))] += 1
+        payload = by_id.get(s.point_id, {})
+        cjk = len(_CJK_CHAR.findall(s.text)) / max(1, len(s.text))
+        traits["passage language: " + ("Chinese" if cjk > 0.3 else "mixed" if cjk > 0.05 else "Latin")] += 1
+        traits["passage length: " + _bucket(len(s.text), (600, 1200, 1799), " chars").replace(">1799", "1800")] += 1
+        shared = terms(s.question) & terms(s.text)
+        traits["question terms in passage: " + _bucket(len(shared) or None, (2, 5)).replace(">5", "6+")
+               if shared else "question terms in passage: 0"] += 1
+        latin = [t for t in terms(s.question) if t.isascii()]
+        traits["question has Latin words or digits: " + ("yes" if latin else "no")] += 1
+        deep = qdrant.search(s.collection, embeddings.embed(s.question), limit=50)
+        rank = next((i for i, h in enumerate(deep, start=1) if str(h.get("id")) == s.point_id), None)
+        traits["vector rank in its collection: " + _bucket(rank, (2, 5, 20, 50))] += 1
+        sent_hits = [h for _, hits in sent for h in hits]
+        sha = payload.get("file_sha256")
+        if sha and any((by_id.get(str(h.get("id"))) or {}).get("file_sha256") == sha for h in sent_hits):
+            traits["another passage of the same file was sent"] += 1
+        fact = s.fact.strip().lower()
+        if fact and fact in s.text.lower():
+            traits["fact appears word for word in the passage"] += 1
+        fact_sent = bool(fact) and any(fact in str((h.get("payload") or {}).get("text") or "").lower()
+                                       for h in sent_hits)
+        if fact_sent:
+            traits["fact appears word for word in a passage that was sent"] += 1
+        sibling = [int((by_id.get(str(h.get("id"))) or {}).get("chunk_index", -99)) for h in sent_hits
+                   if sha and (by_id.get(str(h.get("id"))) or {}).get("file_sha256") == sha]
+        own = int(payload.get("chunk_index", -1))
+        rows.append(" | ".join(str(x) for x in (
+            step.split(" by the ")[-1].replace("not retrieved at all", "-"),
+            *(pooled[k].index(s.point_id) + 1 if s.point_id in pooled[k] else "-" for k in ("kw", "vec")),
+            rank or ">50", len(shared), f"{own + 1}/{payload.get('chunk_count', '?')}",
+            ",".join(f"{c - own:+d}" for c in sorted(sibling)) or "-", "yes" if fact_sent else "no")))
+    print(f"\n| Why the source passage wasn't sent ({missed} of {len(samples)} questions) | Questions |")
+    print("| --- | --- |")
+    for step, count in steps.most_common():
+        print(f"| {step} | {count} |")
+    print("\n| Dropped at | Keyword rank (all sent sections) | Vector rank (pooled) | Vector rank (own collection) "
+          "| Shared terms | Chunk | Same-file chunks sent (offset) | Fact in a sent passage |")
+    print("| --- | --- | --- | --- | --- | --- | --- | --- |")
+    for row in rows:
+        print(f"| {row} |")
+    print("\n| Traits of the missed ones | Questions |")
+    print("| --- | --- |")
+    for trait, count in sorted(traits.items()):
+        print(f"| {trait} | {count} |")
 
 
 def hybrid_ranks(settings, qdrant, embeddings, samples) -> dict[str, list[int | None]]:

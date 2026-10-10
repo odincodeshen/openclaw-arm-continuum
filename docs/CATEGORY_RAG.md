@@ -319,7 +319,8 @@ Each passage has a second, sparse vector, `kw` (`app/openclaw_runtime/keywords.p
 
 With `OPENCLAW_RAG_KEYWORD_SEARCH=true`, `/rag` searches each collection both
 ways. It reads the best 4 keyword hits first, then the best 2 vector hits not
-already chosen. A question that shares no terms with any passage is answered
+already chosen. A passage both searches found competes for both: for the
+vector places by its vector score. A question that shares no terms with any passage is answered
 from vector hits, as before.
 
 On a bot with ~550 passages, mostly one 500-page hardware manual, keyword
@@ -347,7 +348,8 @@ The default stays:
 
 - more vector hits add tokens but no right passages;
 - fewer keyword hits lose some;
-- the Chinese misses are questions neither kind of search finds.
+- the Chinese misses are questions neither kind of search finds (see
+  "Why the rest are missed" below).
 
 **Translating the question was tried and dropped (October 2026).** The idea
 was to have the model put each question into English, Traditional and
@@ -369,6 +371,38 @@ reasons:
 - the multilingual embedding model already matches across languages.
 
 Each question also cost 7-9 s more on the GB10. The code was removed.
+
+**Why the rest are missed.** `--why-missed` adds, for every question whose
+passage isn't sent, the step that dropped it (not retrieved, relevance
+margin, keyword/vector split, token budget) and a row of numbers: its
+keyword and vector ranks, terms shared with the question, its chunk in the
+file, and which chunks of the same file were sent. Only counts and ranks are
+printed:
+
+```bash
+docker exec -i openclaw-telegram-<bot> python3 - --questions 80 --why-missed \
+    --question-language "Traditional Chinese" < scripts/rag_retrieval_eval.py
+```
+
+On the same bot (80 questions each, October 2026) it found two things:
+
+- **A passage found by both searches lost its vector place.** It was kept
+  as a keyword hit only, so the best vector match, sharing just a word or
+  two with the question, ranked low among the keyword hits and was left
+  out. It now keeps its vector score (`vector_score`) and competes for the
+  vector places too.
+- **Long files crowd out their own chunks.** Most remaining misses are in
+  files of 29-369 chunks: the right chunk ranks 4th to 50th by vector,
+  shares few terms with the question, and other chunks of the same file
+  come first.
+
+| Right passage sent to the model | Before the fix | After |
+| --- | --- | --- |
+| Same language | 89% | **92%** |
+| Chinese | 86% | **89%** |
+
+The fix sends about 230 more tokens per question (median): places that
+duplicate hits took now go to different passages.
 
 `OPENCLAW_RAG_KEYWORD_HITS` / `OPENCLAW_RAG_VECTOR_HITS` change the split
 per bot. Check a change on your own documents with

@@ -358,9 +358,28 @@ Still open, re-baselined against v1.30:
   shared model to be idle (`model_gate.py`, `OPENCLAW_PREPARE_WAIT_MINUTES`),
   after a stable per-bot offset. This followed the English bot's timeout on
   2026-10-05. Live on the GB10: during a 38 s generation the gate reported 1
-  request in flight and opened at 45 s.
-- Later: a read-only role (`OPENCLAW_READONLY_CHAT_IDS`); a watchdog
-  temperature alert.
+  request in flight and opened at 45 s. On the O6 (llama.cpp, no
+  `/metrics`) it falls back to `/slots`: idle 0, 1 during a 20 s
+  generation, opened 5 s after it ended (2026-10-10).
+- **Why the remaining questions are missed (2026-10-10).**
+  `scripts/rag_retrieval_eval.py --why-missed` reports, for each question
+  whose passage isn't sent, the step that dropped it, with counts only.
+  On bot2's real documents (80 questions each):
+    - **Fixed:** a passage found by both searches kept only its keyword
+      score. The best vector match could lose its vector place for also
+      sharing a word or two with the question. It now keeps
+      `vector_score` for the vector places. Chinese 86% -> 89%, same
+      language 89% -> 92%.
+    - **Left:** 8 of the 9 Chinese misses are passages from long files
+      (29-369 chunks) that neither search ranks high enough: vector rank
+      4-50 in their collection, 0-3 shared terms. Other chunks of the
+      same file crowd them out. A re-ranker over the top 20-50 candidates
+      is the next thing to try; neighbouring chunks wouldn't help.
+    - **Data:** one file is stored twice in one collection (8 chunks), and
+      its copies take places. Cleaning it up needs the owner's go-ahead;
+      ingest could skip a file whose `file_sha256` is already there.
+- Later: a watchdog temperature alert. A read-only role
+  (`OPENCLAW_READONLY_CHAT_IDS`) is not planned (decided 2026-10-10).
 - Image text (OCR) -- **done in v1.24** with the vision model itself: a
   separate verbatim transcription call per image (own language/script, long
   limit, continuation), photos outside categories indexed into the
