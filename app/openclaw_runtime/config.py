@@ -213,6 +213,12 @@ class Settings:
     prepare_wait_minutes: int = 30
     image_ocr_max_tokens: int = 4096
     index_chat_photos: bool = True
+    # Plans from photos: when a photo's text reads as a dated booking, offer
+    # an "Add to schedule" button that saves it as /mem items (tag plan) in
+    # this collection, or the bot's own tracker memory when empty.
+    plan_button_enabled: bool = False
+    plan_schedule_collection: str = ""
+    plan_state_path: Path = Path("/workspace/.openclaw/plan_suggestions.json")
     # Scanned PDFs: pages with no text layer are read by the vision model,
     # up to this many pages per file (0 = off).
     pdf_ocr_max_pages: int = 40
@@ -385,6 +391,9 @@ def load_settings() -> Settings:
         prepare_wait_minutes=env_int("OPENCLAW_PREPARE_WAIT_MINUTES", 30),
         image_ocr_max_tokens=env_int("OPENCLAW_IMAGE_OCR_MAX_TOKENS", 4096),
         index_chat_photos=env_bool("OPENCLAW_INDEX_CHAT_PHOTOS", True),
+        plan_button_enabled=env_bool("OPENCLAW_PLAN_BUTTON_ENABLED", False),
+        plan_schedule_collection=os.environ.get("OPENCLAW_PLAN_SCHEDULE_COLLECTION", "").strip(),
+        plan_state_path=Path(os.environ.get("OPENCLAW_PLAN_STATE_PATH", "/workspace/.openclaw/plan_suggestions.json")),
         pdf_ocr_max_pages=env_int("OPENCLAW_PDF_OCR_MAX_PAGES", 40),
         housekeeping_time=os.environ.get("OPENCLAW_HOUSEKEEPING_TIME", "03:30").strip(),
         audio_retention_days=env_int("OPENCLAW_AUDIO_RETENTION_DAYS", 14),

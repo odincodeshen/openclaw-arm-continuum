@@ -228,6 +228,35 @@ gets pushed -- so a morning schedule push arrives every day:
 Naming the job with the report's own title line (as above) keeps the push
 from carrying the title twice.
 
+### Plans from photos
+
+A photo of a ticket or booking is filed and searchable (`/rag`), but that
+alone doesn't put it on the schedule above -- the report only reads `/mem`
+items with a `due:` date. With `OPENCLAW_PLAN_BUTTON_ENABLED=true`, after a
+photo's text is read (filed into a category or into the knowledge base) the
+local model checks whether it is a dated plan: a train, coach, ferry or
+flight, a hotel stay (its check-in date), a ticketed event or an
+appointment. Receipts, invoices and articles that merely mention a date
+don't count, and dates already past are left out.
+
+If it is one, a 【加入行程？】 card lists up to three dated items with
+**Add to schedule** / **No thanks** buttons. Nothing is saved until
+**Add to schedule** is tapped; each item then becomes
+`/mem <title> due:<date> tag:plan` in `OPENCLAW_PLAN_SCHEDULE_COLLECTION`
+(another bot's tracker memory, or this bot's own when empty). An item
+already there with the same date and text isn't added twice, so sending
+the same booking again is harmless. Only the chat the photo came from can
+answer the card; unanswered cards expire after 14 days
+(`OPENCLAW_PLAN_STATE_PATH`, default `/workspace/.openclaw/plan_suggestions.json`).
+
+```text
+OPENCLAW_PLAN_BUTTON_ENABLED=true
+OPENCLAW_PLAN_SCHEDULE_COLLECTION=
+```
+
+It costs one short model call per photo with text. If the model is down
+the photo is still filed; there is just no card.
+
 ### What a /cron push saves
 
 Nothing. A `/cron` job's result is pushed to Telegram and recorded in the

@@ -89,6 +89,8 @@ from openclaw_runtime.model_gate import before_preparing
 from openclaw_runtime.alerts import Alerter
 from openclaw_runtime.dictionary import LocalDictionary
 from openclaw_runtime.message_cards import RULE, bold, esc, html_to_plain, split_html_message
+from openclaw_runtime.daily_reports import local_today
+from openclaw_runtime.itinerary import Plan, PlanSuggestions, detect_plans, mem_command, render_card as render_plan_card
 from openclaw_runtime.skills.memory import MemoryWriteSkill, sources_for_answer
 from openclaw_runtime.tts_client import TtsClient
 from openclaw_runtime.anki_package import AnkiNote, write_apkg
@@ -774,10 +776,86 @@ def send_image_text_card(chat_id: int | None, name: str, place: str, text: str, 
         log(f"[vision] could not send the image text card: {exc}")
 
 
+PLAN_PREFIX = "plan:"
+PLAN_SUGGESTIONS = PlanSuggestions(settings.plan_state_path)
+
+
+def offer_plan_button(chat_id: int | None, text: str) -> None:
+    """If a photo's text reads as a dated plan (a ticket, a booking), show
+    what was found with an "Add to schedule" button. Nothing is saved until
+    it's tapped; any model trouble just means no button."""
+    if not chat_id or not settings.plan_button_enabled or not (text or "").strip():
+        return
+    try:
+        plans = detect_plans(llm, text, local_today(settings.cron_timezone))
+    except Exception as exc:  # noqa: BLE001 - the photo is filed either way
+        log(f"[plan] detection failed: {exc}")
+        return
+    if not plans:
+        return
+    suggestion_id = PLAN_SUGGESTIONS.add(chat_id, plans)
+    send_card_with_buttons(chat_id, render_plan_card(plans), [[
+        {"text": "Add to schedule", "callback_data": f"{PLAN_PREFIX}add:{suggestion_id}"},
+        {"text": "No thanks", "callback_data": f"{PLAN_PREFIX}no:{suggestion_id}"},
+    ]])
+    log(f"[plan] offered id={suggestion_id} plans={len(plans)}")
+
+
+def add_plans_to_schedule(plans: list[Plan]) -> int:
+    """Save plans as /mem items (tag plan) in the schedule collection,
+    skipping one that's already there with the same date and text. Returns
+    how many were added."""
+    target = settings.plan_schedule_collection or settings.tracker_collection
+    skill = MemoryWriteSkill(dataclasses.replace(settings, tracker_collection=target), {}, embeddings, qdrant)
+    added = 0
+    for plan in plans:
+        existing = qdrant.scroll_by_filters(
+            target, {"kind": "tracker_memory", "status": "active", "due": plan.day.isoformat()}, limit=100
+        )
+        if any(str((hit.get("payload") or {}).get("text") or "").strip() == plan.title for hit in existing):
+            continue
+        skill.run(mem_command(plan))
+        added += 1
+    return added
+
+
+def handle_plan_callback(chat_id: int, message_id: int | None, data: str, answer) -> None:
+    action, _, suggestion_id = data[len(PLAN_PREFIX):].partition(":")
+    suggestion = PLAN_SUGGESTIONS.get(suggestion_id)
+    if not suggestion or suggestion.get("chat_id") != chat_id:
+        answer("This suggestion has expired.")
+        return
+    plans = [Plan.from_json(item) for item in suggestion.get("plans") or []]
+    if suggestion.get("status") != "offered":
+        answer("Already answered.")
+        return
+    if action == "no":
+        PLAN_SUGGESTIONS.set_status(suggestion_id, "declined")
+        answer()
+        footer = "Not added."
+    elif action == "add":
+        try:
+            added = add_plans_to_schedule(plans)
+        except Exception as exc:  # noqa: BLE001
+            log(f"[plan] add failed id={suggestion_id}: {exc}")
+            answer("Couldn't add it -- try again later.")
+            return
+        PLAN_SUGGESTIONS.set_status(suggestion_id, "added")
+        answer("Added to the schedule" if added else "Already on the schedule")
+        footer = "Added to the schedule -- see /mem upcoming." if added else "Already on the schedule."
+        log(f"[plan] added id={suggestion_id} new={added}")
+    else:
+        answer()
+        return
+    if message_id:
+        _edit_card(chat_id, message_id, render_plan_card(plans, footer))
+
+
 def write_image_doc(doc: Path, image_path: Path, title: str, header: list[str], note: str = "",
                     chat_id: int | None = None, name: str = "", place: str = "") -> Path:
     text, description = image_index_text(image_path, note)
     send_image_text_card(chat_id, name or title, place, text, description)
+    offer_plan_button(chat_id, text)
     doc.write_text(
         "\n".join(
             [
@@ -1034,6 +1112,9 @@ def handle_callback_query(query: dict) -> None:
         return
     if data.startswith("say:") and settings.dictionary_enabled:
         handle_say_callback(chat_id, data, answer)
+        return
+    if data.startswith(PLAN_PREFIX):
+        handle_plan_callback(chat_id, message_id, data, answer)
         return
     if data.startswith("rag:"):
         handle_rag_callback(chat_id, message_id, data, answer)
