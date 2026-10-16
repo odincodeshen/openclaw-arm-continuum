@@ -237,7 +237,10 @@ photo's text is read (filed into a category or into the knowledge base) the
 local model checks whether it is a dated plan: a train, coach, ferry or
 flight, a hotel stay (its check-in date), a ticketed event or an
 appointment. Receipts, invoices and articles that merely mention a date
-don't count, and dates already past are left out.
+don't count, and dates already past are left out. Each leg of a return
+ticket keeps its own date, and an item is only offered if its date is
+written in the photo's text: a screenshot that cut the outbound date off
+offers just the dated return, never a guessed date.
 
 If it is one, a 【加入行程？】 card lists up to three dated items with
 **Add to schedule** / **No thanks** buttons. Nothing is saved until
@@ -257,7 +260,7 @@ OPENCLAW_PLAN_SCHEDULE_COLLECTION=
 It costs one short model call per photo with text. If the model is down
 the photo is still filed; there is just no card. When no card is shown the
 gateway log says why, e.g. `[plan] none reason=past plans=2` (`not_a_plan`,
-`no_dates`, `past` or `invalid`), without messaging the chat.
+`no_dates`, `past`, `not_in_text` or `invalid`), without messaging the chat.
 
 ### What a /cron push saves
 

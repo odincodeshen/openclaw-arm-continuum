@@ -9,6 +9,7 @@ Nothing is added on its own: the bot shows what it found with an
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import threading
 import time
@@ -51,6 +52,7 @@ Receipts for things already done, invoices, articles, menus, timetables and scre
 If it is a plan, list each dated part once, at most {max_plans}:
 - date: YYYY-MM-DD (for a stay, the check-in date)
 - title: one short line in the text's own language naming what and where, with the departure time or the booking reference if there is one, e.g. "Train Cambridge -> Manchester Piccadilly 09:15" or "Hotel: Premier Inn Manchester, 2 nights (ref 9VFVRE)"
+Each part keeps its own date, places and time. A return ticket has two parts: the outbound and the return. A date belongs only to the part it heads (e.g. "Return Journey: ... Travel on Thursday 15 October" dates the return legs listed after it, not the departures above it). If the text gives no date for a part -- say a screenshot cut off the outbound date -- leave that part out: never give it another part's date, and never give a part another part's time or direction.
 If it is not a plan, return is_plan false and no plans.
 
 Text:
@@ -70,9 +72,34 @@ class Plan:
         return cls(date.fromisoformat(data["date"]), str(data["title"]))
 
 
-def parse_plans(data: dict, today: date) -> list[Plan]:
-    """The model's answer -> plans worth offering: valid dates from today on,
-    one per (date, title), soonest first, at most MAX_PLANS."""
+_MONTHS = ["january", "february", "march", "april", "may", "june",
+           "july", "august", "september", "october", "november", "december"]
+
+
+def mentions_date(text: str, day: date) -> bool:
+    """Whether ``text`` writes ``day`` out somewhere -- "15 October",
+    "Thu 15 Oct", "October 15th", "2026-10-15", "15/10", "10/15", "10月15日".
+    The model fills in a date the text doesn't give (a screenshot that cut
+    the outbound date off gets "today"); a plan whose date isn't in the
+    text is dropped."""
+    month = _MONTHS[day.month - 1]
+    names = rf"(?:{month}|{month[:3]}{'|sept' if day.month == 9 else ''})"
+    d, m = rf"0?{day.day}", rf"0?{day.month}"
+    patterns = [
+        rf"\b{d}(?:st|nd|rd|th)?\s*(?:of\s+)?{names}\b",
+        rf"\b{names}\.?\s*{d}(?:st|nd|rd|th)?\b",
+        rf"\b{day.year}[-/.]{m}[-/.]{d}\b",
+        rf"(?<![\d/.-]){d}[/.-]{m}(?![\d])",
+        rf"(?<![\d/.-]){m}[/.-]{d}(?![\d])",
+        rf"(?<!\d){m}\s*月\s*{d}\s*[日号號]",
+    ]
+    return any(re.search(pattern, text or "", re.IGNORECASE) for pattern in patterns)
+
+
+def parse_plans(data: dict, today: date, text: str | None = None) -> list[Plan]:
+    """The model's answer -> plans worth offering: valid dates from today on
+    (and, given the source ``text``, written in it), one per (date, title),
+    soonest first, at most MAX_PLANS."""
     if not isinstance(data, dict) or not data.get("is_plan"):
         return []
     plans: list[Plan] = []
@@ -84,7 +111,7 @@ def parse_plans(data: dict, today: date) -> list[Plan]:
             day = date.fromisoformat(str(item.get("date") or "").strip())
         except ValueError:
             continue
-        if not title or day < today:
+        if not title or day < today or (text is not None and not mentions_date(text, day)):
             continue
         plan = Plan(day, title)
         if plan not in plans:
@@ -92,9 +119,10 @@ def parse_plans(data: dict, today: date) -> list[Plan]:
     return sorted(plans, key=lambda plan: plan.day)[:MAX_PLANS]
 
 
-def none_reason(data: dict, today: date) -> str:
+def none_reason(data: dict, today: date, text: str | None = None) -> str:
     """Why parse_plans found nothing to offer, for the log: not_a_plan,
-    no_dates, past (every date before today) or invalid."""
+    no_dates, past (every date before today), not_in_text (no upcoming date
+    is written in ``text``) or invalid."""
     if not isinstance(data, dict) or not data.get("is_plan"):
         return "not_a_plan"
     items = [item for item in data.get("plans") or [] if isinstance(item, dict)]
@@ -108,6 +136,8 @@ def none_reason(data: dict, today: date) -> str:
             pass
     if days and all(day < today for day in days):
         return "past"
+    if text is not None and days and not any(mentions_date(text, day) for day in days if day >= today):
+        return "not_in_text"
     return "invalid"
 
 
@@ -125,7 +155,7 @@ def ask_model(llm, text: str, today: date) -> dict:
 
 def detect_plans(llm, text: str, today: date) -> list[Plan]:
     """Ask the model whether ``text`` is a dated plan; the plans worth offering."""
-    return parse_plans(ask_model(llm, text, today), today)
+    return parse_plans(ask_model(llm, text, today), today, text or "")
 
 
 def mem_command(plan: Plan) -> str:

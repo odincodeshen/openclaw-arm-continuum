@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import openclaw_telegram_gateway as gateway
 from openclaw_runtime.itinerary import (
-    Plan, PlanSuggestions, detect_plans, mem_command, none_reason, parse_plans, render_card,
+    Plan, PlanSuggestions, detect_plans, mem_command, mentions_date, none_reason, parse_plans, render_card,
 )
 
 TODAY = date(2026, 10, 11)
@@ -49,6 +49,37 @@ class ParsePlansTest(unittest.TestCase):
         self.assertEqual(len(parse_plans(data, TODAY)), 3)
 
 
+# A screenshot that cut the outbound date off: only the return is dated.
+CUT_TICKET = """10:00 | 12:08 | CrossCountry
+Cambridge | Nuneaton
+Return Journey: MANCHESTER PICCADILLY TO CAMBRIDGE
+Travel on Thursday 15 October 2026
+10:34 | 11:42 | Avanti West Coast"""
+
+
+class MentionsDateTest(unittest.TestCase):
+    def test_written_forms(self) -> None:
+        day = date(2026, 10, 15)
+        for text in ["Travel on Thursday 15 October 2026", "Thu 15 Oct", "Oct. 15", "October 15th",
+                     "15th of October", "2026-10-15", "15/10/2026", "10/15", "10月15日"]:
+            self.assertTrue(mentions_date(text, day), text)
+        for text in ["16 October 2026", "115 Oct", "10:15", "Oct 2015", "5 October", "13:15 15:10"]:
+            self.assertFalse(mentions_date(text, day), text)
+        self.assertTrue(mentions_date("Sept 5", date(2026, 9, 5)))
+
+    def test_a_date_the_text_never_gives_is_dropped(self) -> None:
+        data = {"is_plan": True, "plans": [
+            {"date": "2026-10-12", "title": "Train Cambridge -> Manchester Piccadilly 10:00"},
+            {"date": "2026-10-15", "title": "Train Manchester Piccadilly -> Cambridge 10:34"},
+        ]}
+        self.assertEqual(parse_plans(data, date(2026, 10, 12), CUT_TICKET),
+                         [Plan(date(2026, 10, 15), "Train Manchester Piccadilly -> Cambridge 10:34")])
+        self.assertEqual(len(parse_plans(data, date(2026, 10, 12))), 2)
+        only_guess = {"is_plan": True, "plans": [data["plans"][0]]}
+        self.assertEqual(parse_plans(only_guess, date(2026, 10, 12), CUT_TICKET), [])
+        self.assertEqual(none_reason(only_guess, date(2026, 10, 12), CUT_TICKET), "not_in_text")
+
+
 class NoneReasonTest(unittest.TestCase):
     def test_reasons(self) -> None:
         self.assertEqual(none_reason({"is_plan": False, "plans": []}, TODAY), "not_a_plan")
@@ -70,6 +101,7 @@ class DetectPlansTest(unittest.TestCase):
         self.assertFalse(persona)
         self.assertIn("Today is 2026-10-11", prompt)
         self.assertIn("CAMBRIDGE TO MANCHESTER", prompt)
+        self.assertIn("If the text gives no date for a part", prompt)
 
     def test_no_text_no_call(self) -> None:
         llm = FakeLlm({})

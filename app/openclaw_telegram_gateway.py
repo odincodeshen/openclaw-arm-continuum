@@ -795,10 +795,10 @@ def offer_plan_button(chat_id: int | None, text: str) -> None:
     except Exception as exc:  # noqa: BLE001 - the photo is filed either way
         log(f"[plan] detection failed: {exc}")
         return
-    plans = parse_plans(data, today)
+    plans = parse_plans(data, today, text)
     if not plans:
         listed = len(data.get("plans") or []) if isinstance(data, dict) else 0
-        log(f"[plan] none reason={plan_none_reason(data, today)} plans={listed}")
+        log(f"[plan] none reason={plan_none_reason(data, today, text)} plans={listed}")
         return
     suggestion_id = PLAN_SUGGESTIONS.add(chat_id, plans)
     send_card_with_buttons(chat_id, render_plan_card(plans), [[
