@@ -275,7 +275,7 @@ first failure:
    or home paths, such as the scan's own tests. Real chat IDs and tokens are
    never let through.
 5. **Publish:**
-   - the version in both READMEs and `docs/FUTURE_TODO.md`;
+   - the version in both READMEs, `docs/FUTURE_TODO.md` and `VERSION`;
    - a `release: <tag> - <title>` commit, then push;
    - the GitHub release, whose notes end with a "Release checks" list of the
      results.

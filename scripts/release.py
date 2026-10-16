@@ -46,6 +46,7 @@ VERSION_FILES = (
     ("README.md", r"Version: `(v[\d.]+)`", "Version: `{}`"),
     ("README.zh-TW.md", r"版本：`(v[\d.]+)`", "版本：`{}`"),
     ("docs/FUTURE_TODO.md", r"Current release: \*\*(v[\d.]+)\*\*\.", "Current release: **{}**."),
+    ("VERSION", r"\Av[\d.]+", "{}"),
 )
 LOCAL_ONLY = (r"(^|/)\.env$", r"^profiles/[^/]+/\.env$", r"^compose\.persona\.(?!.*example)[^/]+\.ya?ml$",
               r"(^|/)\.release\.local$")

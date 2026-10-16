@@ -71,13 +71,15 @@ class PrivacyScanTest(unittest.TestCase):
 
 
 class VersionBumpTest(unittest.TestCase):
-    def test_bumps_all_three_files(self):
+    def test_bumps_every_version_file(self):
         repo = FakeRepo(self)
         repo.write("README.md", "# X\n\nVersion: `v1.27`\n")
         repo.write("README.zh-TW.md", "版本：`v1.27`\n")
         repo.write("docs/FUTURE_TODO.md", "Current release: **v1.27**.\n\nStill open, re-baselined against v1.27:\n")
+        repo.write("VERSION", "v1.27\n")
         changed = release.bump_version("v1.28", "v1.27")
-        self.assertEqual(changed, ["README.md", "README.zh-TW.md", "docs/FUTURE_TODO.md"])
+        self.assertEqual(changed, ["README.md", "README.zh-TW.md", "docs/FUTURE_TODO.md", "VERSION"])
+        self.assertEqual((repo.root / "VERSION").read_text(), "v1.28\n")
         self.assertIn("Version: `v1.28`", (repo.root / "README.md").read_text())
         todo = (repo.root / "docs/FUTURE_TODO.md").read_text()
         self.assertIn("**v1.28**", todo)
