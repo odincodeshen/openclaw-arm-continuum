@@ -255,7 +255,9 @@ OPENCLAW_PLAN_SCHEDULE_COLLECTION=
 ```
 
 It costs one short model call per photo with text. If the model is down
-the photo is still filed; there is just no card.
+the photo is still filed; there is just no card. When no card is shown the
+gateway log says why, e.g. `[plan] none reason=past plans=2` (`not_a_plan`,
+`no_dates`, `past` or `invalid`), without messaging the chat.
 
 ### What a /cron push saves
 

@@ -90,7 +90,10 @@ from openclaw_runtime.alerts import Alerter
 from openclaw_runtime.dictionary import LocalDictionary
 from openclaw_runtime.message_cards import RULE, bold, esc, html_to_plain, split_html_message
 from openclaw_runtime.daily_reports import local_today
-from openclaw_runtime.itinerary import Plan, PlanSuggestions, detect_plans, mem_command, render_card as render_plan_card
+from openclaw_runtime.itinerary import (
+    Plan, PlanSuggestions, ask_model as ask_plan_model, mem_command, none_reason as plan_none_reason, parse_plans,
+    render_card as render_plan_card,
+)
 from openclaw_runtime.skills.memory import MemoryWriteSkill, sources_for_answer
 from openclaw_runtime.tts_client import TtsClient
 from openclaw_runtime.anki_package import AnkiNote, write_apkg
@@ -786,12 +789,16 @@ def offer_plan_button(chat_id: int | None, text: str) -> None:
     it's tapped; any model trouble just means no button."""
     if not chat_id or not settings.plan_button_enabled or not (text or "").strip():
         return
+    today = local_today(settings.cron_timezone)
     try:
-        plans = detect_plans(llm, text, local_today(settings.cron_timezone))
+        data = ask_plan_model(llm, text, today)
     except Exception as exc:  # noqa: BLE001 - the photo is filed either way
         log(f"[plan] detection failed: {exc}")
         return
+    plans = parse_plans(data, today)
     if not plans:
+        listed = len(data.get("plans") or []) if isinstance(data, dict) else 0
+        log(f"[plan] none reason={plan_none_reason(data, today)} plans={listed}")
         return
     suggestion_id = PLAN_SUGGESTIONS.add(chat_id, plans)
     send_card_with_buttons(chat_id, render_plan_card(plans), [[

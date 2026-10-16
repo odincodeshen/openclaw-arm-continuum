@@ -92,15 +92,40 @@ def parse_plans(data: dict, today: date) -> list[Plan]:
     return sorted(plans, key=lambda plan: plan.day)[:MAX_PLANS]
 
 
-def detect_plans(llm, text: str, today: date) -> list[Plan]:
-    """Ask the model whether ``text`` is a dated plan. Raises on a model or
-    JSON error; the caller decides that means "no button"."""
+def none_reason(data: dict, today: date) -> str:
+    """Why parse_plans found nothing to offer, for the log: not_a_plan,
+    no_dates, past (every date before today) or invalid."""
+    if not isinstance(data, dict) or not data.get("is_plan"):
+        return "not_a_plan"
+    items = [item for item in data.get("plans") or [] if isinstance(item, dict)]
+    if not items:
+        return "no_dates"
+    days = []
+    for item in items:
+        try:
+            days.append(date.fromisoformat(str(item.get("date") or "").strip()))
+        except ValueError:
+            pass
+    if days and all(day < today for day in days):
+        return "past"
+    return "invalid"
+
+
+def ask_model(llm, text: str, today: date) -> dict:
+    """The model's raw answer to "is ``text`` a dated plan?" ({} for no
+    text). Raises on a model or JSON error; the caller decides that means
+    "no button"."""
     text = (text or "").strip()
     if not text:
-        return []
+        return {}
     prompt = _PROMPT.format(today=today.isoformat(), max_plans=MAX_PLANS, text=text[:MAX_TEXT_CHARS])
     raw = llm.chat_json(prompt, PLAN_SCHEMA, schema_name="plan_from_photo", max_tokens=400, persona=False)
-    return parse_plans(json.loads(raw), today)
+    return json.loads(raw)
+
+
+def detect_plans(llm, text: str, today: date) -> list[Plan]:
+    """Ask the model whether ``text`` is a dated plan; the plans worth offering."""
+    return parse_plans(ask_model(llm, text, today), today)
 
 
 def mem_command(plan: Plan) -> str:

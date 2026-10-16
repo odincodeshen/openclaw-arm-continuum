@@ -7,7 +7,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 import openclaw_telegram_gateway as gateway
-from openclaw_runtime.itinerary import Plan, PlanSuggestions, detect_plans, mem_command, parse_plans, render_card
+from openclaw_runtime.itinerary import (
+    Plan, PlanSuggestions, detect_plans, mem_command, none_reason, parse_plans, render_card,
+)
 
 TODAY = date(2026, 10, 11)
 TICKET = "Outbound Journey: CAMBRIDGE TO MANCHESTER PICCADILLY\nTravel on Tuesday 13 October 2026"
@@ -45,6 +47,18 @@ class ParsePlansTest(unittest.TestCase):
     def test_at_most_three(self) -> None:
         data = {"is_plan": True, "plans": [{"date": f"2026-10-{day}", "title": f"Day {day}"} for day in range(12, 18)]}
         self.assertEqual(len(parse_plans(data, TODAY)), 3)
+
+
+class NoneReasonTest(unittest.TestCase):
+    def test_reasons(self) -> None:
+        self.assertEqual(none_reason({"is_plan": False, "plans": []}, TODAY), "not_a_plan")
+        self.assertEqual(none_reason("nonsense", TODAY), "not_a_plan")
+        self.assertEqual(none_reason({"is_plan": True, "plans": []}, TODAY), "no_dates")
+        past = {"is_plan": True, "plans": [{"date": "2026-10-01", "title": "Train"},
+                                           {"date": "2026-10-10", "title": "Hotel"}]}
+        self.assertEqual(none_reason(past, TODAY), "past")
+        self.assertEqual(none_reason({"is_plan": True, "plans": [{"date": "13 Oct", "title": "Train"}]}, TODAY),
+                         "invalid")
 
 
 class DetectPlansTest(unittest.TestCase):
@@ -187,6 +201,15 @@ class GatewayPlanButtonTest(unittest.TestCase):
         with patch.object(gateway, "llm", BrokenLlm()):
             gateway.offer_plan_button(7, TICKET)
         self.assertEqual(self.cards, [])
+
+    def test_why_no_button_is_logged(self) -> None:
+        logs = []
+        with patch.object(gateway, "log", logs.append):
+            self.offer({"is_plan": True, "plans": [{"date": "2026-10-01", "title": "Train"},
+                                                   {"date": "2026-10-02", "title": "Hotel"}]})
+            self.offer({"is_plan": False, "plans": []})
+        self.assertEqual(self.cards, [])
+        self.assertEqual(logs, ["[plan] none reason=past plans=2", "[plan] none reason=not_a_plan plans=0"])
 
 
 if __name__ == "__main__":
