@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from openclaw_runtime.llm_client import LlmClient, clean_model_content
+from openclaw_runtime.llm_client import VLLM_NOT_READY_MESSAGE, LlmClient, clean_model_content
 from openclaw_runtime.model_catalog import ModelSpec
 from tests.support import build_settings
 
@@ -15,6 +15,21 @@ class CleanModelContentTest(unittest.TestCase):
 
     def test_strips_think_block(self) -> None:
         self.assertEqual(clean_model_content("<think>hidden</think>\nfinal"), "final")
+
+
+class LlmClientErrorTest(unittest.TestCase):
+    @patch("openclaw_runtime.llm_client.request_json", side_effect=TimeoutError("timed out"))
+    def test_a_slow_answer_is_reported_as_a_timeout(self, _request_json) -> None:
+        with self.assertRaises(RuntimeError) as caught:
+            LlmClient(build_settings()).chat("hello")
+        self.assertIn("took longer than", str(caught.exception))
+        self.assertNotEqual(str(caught.exception), VLLM_NOT_READY_MESSAGE)
+
+    @patch("openclaw_runtime.llm_client.request_json", side_effect=ConnectionRefusedError())
+    def test_a_refused_connection_is_reported_as_not_ready(self, _request_json) -> None:
+        with self.assertRaises(RuntimeError) as caught:
+            LlmClient(build_settings()).chat("hello")
+        self.assertEqual(str(caught.exception), VLLM_NOT_READY_MESSAGE)
 
 
 class LlmClientModelSpecTest(unittest.TestCase):

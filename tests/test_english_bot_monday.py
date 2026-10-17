@@ -18,6 +18,7 @@ from openclaw_runtime.skills.english_bot import (
     run_monday_task,
     select_guest_dominant_window,
     store_weekly_content,
+    window_from_segments,
 )
 from openclaw_runtime.transcription_client import TimestampedTranscript, TranscriptSegment
 from tests.card_checks import assert_feedback_card, assert_task_card
@@ -147,28 +148,42 @@ class NextWeekNumberTest(unittest.TestCase):
         self.assertEqual(next_week_number(qdrant, "coll"), 6)
 
 
+class WindowFromSegmentsTest(unittest.TestCase):
+    def test_takes_overlapping_segments_and_snaps_to_their_bounds(self) -> None:
+        segments = [
+            TranscriptSegment(start=0.0, end=10.0, text="Host question."),
+            TranscriptSegment(start=10.0, end=20.0, text="Guest answer one."),
+            TranscriptSegment(start=20.0, end=30.0, text="Guest answer two."),
+        ]
+        window = window_from_segments(segments, 12.0, 25.0)
+        self.assertEqual((window["start_seconds"], window["end_seconds"]), (10.0, 30.0))
+        self.assertEqual(window["excerpt_text"], "Guest answer one. Guest answer two.")
+
+    def test_cuts_a_long_window_back_at_a_segment_boundary(self) -> None:
+        segments = [TranscriptSegment(start=10.0 * i, end=10.0 * (i + 1), text="word " * 100) for i in range(8)]
+        window = window_from_segments(segments, 0.0, 80.0)
+        self.assertEqual(len(window["excerpt_text"].split()), 400)  # a fifth segment would pass 450
+        self.assertEqual(window["end_seconds"], 40.0)
+
+    def test_a_window_with_no_segment_is_an_error(self) -> None:
+        with self.assertRaises(ValueError):
+            window_from_segments([TranscriptSegment(start=0.0, end=5.0, text="Hi.")], 100.0, 200.0)
+
+
 class SelectGuestDominantWindowTest(unittest.TestCase):
-    def test_builds_prompt_and_parses_response(self) -> None:
-        llm = FakeLlm(
-            [
-                json.dumps(
-                    {
-                        "start_seconds": 120.0,
-                        "end_seconds": 300.0,
-                        "excerpt_text": "I remember walking down the street when...",
-                    }
-                )
-            ]
-        )
+    def test_builds_prompt_and_cuts_excerpt_from_transcript(self) -> None:
+        llm = FakeLlm([json.dumps({"start_seconds": 5.0, "end_seconds": 120.0})])
         segments = [
             TranscriptSegment(start=0.0, end=5.0, text="So tell me about your childhood."),
             TranscriptSegment(start=5.0, end=120.0, text="I remember walking down the street when..."),
         ]
         result = select_guest_dominant_window(llm, segments)
-        self.assertEqual(result["start_seconds"], 120.0)
-        self.assertEqual(result["end_seconds"], 300.0)
-        self.assertIn("excerpt_text", result)
+        self.assertEqual(result["start_seconds"], 5.0)
+        self.assertEqual(result["end_seconds"], 120.0)
+        # verbatim from the transcript, not written by the model
+        self.assertEqual(result["excerpt_text"], "I remember walking down the street when...")
         prompt, schema_name = llm.calls[0]
+        self.assertNotIn("excerpt_text", prompt)
         self.assertEqual(schema_name, "guest_dominant_window")
         self.assertIn("[0.0-5.0] So tell me about your childhood.", prompt)
         self.assertIn("backchannel", prompt.lower())

@@ -24,6 +24,13 @@ The Monday transcript comes from the local Whisper service; the chunk
 choice, annotations and every evaluation come from the local model. Tuesday's
 stress marks are a best guess from the text, not a measurement of the audio.
 
+The model picks the guest-led stretch by its start and end times only. The
+excerpt is then cut from the transcript itself, whole segments, at most 450
+words. Asking the model to copy the excerpt out word for word made the call as
+slow as the copy, up to ~150 s on the GB10, the request timeout. On 2026-10-05
+and 10-12 every try timed out and no Monday task was sent. With times only, the
+pick takes 4-7 s.
+
 Monday's **listening check** makes it intensive listening: the dictation is one
 sentence from the clip with three content words blanked (never words from the
 week's chunks, which are on the same card), graded word by word with one typo

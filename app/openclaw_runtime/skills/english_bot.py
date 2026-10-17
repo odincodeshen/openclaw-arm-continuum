@@ -97,16 +97,23 @@ class WeeklyContent:
     gist_answer: int = -1
 
 
+# The model returns only the window's bounds; the excerpt is cut from the
+# transcript itself. Asking it to copy the excerpt out word for word made the
+# call take as long as the copy: up to its 1,200-token cap, ~150 s on the
+# GB10, which is the request timeout. Two Mondays in a row (2026-10-05 and
+# 10-12) every try timed out and no task was sent. Bounds alone take 4-7 s.
 GUEST_WINDOW_SCHEMA = {
     "type": "object",
     "properties": {
         "start_seconds": {"type": "number", "minimum": 0},
         "end_seconds": {"type": "number", "minimum": 0},
-        "excerpt_text": {"type": "string", "minLength": 1},
     },
-    "required": ["start_seconds", "end_seconds", "excerpt_text"],
+    "required": ["start_seconds", "end_seconds"],
     "additionalProperties": False,
 }
+# The listening task asks for 300-450 words; a longer window is cut back to
+# the last whole segment within this many words.
+MAX_EXCERPT_WORDS = 450
 
 CHUNK_EXTRACTION_SCHEMA = {
     "type": "object",
@@ -242,12 +249,33 @@ def select_guest_dominant_window(llm: LlmClient, segments: list[TranscriptSegmen
         "is asking substantial questions throughout. Prefer a window with "
         "personal narrative, a challenge overcome, or a life perspective. "
         "Reply with the exact start_seconds and end_seconds taken from the "
-        "transcript's own timestamps, and excerpt_text containing the "
-        "verbatim transcript text for that window.\n\n"
+        "transcript's own timestamps.\n\n"
         f"Transcript:\n{transcript_block}"
     )
-    raw = llm.chat_json(prompt, GUEST_WINDOW_SCHEMA, schema_name="guest_dominant_window", max_tokens=1200)
-    return json.loads(raw)
+    raw = llm.chat_json(prompt, GUEST_WINDOW_SCHEMA, schema_name="guest_dominant_window", max_tokens=100)
+    bounds = json.loads(raw)
+    return window_from_segments(segments, float(bounds["start_seconds"]), float(bounds["end_seconds"]))
+
+
+def window_from_segments(segments: list[TranscriptSegment], start: float, end: float) -> dict:
+    """The window as {start_seconds, end_seconds, excerpt_text}: the whole
+    segments overlapping start..end, verbatim, cut back to MAX_EXCERPT_WORDS
+    at a segment boundary (the end moves with the cut)."""
+    inside = [seg for seg in segments if seg.end > start and seg.start < end]
+    if not inside:
+        raise ValueError(f"the chosen window {start:.0f}-{end:.0f}s holds no transcript segment")
+    kept, words = [], 0
+    for seg in inside:
+        count = len(seg.text.split())
+        if kept and words + count > MAX_EXCERPT_WORDS:
+            break
+        kept.append(seg)
+        words += count
+    return {
+        "start_seconds": kept[0].start,
+        "end_seconds": kept[-1].end,
+        "excerpt_text": " ".join(seg.text.strip() for seg in kept),
+    }
 
 
 def extract_chunks(llm: LlmClient, excerpt_text: str) -> list[Chunk]:

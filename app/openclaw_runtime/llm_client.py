@@ -13,6 +13,12 @@ from openclaw_runtime.http_client import is_reachable, request_json
 VLLM_NOT_READY_MESSAGE = (
     "The OpenClaw local inference endpoint is still starting up or reloading the model. Please wait 1-3 minutes and try again."
 )
+# A model that accepted the request but didn't finish in time is running, not
+# starting up; saying "starting up" sent a timeout investigation the wrong way.
+VLLM_TIMEOUT_MESSAGE = (
+    "The local model took longer than {seconds} s to answer, so the request was stopped. "
+    "Try again, or ask for something shorter."
+)
 
 
 def clean_model_content(content: str) -> str:
@@ -143,8 +149,10 @@ class LlmClient:
                 payload,
                 timeout=self.timeout,
             )
-        except (ConnectionResetError, ConnectionRefusedError, TimeoutError, socket.timeout) as exc:
+        except (ConnectionResetError, ConnectionRefusedError) as exc:
             raise RuntimeError(VLLM_NOT_READY_MESSAGE) from exc
+        except (TimeoutError, socket.timeout) as exc:  # connected, but the answer took too long
+            raise RuntimeError(VLLM_TIMEOUT_MESSAGE.format(seconds=self.timeout)) from exc
         except urllib.error.URLError as exc:
             reason = getattr(exc, "reason", exc)
             if isinstance(reason, (ConnectionResetError, ConnectionRefusedError, TimeoutError, socket.timeout)):
